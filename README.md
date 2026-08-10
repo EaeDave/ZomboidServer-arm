@@ -88,7 +88,7 @@ pzctl
 Menu → **6** (Mods) → **1**, paste a Workshop link. A **single mod**:
 ```
 ? Workshop URL or ID: https://steamcommunity.com/sharedfiles/filedetails/?id=3713362869
-  + installed mod: FasterReading
+  + installed mod: Faster Reading
 ```
 …or a **collection**, and it installs every mod in it:
 ```
@@ -268,6 +268,8 @@ scripts/
   pz-rcon.py              tiny stdlib-only RCON client (console + player count)
   zomboid-watchdog.sh     hybrid boot-hang watchdog
   boot-retry.sh           restart-until-listening (installed as pz-boot-retry)
+docs/design.md            design notes behind the 2026-08 update
+CHANGELOG.md              what changed, release by release
 ```
 
 Power users: the installer accepts env overrides (`PZ_SVC`, `PZ_INSTALL_DIR`, `PZ_CACHEDIR`,

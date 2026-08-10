@@ -1,7 +1,7 @@
-# Design: B42-stable transition + mod auto-updates + pzctl expansion
+# Design notes: B42-stable transition, mod auto-updates, pzctl expansion
 
-Date: 2026-08-10
-Repo: zomboid-b42-on-arm, to be renamed **ZomboidServer-arm**
+Date: 2026-08-10. These are the working design notes behind the 2026-08 update; the
+README is the user-facing documentation. Kept for the "why" behind the decisions.
 
 ## 1. Context
 
@@ -197,7 +197,7 @@ worlds" tone; em dashes thinned out to commas/periods except where genuinely nee
 GitHub rename executed via authenticated `gh repo rename` (old URLs auto-redirect), local
 `origin` updated. `uninstall.sh` learns about the new units/files/paths.
 
-## 4. Testing plan (on the user's box, isolated)
+## 4. Testing plan (on the reference box, isolated — executed 2026-08-10, all green)
 
 Namespace `zomboid-b42-test`, everything under `/home/ubuntu/pztest/` (install dir, cachedir),
 port 16371/16372, RCON 27025, firewall step skipped, `CPUQuota=250%` + `Nice=10` set on the
