@@ -4,8 +4,19 @@
 #
 #  Usage:   sudo ./install.sh
 #
-#  Turns a fresh Ubuntu ARM64 box (e.g. Oracle Cloud Ampere free tier) into a running,
-#  self-restarting PZ B42 server. Then manage everything with:  pzctl
+#  Turns a fresh Ubuntu/Debian ARM64 box (e.g. Oracle Cloud Ampere free tier) into a
+#  running, self-restarting PZ B42 server. Then manage everything with:  pzctl
+#
+#  Advanced (optional env overrides, mainly for side-by-side/test installs — every
+#  artifact gets namespaced so an extra install never touches the default one):
+#    PZ_SVC=zomboid-b42-test        service/unit base name
+#    PZ_INSTALL_DIR=/path           server files (default /opt/zomboid-server)
+#    PZ_CACHEDIR=/path              Zomboid data dir (default ~/Zomboid)
+#    PZ_PORT=16371                  game port (default 16261; +1 is used too)
+#    PZ_RCONPORT=27025              RCON port written to the ini (default 27015)
+#    PZ_BACKUPS=/path               backup dir (default ~/pz_backups)
+#    PZ_SKIP_FIREWALL=1             don't touch iptables
+#    PZ_BRANCH / PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB   preseed the prompts
 #
 set -euo pipefail
 
@@ -31,38 +42,114 @@ case "$ARCH" in
   x86_64|amd64) die "You're on x86-64 — you do NOT need this. Run the PZ server natively; box64 is only for ARM/other non-x86 CPUs." ;;
   *) warn "Unrecognised arch '$ARCH'. box64 targets ARM64 (also RISC-V/LoongArch). Continuing, but you're off the tested path." ;;
 esac
-command -v systemctl >/dev/null || die "This installer needs systemd (Ubuntu/Debian)."
+command -v systemctl >/dev/null || die "This installer needs systemd."
+command -v apt-get   >/dev/null || die "This installer needs an apt-based distro (Ubuntu/Debian family). For others, install box64 + deps manually following the README."
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGET_USER="${SUDO_USER:-ubuntu}"
 id "$TARGET_USER" >/dev/null 2>&1 || die "User '$TARGET_USER' not found. Run via 'sudo' as your normal user."
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-INSTALL_DIR=/opt/zomboid-server
+
+# ----------------------------------------------------------------- namespace / paths
+# Defaults give the classic single-server layout. Overrides namespace everything.
+SVC="${PZ_SVC:-zomboid-b42}"
+SFX=""; [ "$SVC" != "zomboid-b42" ] && SFX="-${SVC#zomboid-b42-}"
+INSTALL_DIR="${PZ_INSTALL_DIR:-/opt/zomboid-server}"
+CACHEDIR="${PZ_CACHEDIR:-$TARGET_HOME/Zomboid}"
+PORT="${PZ_PORT:-16261}"
+RCONPORT="${PZ_RCONPORT:-27015}"
+BACKUPS="${PZ_BACKUPS:-$TARGET_HOME/pz_backups}"
+SERVERNAME=servertest
+ENVFILE="/etc/${SVC}.env"
+LIBDIR="/usr/local/lib/zomboid-arm${SFX}"
+BIN_PZCTL="/usr/local/bin/pzctl${SFX}"
+BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
+BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
+BIN_MODUPDATE="/usr/local/sbin/pz-modupdate${SFX}"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
-say "Service user: $(b "$TARGET_USER")   home: $(b "$TARGET_HOME")"
+say "Service: $(b "$SVC")   user: $(b "$TARGET_USER")   data: $(b "$CACHEDIR")"
+
+[[ "$PORT" =~ ^[0-9]+$ ]] || die "PZ_PORT must be a number."
 
 # ----------------------------------------------------------------- refresh package lists FIRST
 # People forget `sudo apt update` on a fresh box, which then breaks every package install.
-# Do it up front so the rest of the installer can rely on current package lists.
 step "Refreshing package lists (apt update)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y || die "apt update failed — check the box's network/DNS, then re-run."
 
+# ----------------------------------------------------------------- resource sanity
+DETECT_GB=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)
+AVAIL_DISK_GB=$(df -BG --output=avail "$(dirname "$INSTALL_DIR")" 2>/dev/null | tail -1 | tr -dc '0-9')
+[ "${DETECT_GB:-0}" -lt 6 ] && warn "Only ${DETECT_GB}G RAM. 8G+ is recommended; below 6G expect trouble (JVM + box64 overhead)."
+[ "${AVAIL_DISK_GB:-99}" -lt 12 ] && warn "Only ${AVAIL_DISK_GB}G free disk. The server alone is ~7G; 12G+ free is recommended."
+
 # ----------------------------------------------------------------- interactive config
 step "Configuration (press Enter to accept defaults)"
-DETECT_GB=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)
 DEF_RAM=$(( DETECT_GB>16 ? 12 : (DETECT_GB>8 ? DETECT_GB-4 : DETECT_GB/2) )); [ "$DEF_RAM" -lt 2 ] && DEF_RAM=2
-ADMIN_PW="$(ask 'Admin password (for the in-game admin account):' 'admin')"
-JOIN_PW="$(ask 'Join password (players type this to connect; blank = open):' '')"
-RAM_GB="$(ask "RAM for the server in GB (host has ${DETECT_GB}G):" "$DEF_RAM")"
+
+if [ -n "${PZ_ADMIN_PW-}" ]; then ADMIN_PW="$PZ_ADMIN_PW"; else
+  ADMIN_PW="$(ask 'Admin password (for the in-game admin account):' 'admin')"
+fi
+while [[ "$ADMIN_PW" =~ [\"\'\\\ ] ]]; do
+  warn "The admin password can't contain spaces, quotes or backslashes (it goes on the server command line)."
+  ADMIN_PW="$(ask 'Admin password:' 'admin')"
+done
+if [ -n "${PZ_JOIN_PW+x}" ]; then JOIN_PW="$PZ_JOIN_PW"; else
+  JOIN_PW="$(ask 'Join password (players type this to connect; blank = open):' '')"
+fi
+if [ -n "${PZ_RAM_GB-}" ]; then RAM_GB="$PZ_RAM_GB"; else
+  RAM_GB="$(ask "RAM for the server in GB (host has ${DETECT_GB}G):" "$DEF_RAM")"
+fi
+[[ "$RAM_GB" =~ ^[0-9]+$ ]] && [ "$RAM_GB" -ge 2 ] || { warn "'$RAM_GB' isn't a valid GB amount; using ${DEF_RAM}G."; RAM_GB=$DEF_RAM; }
 say "RAM ${RAM_GB}G, admin password set, join password $( [ -n "$JOIN_PW" ] && echo set || echo 'none')."
+
+# ----------------------------------------------------------------- game branch
+# B42 is the stable `public` branch now (the old `unstable` beta branch is gone).
+# Offer whatever branches Steam currently has, with a built-in fallback list.
+step "Game branch"
+FALLBACK_BRANCHES=$'public\tB42 stable (recommended)\n42.19\tBuild 42.19.1 (pinned older stable)\nlegacy41\tBuild 41.78.20 (old B41; saves are NOT compatible with B42)\noutdatedunstable\tPre-stable B42 (rollbacks / old unstable saves only)'
+BRANCHES="$(curl -fsSL --max-time 8 'https://api.steamcmd.net/v1/info/380870' 2>/dev/null \
+  | jq -r '.data."380870".depots.branches // {} | to_entries[]
+           | select(((.value.pwdrequired // 0) | tostring) != "1")
+           | [.key, (.value.description // "")] | @tsv' 2>/dev/null | grep . || true)"
+if [ -n "$BRANCHES" ]; then
+  BRANCHES="$(printf '%s\n' "$BRANCHES" | awk -F'\t' '
+    $1=="public" { print $1 "\tB42 stable (recommended)"; next } { rest = rest $0 "\n" }
+    END { printf "%s", rest }')"
+  say "Live branch list fetched from Steam."
+else
+  BRANCHES="$FALLBACK_BRANCHES"
+  warn "Couldn't fetch the live branch list; using the built-in one."
+fi
+DEF_BRANCH=public
+if [ -f "$ENVFILE" ]; then   # re-runs default to the branch picked last time
+  PREV_BRANCH="$(grep -m1 '^PZ_BRANCH=' "$ENVFILE" | cut -d= -f2 || true)"
+  DEF_BRANCH="${PREV_BRANCH:-public}"
+fi
+mapfile -t BR_LINES <<< "$BRANCHES"
+if [ -n "${PZ_BRANCH-}" ]; then
+  BRANCH="$PZ_BRANCH"
+else
+  i=0
+  for line in "${BR_LINES[@]}"; do
+    i=$((i+1)); printf '   %d) %-18s %s\n' "$i" "${line%%$'\t'*}" "${line#*$'\t'}"
+  done
+  pick="$(ask 'Branch (number or name):' "$DEF_BRANCH")"
+  if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le ${#BR_LINES[@]} ]; then
+    BRANCH="${BR_LINES[$((pick-1))]%%$'\t'*}"
+  else
+    BRANCH="$pick"
+    printf '%s\n' "$BRANCHES" | cut -f1 | grep -qx "$BRANCH" || warn "'$BRANCH' isn't in the branch list — passing it to Steam anyway."
+  fi
+fi
+say "Branch: $(b "$BRANCH")"
 
 # ----------------------------------------------------------------- 1. dependencies
 step "Installing dependencies"
 # No system Java needed (the server bundles its own x86 jre64, run via box64).
 # No box86 / armhf libs needed (we use DepotDownloader, not 32-bit steamcmd).
-apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates >/dev/null || \
-  apt-get install -y -qq ciopfs fuse wget curl unzip jq gnupg ca-certificates >/dev/null
+apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates python3 >/dev/null || \
+  apt-get install -y -qq ciopfs fuse wget curl unzip jq gnupg ca-certificates python3 >/dev/null
 # allow_other for the ciopfs FUSE mount
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || echo 'user_allow_other' >> /etc/fuse.conf
 
@@ -71,7 +158,14 @@ if ! command -v box64 >/dev/null; then
   curl -fsSL https://ryanfortner.github.io/box64-debs/box64.list -o /etc/apt/sources.list.d/box64.list
   curl -fsSL https://ryanfortner.github.io/box64-debs/KEY.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/box64-debs-archive-keyring.gpg
   apt-get update -qq
-  apt-get install -y -qq box64-generic-arm || apt-get install -y -qq box64 || \
+  # Pick the build matching the hardware where it matters (Raspberry Pi), generic otherwise.
+  BOX64_PKG=box64-generic-arm
+  PI_MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+  case "$PI_MODEL" in
+    *"Raspberry Pi 5"*) BOX64_PKG=box64-rpi5arm64 ;;
+    *"Raspberry Pi 4"*) BOX64_PKG=box64-rpi4arm64 ;;
+  esac
+  apt-get install -y -qq "$BOX64_PKG" || apt-get install -y -qq box64-generic-arm || apt-get install -y -qq box64 || \
     die "box64 install failed. Install it manually (https://github.com/ptitSeb/box64) and re-run."
 fi
 say "box64 ready: $(box64 --version 2>&1 | head -1 || echo installed)"
@@ -116,10 +210,10 @@ fi
 say "DepotDownloader: $DD"
 
 # ----------------------------------------------------------------- 3. download the server
-step "Downloading Project Zomboid B42 (unstable) server — this can take several minutes"
+step "Downloading Project Zomboid B42 server (branch: $BRANCH) — this can take several minutes"
 mkdir -p "$INSTALL_DIR"
 chown "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR"       # so DepotDownloader (run as the user) can write here
-sudo -u "$TARGET_USER" env HOME="$TARGET_HOME" DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 $DD -app 380870 -branch unstable -os linux -dir "$INSTALL_DIR" \
+sudo -u "$TARGET_USER" env HOME="$TARGET_HOME" DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 $DD -app 380870 -branch "$BRANCH" -os linux -dir "$INSTALL_DIR" \
   || die "Server download failed (Steam/DepotDownloader). Re-run to resume."
 chmod +x "$INSTALL_DIR/ProjectZomboid64" "$INSTALL_DIR/ProjectZomboid32" "$INSTALL_DIR"/*.sh 2>/dev/null || true
 # DepotDownloader strips execute bits — restore them on the bundled JRE, or start-server.sh
@@ -140,78 +234,123 @@ sed "s/__XMX__/${RAM_GB}g/" "$REPO_DIR/templates/ProjectZomboid64.json" > "$INST
 # ----------------------------------------------------------------- 5. ciopfs dirs
 step "Preparing ciopfs (case-insensitive mods)"
 if [ -d "$WS" ] && [ ! -d "${WS}.ci" ]; then mv "$WS" "${WS}.ci"; fi
-mkdir -p "${WS}.ci" "$WS" "$TARGET_HOME/Zomboid/mods"
-chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR" "$TARGET_HOME/Zomboid" 2>/dev/null || true
+mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods"
+chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR" "$CACHEDIR" 2>/dev/null || true
 
 # ----------------------------------------------------------------- 6. systemd + scripts
-step "Installing systemd services and the pzctl control panel"
-render() { sed -e "s|__USER__|$TARGET_USER|g" -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
-               -e "s|__HOME__|$TARGET_HOME|g"  -e "s|__ADMIN_PW__|$ADMIN_PW|g" "$1"; }
-render "$REPO_DIR/templates/zomboid-b42.service"    > /etc/systemd/system/zomboid-b42.service
-render "$REPO_DIR/templates/zomboid-ciopfs.service" > /etc/systemd/system/zomboid-ciopfs.service
-render "$REPO_DIR/templates/zomboid-watchdog.service" > /etc/systemd/system/zomboid-watchdog.service
-cp "$REPO_DIR/templates/zomboid-watchdog.timer" /etc/systemd/system/zomboid-watchdog.timer
-install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" /usr/local/sbin/zomboid-watchdog.sh
-install -m755 "$REPO_DIR/scripts/boot-retry.sh"       /usr/local/sbin/pz-boot-retry
-install -m755 "$REPO_DIR/pzctl"                       /usr/local/bin/pzctl
-# let pzctl / boot-retry know the environment on this host
-cat > /etc/zomboid-b42.env <<EOF
-PZ_SERVICE=zomboid-b42
+step "Installing systemd services, pzctl and the mod updater"
+# sed replacement-side escaping for values that may hold |, & or \
+esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+EXTRA_ARGS=""
+[ "$CACHEDIR" != "$TARGET_HOME/Zomboid" ] && EXTRA_ARGS="-cachedir=$CACHEDIR"
+[ "$PORT" != 16261 ] && EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }-port $PORT -udpport $((PORT+1))"
+render() { sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__INSTALL_DIR__|$(esc "$INSTALL_DIR")|g" \
+               -e "s|__HOME__|$(esc "$TARGET_HOME")|g"  -e "s|__ADMIN_PW__|$(esc "$ADMIN_PW")|g" \
+               -e "s|__SVC__|$(esc "$SVC")|g" -e "s|__PORT__|$PORT|g" \
+               -e "s|__CONSOLE__|$(esc "$CACHEDIR/server-console.txt")|g" \
+               -e "s|__SERVERNAME__|$SERVERNAME|g" -e "s|__EXTRA_ARGS__|$(esc "$EXTRA_ARGS")|g" \
+               -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" -e "s|__MODUPDATE__|$(esc "$BIN_MODUPDATE")|g" \
+               -e "s|__WATCHDOG__|$(esc "$BIN_WATCHDOG")|g" -e "s|__LIBDIR__|$(esc "$LIBDIR")|g" "$1"; }
+render "$REPO_DIR/templates/zomboid-b42.service"       > "/etc/systemd/system/$SVC.service"
+render "$REPO_DIR/templates/zomboid-ciopfs.service"    > "/etc/systemd/system/$SVC-ciopfs.service"
+render "$REPO_DIR/templates/zomboid-watchdog.service"  > "/etc/systemd/system/$SVC-watchdog.service"
+render "$REPO_DIR/templates/zomboid-watchdog.timer"    > "/etc/systemd/system/$SVC-watchdog.timer"
+render "$REPO_DIR/templates/zomboid-modupdate.service" > "/etc/systemd/system/$SVC-modupdate.service"
+render "$REPO_DIR/templates/zomboid-modupdate.timer"   > "/etc/systemd/system/$SVC-modupdate.timer"
+install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" "$BIN_WATCHDOG"
+install -m755 "$REPO_DIR/scripts/boot-retry.sh"       "$BIN_BOOTRETRY"
+install -m755 "$REPO_DIR/scripts/pz-modupdate.sh"     "$BIN_MODUPDATE"
+install -m755 "$REPO_DIR/pzctl"                       "$BIN_PZCTL"
+mkdir -p "$LIBDIR"
+install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
+install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
+# namespaced installs: point the installed copies at their own env file
+if [ -n "$SFX" ]; then
+  sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE"
+fi
+# let pzctl & friends know the environment on this host
+cat > "$ENVFILE" <<EOF
+PZ_SERVICE=$SVC
 PZ_USER=$TARGET_USER
 PZ_INSTALL=$INSTALL_DIR
-PZ_CONSOLE=$TARGET_HOME/Zomboid/server-console.txt
-PZ_INI=$TARGET_HOME/Zomboid/Server/servertest.ini
-PZ_MODS=$TARGET_HOME/Zomboid/mods
+PZ_CACHEDIR=$CACHEDIR
+PZ_CONSOLE=$CACHEDIR/server-console.txt
+PZ_INI=$CACHEDIR/Server/$SERVERNAME.ini
+PZ_MODS=$CACHEDIR/mods
 PZ_DD=$DD
+PZ_PORT=$PORT
+PZ_RCONPORT=$RCONPORT
+PZ_BRANCH=$BRANCH
+PZ_SERVERNAME=$SERVERNAME
+PZ_COMMON=$LIBDIR/common.sh
+PZ_RCON=$LIBDIR/pz-rcon.py
+PZ_BOOTRETRY=$BIN_BOOTRETRY
+PZ_WATCHDOG=$BIN_WATCHDOG
+PZ_MODUPDATE=$BIN_MODUPDATE
+PZ_PZCTL=$BIN_PZCTL
+PZ_CONF=$CACHEDIR/pzctl.conf
+PZ_UPDATELOG=$CACHEDIR/mod-updates.log
+PZ_BACKUPS=$BACKUPS
 EOF
 systemctl daemon-reload
-systemctl enable zomboid-ciopfs.service zomboid-b42.service zomboid-watchdog.timer >/dev/null 2>&1
-systemctl start  zomboid-ciopfs.service
+systemctl enable "$SVC-ciopfs.service" "$SVC.service" "$SVC-watchdog.timer" "$SVC-modupdate.timer" >/dev/null 2>&1
+systemctl start  "$SVC-ciopfs.service"
 
 # ----------------------------------------------------------------- 6b. local firewall (iptables)
 # Oracle Ubuntu images ship a restrictive iptables that ends in a REJECT rule, so the game
 # port is blocked locally unless explicitly allowed. (This is separate from the Oracle
 # Cloud Security List, which must also be opened in the web console — see the end.)
-step "Opening the game port in the local firewall (iptables)"
-apt-get install -y -qq iptables netfilter-persistent iptables-persistent >/dev/null 2>&1 || true
-open_udp() { iptables -C INPUT -p udp --dport "$1" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$1" -j ACCEPT 2>/dev/null || return 1; }
-if command -v iptables >/dev/null && open_udp 16261 && open_udp 16262; then
-  netfilter-persistent save >/dev/null 2>&1 || { mkdir -p /etc/iptables && iptables-save > /etc/iptables/rules.v4 2>/dev/null; } || true
-  say "Allowed UDP 16261-16262 in the local firewall (persisted)."
+if [ "${PZ_SKIP_FIREWALL:-0}" = 1 ]; then
+  say "Skipping the firewall step (PZ_SKIP_FIREWALL=1)."
 else
-  warn "Couldn't set iptables rules automatically — open UDP 16261/16262 manually if the box has a firewall."
+  step "Opening the game port in the local firewall (iptables)"
+  apt-get install -y -qq iptables netfilter-persistent iptables-persistent >/dev/null 2>&1 || true
+  open_udp() { iptables -C INPUT -p udp --dport "$1" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$1" -j ACCEPT 2>/dev/null || return 1; }
+  if command -v iptables >/dev/null && open_udp "$PORT" && open_udp "$((PORT+1))"; then
+    netfilter-persistent save >/dev/null 2>&1 || { mkdir -p /etc/iptables && iptables-save > /etc/iptables/rules.v4 2>/dev/null; } || true
+    say "Allowed UDP $PORT-$((PORT+1)) in the local firewall (persisted)."
+  else
+    warn "Couldn't set iptables rules automatically — open UDP $PORT/$((PORT+1)) manually if the box has a firewall."
+  fi
 fi
 
 # ----------------------------------------------------------------- 7. first boot -> generate ini
 step "First boot (generates server config; box64 boot is flaky so this may retry)"
-PZ_CONSOLE="$TARGET_HOME/Zomboid/server-console.txt" /usr/local/sbin/pz-boot-retry || \
-  warn "Server didn't reach 'listening' automatically. You can retry later with:  pzctl  (menu: Start)"
+PZ_SERVICE="$SVC" PZ_PORT="$PORT" PZ_CONSOLE="$CACHEDIR/server-console.txt" "$BIN_BOOTRETRY" || \
+  warn "Server didn't reach 'listening' automatically. You can retry later with:  ${BIN_PZCTL##*/}  (menu: Start)"
 
-INI="$TARGET_HOME/Zomboid/Server/servertest.ini"
-if [ -f "$INI" ] && [ -n "$JOIN_PW" ]; then
-  sed -i "s/^Password=.*/Password=$JOIN_PW/" "$INI" 2>/dev/null || echo "Password=$JOIN_PW" >> "$INI"
-  systemctl restart zomboid-b42.service
-  say "Join password applied."
+INI="$CACHEDIR/Server/$SERVERNAME.ini"
+# safe key=value editing (no sed escaping pitfalls) via the shared lib
+. "$REPO_DIR/scripts/common.sh"
+CHANGED=0
+if [ -f "$INI" ]; then
+  if [ -n "$JOIN_PW" ]; then ini_set Password "$JOIN_PW" "$INI"; CHANGED=1; fi
+  if [ "$RCONPORT" != 27015 ]; then ini_set RCONPort "$RCONPORT" "$INI"; CHANGED=1; fi
+  chown "$TARGET_USER":"$TARGET_USER" "$INI" 2>/dev/null || true
+  if [ "$CHANGED" = 1 ]; then
+    systemctl restart "$SVC.service"
+    say "Server settings applied."
+  fi
 fi
 
-# Start the watchdog NOW (not just on next boot) so a hung/crashed boot self-recovers from here on.
-systemctl start zomboid-watchdog.timer >/dev/null 2>&1 || true
+# Start the watchdog + mod-update timers NOW (not just on next boot).
+systemctl start "$SVC-watchdog.timer" "$SVC-modupdate.timer" >/dev/null 2>&1 || true
 
 # ----------------------------------------------------------------- done
 PUBIP="$(curl -fsSL --max-time 5 ifconfig.me 2>/dev/null || echo YOUR_SERVER_IP)"
 step "Done"
 cat <<EOF
-  Server:   $(b "$PUBIP:16261")   (UDP)
+  Server:   $(b "$PUBIP:$PORT")   (UDP)
+  Branch:   $(b "$BRANCH")
   Admin pw: $(b "$ADMIN_PW")
   $( [ -n "$JOIN_PW" ] && echo "Join pw:  $(b "$JOIN_PW")" || echo "Join pw:  (none — open server)" )
 
-  The local firewall (iptables) is already open for UDP 16261-16262.
-  1) $(b 'Oracle Cloud users:') also allow $(b 'UDP 16261') in your VCN Security List
+  The local firewall (iptables) is open for UDP $PORT-$((PORT+1)).
+  1) $(b 'Oracle Cloud users:') also allow $(b "UDP $PORT") in your VCN Security List
      (cloud console -> Networking -> VCN -> Security Lists) — that cloud layer is
      separate from the box's firewall and cannot be opened from inside the machine.
-  2) Manage the server anytime with:   $(b pzctl)
-       start / stop / status / logs / add-mod / settings / backup
+  2) Manage the server anytime with:   $(b "${BIN_PZCTL##*/}")
+       start / stop / status / logs / mods & updates / console / settings / backup
 
-  Note: 'unstable' B42 is a moving target; if a future build breaks something,
-  re-run this installer to update, or see the README troubleshooting section.
+  Note: if a future game build breaks something, re-run this installer to update.
 EOF

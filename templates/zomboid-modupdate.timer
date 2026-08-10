@@ -1,0 +1,10 @@
+[Unit]
+Description=Zomboid B42 mod auto-update tick, every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=2min
+
+[Install]
+WantedBy=timers.target

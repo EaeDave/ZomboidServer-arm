@@ -3,5 +3,7 @@ Description=Zomboid B42 boot-hang watchdog (box64)
 
 [Service]
 Type=oneshot
-Environment=PZ_CONSOLE=__HOME__/Zomboid/server-console.txt
-ExecStart=/usr/local/sbin/zomboid-watchdog.sh
+Environment=PZ_SERVICE=__SVC__
+Environment=PZ_PORT=__PORT__
+Environment=PZ_CONSOLE=__CONSOLE__
+ExecStart=__WATCHDOG__

@@ -18,7 +18,7 @@ for attempt in $(seq 1 6); do
   sudo systemctl restart "$SVC"
   for poll in $(seq 1 40); do
     sleep 15
-    listen=$(sudo ss -uln 2>/dev/null | grep -c ":$PORT")
+    listen=$(sudo ss -uln 2>/dev/null | grep -cE ":$PORT\b")
     crash=$(grep -c "onItemNotDownloaded" "$C" 2>/dev/null)
     idle=$(( $(date +%s) - $(stat -c %Y "$C" 2>/dev/null || echo 0) ))
     last=$(tail -1 "$C" 2>/dev/null)

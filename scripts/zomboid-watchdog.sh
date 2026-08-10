@@ -13,7 +13,7 @@ PORT="${PZ_PORT:-16261}"
 CONSOLE="${PZ_CONSOLE:-/home/ubuntu/Zomboid/server-console.txt}"
 STALL=360
 [ "$(systemctl is-active "$SVC" 2>/dev/null)" != "active" ] && exit 0
-ss -uln 2>/dev/null | grep -q ":$PORT" && exit 0            # listening = healthy
+ss -uln 2>/dev/null | grep -qE ":$PORT\b" && exit 0         # listening = healthy
 ae=$(systemctl show "$SVC" -p ActiveEnterTimestamp --value 2>/dev/null)
 aesec=$(date -d "$ae" +%s 2>/dev/null) || exit 0
 [ $(( $(date +%s) - aesec )) -lt "$STALL" ] && exit 0        # just (re)started, give it time

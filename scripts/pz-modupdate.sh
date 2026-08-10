@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+#
+#  pz-modupdate — workshop mod update checker/applier for the PZ ARM server.
+#
+#    pz-modupdate check          human-readable report; exit 10 if updates exist
+#    pz-modupdate check --ids    print outdated workshop ids only
+#    pz-modupdate apply [--no-restart]
+#                                backup world, re-download outdated items as local
+#                                mods, log to the update log, restart the server
+#    pz-modupdate auto           systemd-timer entrypoint; honors pzctl.conf:
+#                                  MODUPDATE_AUTO=0|1        master switch
+#                                  MODUPDATE_SCHED=daily|weekly
+#                                  MODUPDATE_EMPTY_MIN=60    server empty this long
+#                                  MODUPDATE_BACKUP_KEEP=2   backups kept (1-3)
+#
+#  Runs fine as root (systemd timer) or as the game user (via pzctl).
+#  Point PZCTL_ENV at an alternate env file to drive a non-default install.
+#
+set -uo pipefail
+ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
+. "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
+pz_load_env
+
+STATE="$PZ_CACHEDIR/.modupdate-state"
+state_get() { ini_get "$1" "$STATE"; }
+state_set() { ini_set "$1" "$2" "$STATE"; fix_owner "$STATE"; }
+
+# one line per outdated item: <wid>\t<stored>\t<live>\t<title>
+outdated_rows() {
+  local -a ids=(); local wid live title row stored
+  mapfile -t ids < <(manifest_ids)
+  [ ${#ids[@]} -eq 0 ] && return 0
+  while IFS=$'\t' read -r wid live title; do
+    row="$(manifest_row "$wid")"; [ -z "$row" ] && continue
+    stored="$(printf '%s' "$row" | cut -f2)"
+    if [ "$live" -gt "${stored:-0}" ] 2>/dev/null; then
+      printf '%s\t%s\t%s\t%s\n' "$wid" "${stored:-0}" "$live" "$title"
+    fi
+  done < <(ws_details "${ids[@]}")
+}
+
+fmt_t() { date -d "@$1" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$1"; }
+
+do_check() {
+  local ids_only="${1:-}"
+  if [ -z "$(manifest_ids)" ]; then
+    [ "$ids_only" = --ids ] || echo "No tracked mods yet. Mods added through pzctl are tracked automatically; re-add an existing mod/collection URL to start tracking it."
+    return 0
+  fi
+  local -a rows=()
+  mapfile -t rows < <(outdated_rows)
+  if [ "$ids_only" = --ids ]; then
+    printf '%s\n' "${rows[@]}" 2>/dev/null | cut -f1 | grep . || true
+    [ ${#rows[@]} -gt 0 ] && return 10 || return 0
+  fi
+  if [ ${#rows[@]} -eq 0 ]; then
+    echo "All $(manifest_ids | wc -l) tracked workshop item(s) are up to date."
+    return 0
+  fi
+  echo "Updates available for ${#rows[@]} item(s):"
+  local wid stored live title
+  while IFS=$'\t' read -r wid stored live title; do
+    printf '  %-12s %s   (%s -> %s)\n' "$wid" "$title" "$(fmt_t "$stored")" "$(fmt_t "$live")"
+  done < <(printf '%s\n' "${rows[@]}")
+  return 10
+}
+
+do_apply() {
+  local no_restart="${1:-}"
+  exec 9>"/tmp/.pz-modupdate-$PZ_SERVICE.lock"
+  flock -n 9 || { echo "another update run is in progress; skipping."; return 0; }
+
+  local -a rows=()
+  mapfile -t rows < <(outdated_rows)
+  if [ ${#rows[@]} -eq 0 ]; then echo "Nothing to update."; return 0; fi
+
+  local keep; keep="$(conf_get MODUPDATE_BACKUP_KEEP 2)"
+  [[ "$keep" =~ ^[1-3]$ ]] || keep=2
+  echo "Backing up world before updating (${#rows[@]} item(s))..."
+  backup_world "$PZ_BACKUPS/mod-update" modup >/dev/null
+  rotate_backups "$PZ_BACKUPS/mod-update" modup "$keep"
+
+  local wid stored live title ok=0 fail=0
+  while IFS=$'\t' read -r wid stored live title; do
+    printf '  updating %s (%s) ... ' "$title" "$wid"
+    if install_workshop_item "$wid" >/dev/null; then
+      ok=$((ok+1)); echo "ok"
+      log_modupdate "updated | $wid | $title | $(fmt_t "$stored") -> $(fmt_t "$live")"
+    else
+      fail=$((fail+1)); echo "FAILED (kept previous files)"
+      log_modupdate "FAILED  | $wid | $title | download error, previous version kept"
+    fi
+  done < <(printf '%s\n' "${rows[@]}")
+  echo "Done: $ok updated, $fail failed. Log: $PZ_UPDATELOG"
+
+  if [ "$no_restart" = --no-restart ]; then
+    echo "Restart skipped (caller handles it)."
+  elif ! svc_active; then
+    echo "Server is stopped; updated files will load on the next start."
+  else
+    echo "Restarting the server to load updated mods..."
+    "$PZ_BOOTRETRY"
+  fi
+  [ "$fail" -eq 0 ]
+}
+
+do_auto() {
+  [ "$(conf_get MODUPDATE_AUTO 0)" = 1 ] || exit 0
+  local now interval last pending empty_since count empty_min
+  now="$(date +%s)"
+  case "$(conf_get MODUPDATE_SCHED daily)" in
+    weekly) interval=604800 ;;
+    *)      interval=86400  ;;
+  esac
+  last="$(state_get LAST_CHECK)"; last="${last:-0}"
+
+  if [ $((now - last)) -ge "$interval" ]; then
+    pending="$(do_check --ids | tr '\n' ' ')"
+    state_set LAST_CHECK "$now"
+    state_set PENDING "${pending% }"
+    if [ -n "${pending% }" ]; then
+      logger -t pz-modupdate "check: updates pending for: ${pending% }"
+      log_modupdate "check   | updates detected, waiting for an empty server"
+    fi
+  fi
+
+  pending="$(state_get PENDING)"
+  [ -z "$pending" ] && exit 0
+
+  if ! svc_active; then
+    logger -t pz-modupdate "server stopped; applying mod updates now"
+    do_apply --no-restart
+    state_set PENDING ""; state_set EMPTY_SINCE ""
+    exit 0
+  fi
+
+  count="$(player_count)"
+  if [ "$count" = -1 ]; then
+    logger -t pz-modupdate "cannot read player count (RCON off/unreachable); postponing mod updates"
+    exit 0
+  elif [ "$count" -gt 0 ]; then
+    state_set EMPTY_SINCE ""
+    exit 0
+  fi
+
+  empty_since="$(state_get EMPTY_SINCE)"
+  if [ -z "$empty_since" ]; then
+    state_set EMPTY_SINCE "$now"
+    exit 0
+  fi
+  empty_min="$(conf_get MODUPDATE_EMPTY_MIN 60)"
+  [[ "$empty_min" =~ ^[0-9]+$ ]] || empty_min=60
+  if [ $((now - empty_since)) -ge $((empty_min * 60)) ]; then
+    logger -t pz-modupdate "server empty for ${empty_min}m; applying mod updates"
+    do_apply
+    state_set PENDING ""; state_set EMPTY_SINCE ""
+  fi
+}
+
+case "${1:-}" in
+  check) do_check "${2:-}" ;;
+  apply) do_apply "${2:-}" ;;
+  auto)  do_auto ;;
+  *) sed -n '2,20p' "$0" | sed 's/^#//;s/^ //'; exit 1 ;;
+esac

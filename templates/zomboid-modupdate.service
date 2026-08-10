@@ -1,0 +1,9 @@
+[Unit]
+Description=Zomboid B42 workshop mod auto-update check
+
+[Service]
+Type=oneshot
+# Master switch and cadence live in pzctl.conf (pzctl menu 12); with MODUPDATE_AUTO=0
+# this exits immediately, so the timer being active costs nothing.
+Environment=PZCTL_ENV=__ENVFILE__
+ExecStart=__MODUPDATE__ auto

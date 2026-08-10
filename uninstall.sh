@@ -4,11 +4,14 @@
 #
 #  Usage:   sudo ./uninstall.sh
 #
-#  Removes the server, its systemd services, scripts, config and firewall rules.
-#  Prompts before deleting your worlds/saves and before touching the shared box64.
+#  Removes the server files, systemd services, helper scripts, config and firewall
+#  rules that install.sh created. Your worlds/saves are only deleted if you say yes
+#  to that question, and the shared box64 emulator is left alone unless you opt in.
 #
-#  !!! USE AT YOUR OWN RISK !!!  This `rm -rf`s /opt/zomboid-server and (after a prompt) your
-#  entire ~/Zomboid folder. If you kept unrelated files in those paths, they go too.
+#  Heads-up: the server directory is deleted with `rm -rf`, so if you manually
+#  stored unrelated files inside it (or inside ~/Zomboid and you confirm that
+#  prompt), those are removed with it. Uninstalls a non-default install when
+#  PZCTL_ENV points at its env file.
 #
 set -uo pipefail   # deliberately NOT -e: keep going even if pieces are already gone
 
@@ -27,22 +30,35 @@ EOF
 [ "$(id -u)" -eq 0 ] || { echo "Please run as root:  sudo ./uninstall.sh"; exit 1; }
 
 # discover paths from the installer's env file (fall back to defaults)
-[ -f /etc/zomboid-b42.env ] && . /etc/zomboid-b42.env
+ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"
+[ -f "$ENVF" ] && . "$ENVF"
+SVC="${PZ_SERVICE:-zomboid-b42}"
 PZ_USER="${PZ_USER:-ubuntu}"
 PZ_HOME="$(getent passwd "$PZ_USER" | cut -d: -f6)"; PZ_HOME="${PZ_HOME:-/home/ubuntu}"
 INSTALL_DIR="${PZ_INSTALL:-/opt/zomboid-server}"
+CACHEDIR="${PZ_CACHEDIR:-$PZ_HOME/Zomboid}"
+PORT="${PZ_PORT:-16261}"
+BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
+WATCHDOG="${PZ_WATCHDOG:-/usr/local/sbin/zomboid-watchdog.sh}"
+MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
+PZCTL_BIN="${PZ_PZCTL:-/usr/local/bin/pzctl}"
+LIBDIR="$(dirname "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}")"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
 
-echo "This removes: the PZ B42 server, its systemd services, pzctl, the watchdog, the"
-echo "box64 [ProjectZomboid64] tuning we added, and the UDP 16261-16262 firewall rules."
-warn "USE AT YOUR OWN RISK — this rm -rf's $INSTALL_DIR and (if you confirm below) ALL of"
-warn "$PZ_HOME/Zomboid. Anything you stored inside those folders will be gone for good."
+echo "This removes: the PZ B42 server in $INSTALL_DIR, its systemd services, pzctl,"
+echo "the watchdog + mod updater, the box64 [ProjectZomboid64] tuning we added, and"
+echo "the UDP $PORT-$((PORT+1)) firewall rules."
+echo
+echo "Your worlds/saves in $CACHEDIR are asked about separately below, and the"
+echo "shared box64 emulator stays unless you opt in. If you manually stored"
+echo "unrelated files inside those folders, move them out first."
 is_yes "$(ask 'Continue? (type y to proceed)' 'n')" || { echo "Aborted."; exit 0; }
 
 # ----------------------------------------------------------------- 1. services
 step "Stopping and disabling services"
-systemctl stop zomboid-b42.service zomboid-watchdog.timer zomboid-watchdog.service zomboid-ciopfs.service 2>/dev/null
-systemctl disable zomboid-b42.service zomboid-watchdog.timer zomboid-ciopfs.service 2>/dev/null
+systemctl stop "$SVC.service" "$SVC-watchdog.timer" "$SVC-watchdog.service" \
+               "$SVC-modupdate.timer" "$SVC-modupdate.service" "$SVC-ciopfs.service" 2>/dev/null
+systemctl disable "$SVC.service" "$SVC-watchdog.timer" "$SVC-modupdate.timer" "$SVC-ciopfs.service" 2>/dev/null
 say "stopped."
 
 # ----------------------------------------------------------------- 2. ciopfs unmount
@@ -52,13 +68,16 @@ say "unmounted (if it was mounted)."
 
 # ----------------------------------------------------------------- 3. units + scripts + env
 step "Removing systemd units, scripts and pzctl"
-rm -f /etc/systemd/system/zomboid-b42.service \
-      /etc/systemd/system/zomboid-ciopfs.service \
-      /etc/systemd/system/zomboid-watchdog.service \
-      /etc/systemd/system/zomboid-watchdog.timer
-rm -f /usr/local/sbin/zomboid-watchdog.sh /usr/local/sbin/pz-boot-retry /usr/local/bin/pzctl /etc/zomboid-b42.env
+rm -f "/etc/systemd/system/$SVC.service" \
+      "/etc/systemd/system/$SVC-ciopfs.service" \
+      "/etc/systemd/system/$SVC-watchdog.service" \
+      "/etc/systemd/system/$SVC-watchdog.timer" \
+      "/etc/systemd/system/$SVC-modupdate.service" \
+      "/etc/systemd/system/$SVC-modupdate.timer"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$ENVF"
+case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
-systemctl reset-failed zomboid-b42.service 2>/dev/null
+systemctl reset-failed "$SVC.service" 2>/dev/null
 say "removed."
 
 # ----------------------------------------------------------------- 4. box64rc tuning block
@@ -71,29 +90,32 @@ else
 fi
 
 # ----------------------------------------------------------------- 5. firewall rules
-step "Removing the UDP 16261-16262 firewall rules"
+step "Removing the UDP $PORT-$((PORT+1)) firewall rules"
 if command -v iptables >/dev/null; then
-  iptables -D INPUT -p udp --dport 16261 -j ACCEPT 2>/dev/null
-  iptables -D INPUT -p udp --dport 16262 -j ACCEPT 2>/dev/null
+  iptables -D INPUT -p udp --dport "$PORT" -j ACCEPT 2>/dev/null
+  iptables -D INPUT -p udp --dport "$((PORT+1))" -j ACCEPT 2>/dev/null
   netfilter-persistent save >/dev/null 2>&1 || iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
   say "removed (the Oracle VCN Security List rule, if any, is separate — remove it in the console)."
 fi
 
 # ----------------------------------------------------------------- 6. server files
 step "Deleting server files"
-rm -rf "$INSTALL_DIR" /opt/depotdownloader
-say "removed $INSTALL_DIR and /opt/depotdownloader."
+rm -rf "$INSTALL_DIR"
+say "removed $INSTALL_DIR."
+if is_yes "$(ask 'Also remove DepotDownloader (/opt/depotdownloader)? Say n if another install still uses it.' 'y')"; then
+  rm -rf /opt/depotdownloader; say "removed /opt/depotdownloader."
+fi
 
 # ----------------------------------------------------------------- 7. worlds / saves (prompt)
 step "Worlds and saves"
-if [ -d "$PZ_HOME/Zomboid" ]; then
-  if is_yes "$(ask "Delete your worlds & saves at $PZ_HOME/Zomboid too? (irreversible)" 'y')"; then
-    rm -rf "$PZ_HOME/Zomboid"; say "worlds/saves deleted."
+if [ -d "$CACHEDIR" ]; then
+  if is_yes "$(ask "Delete your worlds & saves at $CACHEDIR too? (irreversible)" 'y')"; then
+    rm -rf "$CACHEDIR"; say "worlds/saves deleted."
   else
-    say "kept your worlds/saves at $PZ_HOME/Zomboid."
+    say "kept your worlds/saves at $CACHEDIR."
   fi
 else
-  say "no ~/Zomboid data found."
+  say "no $CACHEDIR data found."
 fi
 
 # ----------------------------------------------------------------- 8. box64 (prompt, shared)
@@ -108,4 +130,4 @@ fi
 
 step "Done"
 echo "  Project Zomboid B42 server removed."
-echo "  Oracle Cloud: you may also remove the UDP 16261 rule from your VCN Security List."
+echo "  Oracle Cloud: you may also remove the UDP $PORT rule from your VCN Security List."

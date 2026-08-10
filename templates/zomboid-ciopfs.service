@@ -1,7 +1,7 @@
 [Unit]
 Description=ciopfs case-insensitive mount for PZ workshop mods (Linux case-sensitivity fix)
 After=local-fs.target
-Before=zomboid-b42.service
+Before=__SVC__.service
 
 [Service]
 Type=oneshot
