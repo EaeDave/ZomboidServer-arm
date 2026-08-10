@@ -1,0 +1,2 @@
+# Everything in this repo runs on Linux; keep LF everywhere, even on Windows checkouts.
+* text=auto eol=lf
