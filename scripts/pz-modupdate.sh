@@ -67,8 +67,14 @@ do_check() {
 
 do_apply() {
   local no_restart="${1:-}"
-  exec 9>"/tmp/.pz-modupdate-$PZ_SERVICE.lock"
-  flock -n 9 || { echo "another update run is in progress; skipping."; return 0; }
+  # lock lives in the cachedir, NOT /tmp: Ubuntu's fs.protected_regular blocks root
+  # from opening another user's files in sticky world-writable dirs, and pz-modupdate
+  # legitimately runs both as root (timer) and as the game user (pzctl).
+  if ! { exec 9>"$PZ_CACHEDIR/.modupdate.lock"; } 2>/dev/null; then
+    echo "cannot open the update lock ($PZ_CACHEDIR/.modupdate.lock)"; return 75
+  fi
+  flock -n 9 || { echo "another update run is in progress; skipping."; return 75; }
+  fix_owner "$PZ_CACHEDIR/.modupdate.lock"
 
   local -a rows=()
   mapfile -t rows < <(outdated_rows)
@@ -129,8 +135,9 @@ do_auto() {
 
   if ! svc_active; then
     logger -t pz-modupdate "server stopped; applying mod updates now"
-    do_apply --no-restart
-    state_set PENDING ""; state_set EMPTY_SINCE ""
+    if do_apply --no-restart; then
+      state_set PENDING ""; state_set EMPTY_SINCE ""
+    fi                       # busy/failed -> keep PENDING, retry next tick
     exit 0
   fi
 
@@ -152,8 +159,9 @@ do_auto() {
   [[ "$empty_min" =~ ^[0-9]+$ ]] || empty_min=60
   if [ $((now - empty_since)) -ge $((empty_min * 60)) ]; then
     logger -t pz-modupdate "server empty for ${empty_min}m; applying mod updates"
-    do_apply
-    state_set PENDING ""; state_set EMPTY_SINCE ""
+    if do_apply; then
+      state_set PENDING ""; state_set EMPTY_SINCE ""
+    fi                       # busy/failed -> keep PENDING, retry next tick
   fi
 }
 

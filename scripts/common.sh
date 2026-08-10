@@ -142,7 +142,11 @@ manifest_row()  { [ -f "$PZ_MANIFEST" ] && grep -m1 "^$1	" "$PZ_MANIFEST" || tru
 # Also records/updates the item in the workshop manifest (for update checking).
 install_workshop_item() {
   local wid="$1" tmp modsdir root info mid; local -a roots=() mids=()
-  tmp="$(mktemp -d)"
+  # the temp dir must belong to the game user: DepotDownloader runs as that user
+  # even when this code runs as root (systemd timer), and root's mktemp -d would
+  # hand it an unwritable 700 directory
+  tmp="$(as_user mktemp -d)"
+  [ -d "$tmp" ] || return 1
   as_user $PZ_DD -app 108600 -pubfile "$wid" -dir "$tmp" >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }
   # Each mod is an immediate subdirectory of the item's mods/ folder. Ignore nested version
   # subfolders like 42/ (B42 mods carry a mod.info there too -> would look like a separate mod).
@@ -176,11 +180,15 @@ install_workshop_item() {
 # ------------------------------------------------------------ RCON
 rcon_ready() { [ -n "$(ini_get RCONPassword)" ]; }
 rcon_cmd() {  # rcon_cmd "command with args"  -> stdout; rc!=0 on failure
-  local port pw
+  local port pw rc
   port="$(ini_get RCONPort)"; port="${port:-$PZ_RCONPORT}"
   pw="$(ini_get RCONPassword)"
   [ -z "$pw" ] && return 3
-  RCON_PASSWORD="$pw" python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" -- "$1" 2>/dev/null
+  RCON_PASSWORD="$pw" python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" -- "$1" 2>/dev/null && return 0
+  rc=$?
+  # right after a boot the game port is up a few seconds before the RCON socket; retry once
+  sleep 3
+  RCON_PASSWORD="$pw" python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" -- "$1" 2>/dev/null || return $rc
 }
 # player_count: echoes a number, or -1 when it cannot tell (RCON off/unreachable)
 player_count() {
