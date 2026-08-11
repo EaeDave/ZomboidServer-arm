@@ -33,6 +33,9 @@ pz_load_env() {
   PZ_BACKUPS="${PZ_BACKUPS:-$PZ_HOME/pz_backups}"
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
   PZ_BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
+  PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
+  # keys that identify THIS host/world; import must never take these from a foreign ini
+  PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
   export PZ_SERVICE PZ_CONSOLE PZ_PORT
 }
 
@@ -78,6 +81,77 @@ mods_get() { ini_get Mods; }
 mods_set() { ini_set Mods "$1"; fix_owner "$PZ_INI"; }
 mods_has() { printf ';%s;' "$(mods_get)" | grep -qF ";$1;"; }
 mods_append() { local cur; cur="$(mods_get)"; mods_has "$1" || mods_set "${cur:+$cur;}$1"; }
+mod_disabled() { [ -f "$PZ_DISABLED" ] && grep -qxF "$1" "$PZ_DISABLED"; }
+# every mod id present on disk (one line each), regardless of active/disabled
+disk_mod_ids() {
+  find "$PZ_MODS" -maxdepth 3 -name mod.info -exec grep -h '^id=' {} + 2>/dev/null \
+    | cut -d= -f2- | tr -d '\r' | sort -u
+}
+
+# Map= helpers ---------------------------------------------------------------
+# B42 map mods ship their cells under <Mod>/media/maps/<Name>, <Mod>/42/media/maps/<Name>
+# or <Mod>/common/media/maps/<Name>. A map only loads when <Name> is listed in Map=,
+# custom maps first and the base map last. pzctl keeps Map= in sync automatically.
+map_get() { ini_get Map; }
+map_set() { ini_set Map "$1"; fix_owner "$PZ_INI"; }
+
+# "<modid>\t<mapname>" for every map folder shipped by installed mods
+mods_map_table() {
+  local top info id d
+  for top in "$PZ_MODS"/*/; do
+    [ -d "$top" ] || continue
+    info="$(find "${top%/}" -maxdepth 2 -name mod.info 2>/dev/null | head -1)"
+    id="$(grep -m1 '^id=' "$info" 2>/dev/null | cut -d= -f2- | tr -d '\r')"
+    [ -z "$id" ] && continue
+    while IFS= read -r d; do
+      printf '%s\t%s\n' "$id" "$(basename "$d")"
+    done < <(find "${top%/}" -maxdepth 4 -type d -path '*media/maps/*' -prune 2>/dev/null)
+  done
+}
+
+# map folders provided by ACTIVE mods, in Mods= load order (deduped)
+maps_available_for_active() {
+  local tbl mid
+  tbl="$(mods_map_table)"
+  [ -z "$tbl" ] && return 0
+  local IFS=';'
+  for mid in $(mods_get); do
+    unset IFS
+    [ -n "$mid" ] && printf '%s\n' "$tbl" | awk -F'\t' -v id="$mid" '$1==id{print $2}'
+    IFS=';'
+  done | awk 'NF && !s[$0]++'
+}
+
+# append any active-mod maps missing from Map= (kept before the base map);
+# echoes how many were added
+maps_append_missing() {
+  local cur added=0 m
+  cur="$(map_get)"; [ -z "$cur" ] && cur="$PZ_BASEMAP"
+  printf ';%s;' "$cur" | grep -qF ";$PZ_BASEMAP;" || cur="$cur;$PZ_BASEMAP"
+  while IFS= read -r m; do
+    [ -z "$m" ] && continue
+    [ "$m" = "$PZ_BASEMAP" ] && continue
+    printf ';%s;' "$cur" | grep -qF ";$m;" && continue
+    if [ "$cur" = "$PZ_BASEMAP" ]; then cur="$m;$PZ_BASEMAP"
+    else cur="${cur%;$PZ_BASEMAP};$m;$PZ_BASEMAP"; fi
+    added=$((added+1))
+  done < <(maps_available_for_active)
+  [ "$added" -gt 0 ] && map_set "$cur"
+  echo "$added"
+}
+
+# rebuild Map= purely from active mods (load order), base map last; echoes the line
+maps_rebuild() {
+  local line="" m
+  while IFS= read -r m; do
+    [ -z "$m" ] && continue
+    [ "$m" = "$PZ_BASEMAP" ] && continue
+    line="${line:+$line;}$m"
+  done < <(maps_available_for_active)
+  line="${line:+$line;}$PZ_BASEMAP"
+  map_set "$line"
+  printf '%s\n' "$line"
+}
 
 # ------------------------------------------------------------ workshop helpers
 extract_ws_id() { printf '%s' "$1" | grep -oE '[0-9]{6,}' | head -1; }
@@ -140,8 +214,14 @@ manifest_row()  { [ -f "$PZ_MANIFEST" ] && grep -m1 "^$1	" "$PZ_MANIFEST" || tru
 # Download ONE workshop item and install every mod inside it as a LOCAL mod.
 # Echoes one installed mod id per line; returns non-zero if the download failed.
 # Also records/updates the item in the workshop manifest (for update checking).
+# Optional $2/$3 = time_updated/title already fetched by the caller (saves an API
+# call per item when installing collections).
+# Mods the user has disabled keep their files refreshed but are NOT re-added to
+# Mods= — re-adding a collection must not undo disable choices (or duplicate the
+# entry across the active and disabled lists).
 install_workshop_item() {
-  local wid="$1" tmp modsdir root info mid; local -a roots=() mids=()
+  local wid="$1" ltime="${2:-}" ltitle="${3:-}"
+  local tmp modsdir root info mid; local -a roots=() mids=()
   # the temp dir must belong to the game user: DepotDownloader runs as that user
   # even when this code runs as root (systemd timer), and root's mktemp -d would
   # hand it an unwritable 700 directory
@@ -163,17 +243,19 @@ install_workshop_item() {
     [ -z "$mid" ] && continue
     rm -rf "${PZ_MODS:?}/$(basename "$root")"
     cp -r "$root" "$PZ_MODS/"
-    mods_append "$mid"
+    mod_disabled "$mid" || mods_append "$mid"
     mids+=("$mid")
     printf '%s\n' "$mid"
   done
   rm -rf "$tmp"
   [ ${#mids[@]} -eq 0 ] && return 1
   # record in the manifest so pz-modupdate can watch this item for updates
-  local det t title
-  det="$(ws_details "$wid" | head -1)"
-  t="$(printf '%s' "$det" | cut -f2)"; title="$(printf '%s' "$det" | cut -f3)"
-  manifest_set "$wid" "${t:-0}" "$(IFS=,; echo "${mids[*]}")" "${title:-?}"
+  if [ -z "$ltime" ]; then
+    local det
+    det="$(ws_details "$wid" | head -1)"
+    ltime="$(printf '%s' "$det" | cut -f2)"; ltitle="$(printf '%s' "$det" | cut -f3)"
+  fi
+  manifest_set "$wid" "${ltime:-0}" "$(IFS=,; echo "${mids[*]}")" "${ltitle:-?}"
   return 0
 }
 

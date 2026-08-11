@@ -11,7 +11,7 @@
 #                                  MODUPDATE_AUTO=0|1        master switch
 #                                  MODUPDATE_SCHED=daily|weekly
 #                                  MODUPDATE_EMPTY_MIN=60    server empty this long
-#                                  MODUPDATE_BACKUP_KEEP=2   backups kept (1-3)
+#                                  MODUPDATE_BACKUP_KEEP=2   backups kept (0-3, 0=off)
 #
 #  Runs fine as root (systemd timer) or as the game user (via pzctl).
 #  Point PZCTL_ENV at an alternate env file to drive a non-default install.
@@ -81,10 +81,14 @@ do_apply() {
   if [ ${#rows[@]} -eq 0 ]; then echo "Nothing to update."; return 0; fi
 
   local keep; keep="$(conf_get MODUPDATE_BACKUP_KEEP 2)"
-  [[ "$keep" =~ ^[1-3]$ ]] || keep=2
-  echo "Backing up world before updating (${#rows[@]} item(s))..."
-  backup_world "$PZ_BACKUPS/mod-update" modup >/dev/null
-  rotate_backups "$PZ_BACKUPS/mod-update" modup "$keep"
+  [[ "$keep" =~ ^[0-3]$ ]] || keep=2
+  if [ "$keep" = 0 ]; then
+    echo "Pre-update world backup disabled (backups kept = 0)."
+  else
+    echo "Backing up world before updating (${#rows[@]} item(s))..."
+    backup_world "$PZ_BACKUPS/mod-update" modup >/dev/null
+    rotate_backups "$PZ_BACKUPS/mod-update" modup "$keep"
+  fi
 
   local wid stored live title ok=0 fail=0
   while IFS=$'\t' read -r wid stored live title; do

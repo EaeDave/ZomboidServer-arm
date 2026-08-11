@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-11 — map mods, faster re-adds, import hardening
+
+### Added
+- **Map mod support**: map folders inside installed mods (`media/maps`, `42/media/maps`,
+  `common/media/maps`) are detected and added to `Map=` automatically after installs and
+  imports — custom maps first, base map (`Muldraugh, KY`) always last. New Mods-menu action
+  rebuilds `Map=` from the active mods.
+- `MODUPDATE_BACKUP_KEEP=0` disables pre-update world backups (range is now 0-3).
+
+### Changed
+- Re-adding an already-installed mod or collection is now instant: one batched Steam call
+  classifies every item, current items are skipped, stale ones are re-downloaded as updates.
+- World reset regenerates `ResetID` and guarantees a non-empty `ServerPlayerID`.
+- README slimmed down; documented the update paths (game vs scripts).
+
+### Fixed
+- Importing a foreign `server.ini` no longer copies host-identity keys (`ServerPlayerID`,
+  `ResetID`, `Seed`, `SteamVAC`, `server_browser_announced_ip`) — copying these could leave
+  clients stuck at "Getting Server Info". Foreign `Map=` entries are filtered to maps that
+  exist locally.
+- Re-adding a collection no longer re-activates disabled mods or duplicates them across the
+  active and disabled lists; their files still get refreshed.
+
 ## 2026-08-10 — B42 stable, mod auto-updates, pzctl expansion
 
 Repo renamed **zomboid-b42-on-arm → ZomboidServer-arm** (old links redirect).

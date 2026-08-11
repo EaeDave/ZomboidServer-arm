@@ -128,20 +128,45 @@ do_add_mod() {
   echo "Checking $(bold "$id") (single mod or collection?)..."
   mapfile -t ids < <(resolve_ws_ids "$id")
   local total="${#ids[@]}" coll=no
-  if [ "$total" -gt 1 ]; then coll=yes; echo "$(grn 'Collection') — $(bold "$total") items. Installing all as local mods (this can take a while)..."; fi
-  local done_mods=0 fail=0 i=0 wid out n
+  if [ "$total" -gt 1 ]; then coll=yes; echo "$(grn 'Collection') — $(bold "$total") items. Installing as local mods (already-installed ones are skipped)..."; fi
+  # one batched Steam call: gives every item's title + update time, so items that
+  # are already installed and current can be skipped instead of re-downloaded
+  declare -A LIVE TITLE
+  local w t ttl
+  while IFS=$'\t' read -r w t ttl; do LIVE[$w]="$t"; TITLE[$w]="$ttl"; done < <(ws_details "${ids[@]}")
+  local have; have=";$(disk_mod_ids | tr '\n' ';')"
+  local done_mods=0 fail=0 skipped=0 i=0 wid out n row stored live m allthere
   for wid in "${ids[@]}"; do
     i=$((i+1))
+    row="$(manifest_row "$wid")"; stored="$(printf '%s' "$row" | cut -f2)"
+    live="${LIVE[$wid]:-0}"
+    if [ -n "$row" ] && [ "${live:-0}" -gt 0 ] 2>/dev/null && [ "${stored:-0}" -ge "$live" ] 2>/dev/null; then
+      allthere=1
+      while IFS= read -r m; do
+        [ -z "$m" ] && continue
+        case "$have" in *";$m;"*) : ;; *) allthere=0 ;; esac
+      done < <(printf '%s' "$row" | cut -f3 | tr ',' '\n')
+      if [ "$allthere" = 1 ]; then
+        skipped=$((skipped+1))
+        if [ "$coll" = yes ]; then printf '  [%d/%d] %s ... %s\n' "$i" "$total" "$wid" "$(ylw 'already installed — skipped')"
+        else echo "  $(ylw 'Already installed and up to date:') $(printf '%s' "$row" | cut -f4)"; fi
+        continue
+      fi
+    fi
     [ "$coll" = yes ] && printf '  [%d/%d] %s ... ' "$i" "$total" "$wid"
-    out="$(install_workshop_item "$wid")"
+    out="$(install_workshop_item "$wid" "${LIVE[$wid]:-}" "${TITLE[$wid]:-}")"
     if [ -z "$out" ]; then fail=$((fail+1)); [ "$coll" = yes ] && echo "$(red 'failed')"; continue; fi
     n="$(printf '%s\n' "$out" | grep -c .)"; done_mods=$((done_mods+n))
     if [ "$coll" = yes ]; then echo "$(grn ok) ($n)"; else printf '%s\n' "$out" | sed "s/^/  $(grn +) installed mod: /"; fi
   done
   fix_owner "$PZ_MODS" "$PZ_INI"
   echo
-  [ "$done_mods" -eq 0 ] && { red "Nothing installed (download failed or no mod.info found)."; echo; pause; return; }
-  echo "$(grn "Done — $done_mods mod(s) added as local mods.")$( [ "$fail" -gt 0 ] && printf ' %s' "$(ylw "($fail item(s) failed)")")"
+  if [ "$done_mods" -eq 0 ] && [ "$skipped" -eq 0 ]; then
+    red "Nothing installed (download failed or no mod.info found)."; echo; pause; return
+  fi
+  echo "$(grn "Done — $done_mods mod(s) added as local mods.")$( [ "$skipped" -gt 0 ] && printf ' %s' "$(ylw "($skipped already installed)")")$( [ "$fail" -gt 0 ] && printf ' %s' "$(red "($fail failed)")")"
+  n="$(maps_append_missing)"
+  [ "$n" -gt 0 ] 2>/dev/null && echo "$(grn "Map mod(s) detected — added $n map(s) to Map=") (base map kept last)."
   echo "$(ylw 'IMPORTANT:') local mods aren't auto-downloaded — every player must $(bold subscribe) on the Workshop:"
   echo "           https://steamcommunity.com/sharedfiles/filedetails/?id=$id"
   [ "$coll" = yes ] && echo "           (it's a collection — players can subscribe to it once to get all $total.)"
@@ -301,19 +326,44 @@ do_import_ini() {
     [ ${#dropped[@]} -gt 0 ] && echo "$(ylw "Dropped ${#dropped[@]} id(s) not installed locally:") ${dropped[*]}"
   fi
 
-  # 3) optionally copy the rest of the settings
-  local a; read -rp 'Also copy the OTHER settings (name, pvp, loot, etc.)? Ports/passwords are kept. [y/N]: ' a || a=""
+  # 3) optionally copy the rest of the settings (identity/network keys never copied:
+  #    ports, passwords, ServerPlayerID, ResetID, Seed, SteamVAC, announced ip, ...)
+  local a; read -rp 'Also copy the OTHER settings (name, pvp, loot, etc.)? Ports/identity are kept. [y/N]: ' a || a=""
   if [[ "$a" =~ ^[Yy] ]]; then
-    local PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName Mods WorkshopItems SteamPort1 SteamPort2 "
     local line key val n=0
     while IFS= read -r line; do
       line="${line%$'\r'}"
       [[ "$line" =~ ^[A-Za-z0-9_.]+= ]] || continue
       key="${line%%=*}"; val="${line#*=}"
-      [[ "$PRESERVE" == *" $key "* ]] && continue
+      [[ "$PZ_INI_PRESERVE" == *" $key "* ]] && continue
       ini_set "$key" "$val"; n=$((n+1))
     done < "$file"
     echo "$(grn "Copied $n setting(s).") Network/identity keys kept from your current config."
+  fi
+
+  # 4) map list: keep the foreign ORDER, but only for maps that exist here
+  #    (in an active mod or the vanilla game); the base map always goes last
+  local fMap; fMap="$(ini_get Map "$file")"
+  if [ -n "$fMap" ]; then
+    local -a fm=() kept=() mdropped=()
+    local IFS=';'; read -ra fm <<< "$fMap"; unset IFS
+    local avail v
+    avail=";$(maps_available_for_active | tr '\n' ';')"
+    for v in "$PZ_INSTALL"/media/maps/*/; do [ -d "$v" ] && avail="$avail$(basename "$v");"; done
+    for m in "${fm[@]}"; do
+      [ -z "$m" ] && continue
+      [ "$m" = "$PZ_BASEMAP" ] && continue
+      case "$avail" in *";$m;"*) kept+=("$m") ;; *) mdropped+=("$m") ;; esac
+    done
+    local mline=""
+    for m in "${kept[@]}"; do mline="${mline:+$mline;}$m"; done
+    mline="${mline:+$mline;}$PZ_BASEMAP"
+    map_set "$mline"
+    echo "$(grn "Map list applied: ${#kept[@]} map(s) + base map last.")"
+    [ ${#mdropped[@]} -gt 0 ] && echo "$(ylw "Dropped ${#mdropped[@]} map(s) not installed here:") ${mdropped[*]}"
+  else
+    n="$(maps_append_missing)"
+    [ "$n" -gt 0 ] 2>/dev/null && echo "Added $n map(s) from the imported mods to Map=."
   fi
   fix_owner "$PZ_INI" "$PZ_MODS"; manifest_prune
   [ -n "$tmp" ] && rm -f "$tmp"
@@ -328,11 +378,11 @@ mods_menu() {
     echo "  ------------------------------------------"
     print_mod_list
     echo "  ------------------------------------------"
-    echo "   1) Add mod / collection     5) Disable / enable"
-    echo "   2) Remove (multi)           6) Import from another server.ini"
-    echo "   3) Remove ALL               7) Check for updates"
-    echo "   4) Reorder                  8) Apply updates now"
-    echo "   0) Back"
+    echo "   1) Add mod / collection     6) Import from another server.ini"
+    echo "   2) Remove (multi)           7) Check for updates"
+    echo "   3) Remove ALL               8) Apply updates now"
+    echo "   4) Reorder                  9) Maps: rebuild Map= from mods"
+    echo "   5) Disable / enable         0) Back"
     echo
     local c; read -rp '  > ' c || return
     case "$c" in
@@ -340,6 +390,11 @@ mods_menu() {
       5) do_toggle_mods ;; 6) do_import_ini ;;
       7) "$PZ_MODUPDATE" check; pause ;;
       8) "$PZ_MODUPDATE" apply; pause ;;
+      9)
+        echo "Rebuilding Map= from active mods (custom maps first, base map last)..."
+        echo "  Map=$(maps_rebuild)" | cut -c1-220
+        echo "$(grn 'Saved.') Restart to apply."
+        pause ;;
       0|q|Q) return ;;
       *) : ;;
     esac
@@ -439,6 +494,11 @@ do_world_reset() {
   sudo systemctl stop "$PZ_SERVICE"
   rm -rf "$PZ_CACHEDIR/Saves/Multiplayer/${PZ_SERVERNAME}"* 2>/dev/null
   rm -f  "$PZ_CACHEDIR/db/${PZ_SERVERNAME}.db" 2>/dev/null
+  # a fresh world needs a fresh ResetID (old characters must not carry over), and
+  # ServerPlayerID must never be empty — clients stall on join without it
+  ini_set ResetID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
+  [ -z "$(ini_get ServerPlayerID)" ] && ini_set ServerPlayerID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
+  fix_owner "$PZ_INI"
   echo "$(grn 'World wiped.') A fresh world generates on the next boot."
   read -rp 'Start the server now? [Y/n]: ' a || a=Y
   [[ "$a" =~ ^[Nn] ]] || run_boot_retry
@@ -512,8 +572,8 @@ do_update_settings() {
         local v; read -rp '  Minutes the server must be empty (0 = update immediately): ' v || continue
         [[ "$v" =~ ^[0-9]+$ ]] && conf_set MODUPDATE_EMPTY_MIN "$v" || { red "Not a number."; echo; pause; } ;;
       5)
-        local v; read -rp '  Backups to keep in the mod-update folder (1-3): ' v || continue
-        [[ "$v" =~ ^[1-3]$ ]] && conf_set MODUPDATE_BACKUP_KEEP "$v" || { red "Pick 1, 2 or 3."; echo; pause; } ;;
+        local v; read -rp '  Backups to keep in the mod-update folder (0-3, 0 = no backups): ' v || continue
+        [[ "$v" =~ ^[0-3]$ ]] && conf_set MODUPDATE_BACKUP_KEEP "$v" || { red "Pick 0, 1, 2 or 3."; echo; pause; } ;;
       6) "$PZ_MODUPDATE" check; pause ;;
       7) "$PZ_MODUPDATE" apply; pause ;;
       8) echo; tail -n 30 "$PZ_UPDATELOG" 2>/dev/null || echo "(log is empty)"; pause ;;

@@ -107,7 +107,7 @@ say "RAM ${RAM_GB}G, admin password set, join password $( [ -n "$JOIN_PW" ] && e
 # B42 is the stable `public` branch now (the old `unstable` beta branch is gone).
 # Offer whatever branches Steam currently has, with a built-in fallback list.
 step "Game branch"
-FALLBACK_BRANCHES=$'public\tB42 stable (recommended)\n42.19\tBuild 42.19.1 (pinned older stable)\nlegacy41\tBuild 41.78.20 (old B41; saves are NOT compatible with B42)\noutdatedunstable\tPre-stable B42 (rollbacks / old unstable saves only)'
+FALLBACK_BRANCHES=$'public\tB42 stable (recommended)\n42.19\tBuild 42.19.1\nlegacy41\tBuild 41.78.20 (old B41; saves are NOT compatible with B42)\noutdatedunstable\tPre-stable B42 (rollbacks / old unstable saves only)'
 BRANCHES="$(curl -fsSL --max-time 8 'https://api.steamcmd.net/v1/info/380870' 2>/dev/null \
   | jq -r '.data."380870".depots.branches // {} | to_entries[]
            | select(((.value.pwdrequired // 0) | tostring) != "1")

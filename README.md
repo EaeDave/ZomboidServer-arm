@@ -1,16 +1,16 @@
 # 🧟 ZomboidServer-arm — Project Zomboid B42 server on ARM, the easy way
 
-Spin up a **modded Project Zomboid Build 42** dedicated server on a cheap (or **free**) **ARM64**
-box, like an **Oracle Cloud Ampere** VM, with **one command**. Then run everything from a
-simple terminal menu: mods, automatic mod updates, backups, world resets, even an admin console.
-No fiddling with JVM flags, box64 tuning, or Steam downloaders. The installer handles all of it.
+Run a **modded Project Zomboid Build 42** dedicated server on a cheap (or **free**) **ARM64**
+box, like an **Oracle Cloud Ampere** VM, with **one command**. Then manage everything from a
+terminal menu: mods, automatic mod updates, backups, world resets, an admin console.
 
-> **Why ARM / box64?** The PZ server is x86-only, so on an ARM CPU it has to be emulated with
-> [box64](https://github.com/ptitSeb/box64). That normally means a long night of cryptic
-> crashes; this repo packages the fixes so you skip straight to playing.
+> **Why ARM / box64?** The PZ server is x86-only, so on ARM it runs through
+> [box64](https://github.com/ptitSeb/box64) emulation. The scripts carry all the required
+> fixes. The classic roadblock, `steamcmd` (32-bit x86, effectively broken on ARM), is not
+> used at all: server files and mods come through **DepotDownloader**, which runs natively
+> on ARM64.
 
-**Build 42 is now the stable release.** The installer downloads it by default and also lets you
-pick any other branch Steam currently offers (the old `unstable` beta branch is gone).
+![pzctl — the terminal control panel](docs/img/pzctl.png)
 
 ---
 
@@ -25,24 +25,32 @@ sudo ./install.sh
 ```
 
 Answer a few questions (admin password, join password, RAM, game branch; Enter accepts the
-defaults). The installer does the rest: installs box64, downloads the B42 server, applies every
-fix, sets up auto-restart, and boots it.
+defaults). The installer installs box64, downloads the server, sets up auto-restart and boots.
 
 When it finishes, **open UDP port `16261`** in your cloud firewall, and you're live. 🎉
 
 ### Picking a branch
 
-`public` (B42 stable) is the default and what you want in almost every case. The menu lists
-whatever Steam currently offers, typically:
+`public` (B42 stable) is the default. The menu lists whatever Steam currently offers,
+typically:
 
 | Branch | What it is |
 |---|---|
 | `public` | **B42 stable** (recommended) |
-| `42.19` | Build 42.19.1, pinned older stable |
+| `42.19` | Build 42.19.1 |
 | `legacy41` | Build 41.78.20. B41 saves are not compatible with B42 |
 | `outdatedunstable` | Pre-stable B42, for rollbacks and old unstable-era saves |
 
-Re-running `sudo ./install.sh` later updates the server and remembers your branch.
+### Updating
+
+- **Game updates**: re-run `sudo ./install.sh`. World, settings and branch choice are kept.
+- **Script updates** (new pzctl features): uninstall, then install again:
+
+  ```bash
+  sudo ./uninstall.sh   # say NO when asked about deleting worlds
+  git pull
+  sudo ./install.sh
+  ```
 
 ---
 
@@ -101,6 +109,8 @@ Done — 54 mod(s) added as local mods.
 ```
 Then **Restart** (menu → 3). Tell your friends to **subscribe** to the mod/collection on the
 Workshop; that's the only manual step, and `pzctl` prints the exact link for you.
+Re-adding a mod or collection you already have is instant: items that are installed and
+current are skipped instead of re-downloaded.
 
 The Mods menu also does:
 
@@ -109,7 +119,11 @@ The Mods menu also does:
 - **Remove ALL** mods in one go (files are kept on disk).
 - **Reorder** the load order: type a full order like `3 1 2`, or move one entry with `5>1`.
 - **Disable / enable** mods without uninstalling them. Disabled mods leave `Mods=` (players
-  no longer need them) but stay installed for later.
+  no longer need them) but stay installed for later. Re-adding or updating a collection
+  respects your disable choices.
+- **Map mods just work**: map folders inside installed mods are detected and added to `Map=`
+  automatically, custom maps first and the base map last. Menu → 9 rebuilds the whole line
+  from the active mods if it ever drifts.
 - **Import from another server.ini**: point it at a friend's ini (file or URL) and it
   downloads every workshop item in there as local mods, applies that exact mod order, and can
   copy the other settings too. Your ports and passwords are kept, and a backup of your
@@ -118,8 +132,11 @@ The Mods menu also does:
 
 ### 🔄 Automatic workshop mod updates
 
-PZ servers with local mods go stale silently: players update through Steam, the server doesn't,
-and versions drift apart. `pzctl` fixes that. Menu → **12**:
+Local mods don't update themselves when players update through Steam; `pzctl` handles it.
+
+![Bulk collection install and the auto-update scheduler](docs/img/mod-updates.png)
+
+Menu → **12**:
 
 ```
    1) Scheduled auto-update:   ON
@@ -135,8 +152,8 @@ and versions drift apart. `pzctl` fixes that. Menu → **12**:
 How the scheduled mode works: a systemd timer compares your installed workshop items against
 Steam once a day (or week). When updates exist, it waits until the server has had **no players
 for an hour** (configurable), takes a **world backup** into a dedicated `mod-update` folder
-(keeping the last 1-3, default 2), updates the mods, and restarts the server. Every update is
-recorded in a log (capped at 1000 entries so it never bloats):
+(0-3 kept, default 2; 0 disables backups), updates the mods, and restarts the server. Every
+update lands in a log (capped at 1000 entries):
 
 ```
 2026-08-10 14:02 | updated | 3713362869 | Faster Reading | 2026-07-30 11:12 -> 2026-08-09 19:44
@@ -158,9 +175,8 @@ restart.
 
 ### Other tools
 
-- **Status & paths** (menu 4) shows the game version, branch, mod count, and the full list of
-  directories the server uses (install dir, saves, mods, logs, backups), so you never have to
-  hunt for a path again.
+- **Status & paths** (menu 4) shows the game version, branch, mod count, and every directory
+  the server uses (install dir, saves, mods, logs, backups).
 - **World reset** (menu 10) wipes the map and player data but keeps your settings, sandbox
   options and mods. It offers a backup first and requires typing `RESET`.
 - **Sandbox settings** (menu 11) edits `servertest_SandboxVars.lua` in your terminal editor

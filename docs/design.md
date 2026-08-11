@@ -18,11 +18,11 @@ Steam (verified live on 2026-08-10 via app 380870 depot info):
 The `unstable` branch no longer exists, so the installer's hardcoded `-branch unstable` is
 broken and must go.
 
-Production reference box (user's Oracle Ampere, recon 2026-08-10, read-only): Ubuntu 24.04.4,
-aarch64, 4 cores, 23 GB RAM, box64 v0.4.3, python3 3.12, server v42.20.0 running from
-`/opt/zomboid-server` (6.9 GB), 70 local mods, `WorkshopItems=` empty, `RCONPassword=` empty
-(RCON off), passwordless sudo. All testing happens on this box in an isolated namespace; the
-production install must not be touched or slowed.
+Reference environment (Oracle Ampere, surveyed 2026-08-10): Ubuntu 24.04.4, aarch64, 4 cores,
+24 GB RAM, box64 v0.4.3, python3 3.12, server v42.20.x from `/opt/zomboid-server` (~7 GB),
+local mods only (`WorkshopItems=` empty), RCON off by default. All testing happens on such a
+box in an isolated namespace; a production install on the same machine must not be touched
+or slowed.
 
 ## 2. Goals
 
@@ -197,7 +197,7 @@ worlds" tone; em dashes thinned out to commas/periods except where genuinely nee
 GitHub rename executed via authenticated `gh repo rename` (old URLs auto-redirect), local
 `origin` updated. `uninstall.sh` learns about the new units/files/paths.
 
-## 4. Testing plan (on the reference box, isolated — executed 2026-08-10, all green)
+## 4. Testing plan (isolated namespace on the reference box — executed 2026-08-10, all green)
 
 Namespace `zomboid-b42-test`, everything under `/home/ubuntu/pztest/` (install dir, cachedir),
 port 16371/16372, RCON 27025, firewall step skipped, `CPUQuota=250%` + `Nice=10` set on the
@@ -230,5 +230,27 @@ test service via `systemctl set-property` so production keeps headroom. Flow:
 ## 6. Out of scope
 
 Multi-server orchestration UI, structured sandbox editor, automatic server-file (game build)
-updates, non-apt distros, box86/32-bit, migrating the 70 existing prod mods into the manifest
+updates, non-apt distros, box86/32-bit, migrating pre-existing local mods into the manifest
 (covered by re-adding collection URLs when the user chooses).
+
+## 7. Addendum (2026-08-11): map mods + import hardening
+
+Field feedback after the release surfaced four issues:
+
+- **`Map=` was never managed**, so map mods installed but their cells never loaded. B42 mods
+  ship maps under `<Mod>/media/maps/<Name>`, `<Mod>/42/media/maps/<Name>` or
+  `<Mod>/common/media/maps/<Name>`. pzctl now scans active mods, appends missing map names to
+  `Map=` after installs/imports (custom maps first, base map `Muldraugh, KY` always last),
+  and the Mods menu can rebuild the whole line from scratch.
+- **Importing a foreign ini copied identity keys.** `ServerPlayerID` (arrived empty),
+  `SteamVAC`, `ResetID`, `Seed` and `server_browser_announced_ip` are exactly the keys that
+  can stall clients at "Getting Server Info"; they joined the never-copy list, and foreign
+  `Map=` entries are now filtered to maps that actually exist locally (base map appended).
+- **Re-adding an installed mod/collection re-downloaded everything** and re-activated
+  disabled mods, duplicating them across `Mods=` and the disabled list. One batched Steam
+  call now classifies every item as current/stale/missing: current items are skipped
+  (instant), stale ones are re-downloaded as updates, and disabled mods get their files
+  refreshed without being re-activated.
+- **World reset** now regenerates `ResetID` (and guarantees a non-empty `ServerPlayerID`),
+  matching what the game itself does on a wipe. `MODUPDATE_BACKUP_KEEP` accepts `0` to skip
+  pre-update backups entirely.
