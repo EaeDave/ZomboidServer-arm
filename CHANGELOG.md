@@ -1,6 +1,8 @@
 # Changelog
 
-## 2026-08-11 — map mods, faster re-adds, import hardening
+Versions are git tags; every release ships with these notes on the GitHub Releases page.
+
+## v2.1.0 — 2026-08-11 — map mods, faster re-adds, import hardening
 
 ### Added
 - **Map mod support**: map folders inside installed mods (`media/maps`, `42/media/maps`,
@@ -23,7 +25,7 @@
 - Re-adding a collection no longer re-activates disabled mods or duplicates them across the
   active and disabled lists; their files still get refreshed.
 
-## 2026-08-10 — B42 stable, mod auto-updates, pzctl expansion
+## v2.0.0 — 2026-08-10 — B42 stable, mod auto-updates, pzctl expansion
 
 Repo renamed **zomboid-b42-on-arm → ZomboidServer-arm** (old links redirect).
 Everything below was tested end-to-end on a live Oracle Ampere box in an isolated
@@ -70,7 +72,7 @@ side-by-side install before release.
 - The RCON client retries once shortly after boot (the RCON socket comes up a few
   seconds after the game port).
 
-## 2026-07-03 — initial release
+## v1.0.0 — 2026-07-03 — initial release
 
 One-command installer + `pzctl` control panel for the Project Zomboid B42
 (then `unstable`) dedicated server on ARM64 via box64: DepotDownloader instead of

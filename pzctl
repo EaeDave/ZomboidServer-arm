@@ -8,6 +8,8 @@
 #
 set -uo pipefail
 
+PZCTL_VERSION="2.1.0"
+
 # ------------------------------------------------------------ config (from installer)
 ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
 . "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
@@ -51,6 +53,7 @@ do_status() {
   echo "$(bold 'Uptime:')      $(sudo systemctl show "$PZ_SERVICE" -p ActiveEnterTimestamp --value 2>/dev/null)"
   echo "$(bold 'Public IP:')   $(curl -fsSL --max-time 4 ifconfig.me 2>/dev/null || echo '?'):$PZ_PORT"
   echo "$(bold 'Branch:')      ${PZ_BRANCH}"
+  echo "$(bold 'Scripts:')     pzctl v$PZCTL_VERSION"
   echo "$(bold 'Version:')     $(grep -am1 -oE 'version=[0-9][0-9.]*' "$PZ_CONSOLE" 2>/dev/null | cut -d= -f2 || echo '?')"
   echo "$(bold 'Active mods:') $(mods_get | awk -F';' '{print (length($0) ? NF : 0)" mods"}')"
   echo "$(bold 'RAM (-Xmx):')  $(grep -oE '"-Xmx[0-9]+g"' "$PZ_JSON" 2>/dev/null | tr -d '"-')"
