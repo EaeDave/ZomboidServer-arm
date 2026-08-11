@@ -171,12 +171,15 @@ resolve_ws_ids() {
 
 # ws_details ID [ID...] — one batched call to Steam's public API.
 # Echoes one line per item: <id>\t<time_updated>\t<title>   (0 + "?" when unknown)
+# Returns non-zero when the API is unreachable, so callers can tell "everything
+# is current" apart from "could not check".
 ws_details() {
   [ $# -eq 0 ] && return 0
   local data="itemcount=$#" i=0 id out
   for id in "$@"; do data="$data&publishedfileids%5B$i%5D=$id"; i=$((i+1)); done
-  out="$(curl -s --max-time 25 -X POST -d "$data" \
-    'https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/?format=json' 2>/dev/null)"
+  out="$(curl -fs --max-time 25 -X POST -d "$data" \
+    'https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/?format=json' 2>/dev/null)" || return 1
+  [ -n "$out" ] || return 1
   printf '%s' "$out" | jq -r '
     (.response.publishedfiledetails // [])[] |
     [(.publishedfileid // "?"), (.time_updated // 0), ((.title // "?") | gsub("[\\t\\n\\r]"; " "))] | @tsv

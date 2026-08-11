@@ -26,17 +26,20 @@ state_get() { ini_get "$1" "$STATE"; }
 state_set() { ini_set "$1" "$2" "$STATE"; fix_owner "$STATE"; }
 
 # one line per outdated item: <wid>\t<stored>\t<live>\t<title>
+# returns 75 when the Steam API could not be reached (unknown state, not "all current")
 outdated_rows() {
-  local -a ids=(); local wid live title row stored
+  local -a ids=(); local wid live title row stored det
   mapfile -t ids < <(manifest_ids)
   [ ${#ids[@]} -eq 0 ] && return 0
+  det="$(ws_details "${ids[@]}")" || return 75
   while IFS=$'\t' read -r wid live title; do
+    [ -z "$wid" ] && continue
     row="$(manifest_row "$wid")"; [ -z "$row" ] && continue
     stored="$(printf '%s' "$row" | cut -f2)"
     if [ "$live" -gt "${stored:-0}" ] 2>/dev/null; then
       printf '%s\t%s\t%s\t%s\n' "$wid" "${stored:-0}" "$live" "$title"
     fi
-  done < <(ws_details "${ids[@]}")
+  done <<< "$det"
 }
 
 fmt_t() { date -d "@$1" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$1"; }
@@ -47,8 +50,13 @@ do_check() {
     [ "$ids_only" = --ids ] || echo "No tracked mods yet. Mods added through pzctl are tracked automatically; re-add an existing mod/collection URL to start tracking it."
     return 0
   fi
+  local raw
+  if ! raw="$(outdated_rows)"; then
+    [ "$ids_only" = --ids ] || echo "Steam API unreachable — could not check for updates. Try again later."
+    return 75
+  fi
   local -a rows=()
-  mapfile -t rows < <(outdated_rows)
+  [ -n "$raw" ] && mapfile -t rows <<< "$raw"
   if [ "$ids_only" = --ids ]; then
     printf '%s\n' "${rows[@]}" 2>/dev/null | cut -f1 | grep . || true
     [ ${#rows[@]} -gt 0 ] && return 10 || return 0
@@ -76,8 +84,10 @@ do_apply() {
   flock -n 9 || { echo "another update run is in progress; skipping."; return 75; }
   fix_owner "$PZ_CACHEDIR/.modupdate.lock"
 
+  local raw
+  if ! raw="$(outdated_rows)"; then echo "Steam API unreachable — cannot verify what needs updating."; return 75; fi
   local -a rows=()
-  mapfile -t rows < <(outdated_rows)
+  [ -n "$raw" ] && mapfile -t rows <<< "$raw"
   if [ ${#rows[@]} -eq 0 ]; then echo "Nothing to update."; return 0; fi
 
   local keep; keep="$(conf_get MODUPDATE_BACKUP_KEEP 2)"
@@ -125,12 +135,18 @@ do_auto() {
   last="$(state_get LAST_CHECK)"; last="${last:-0}"
 
   if [ $((now - last)) -ge "$interval" ]; then
-    pending="$(do_check --ids | tr '\n' ' ')"
-    state_set LAST_CHECK "$now"
-    state_set PENDING "${pending% }"
-    if [ -n "${pending% }" ]; then
-      logger -t pz-modupdate "check: updates pending for: ${pending% }"
-      log_modupdate "check   | updates detected, waiting for an empty server"
+    pending="$(do_check --ids)"; rc=$?
+    if [ "$rc" = 75 ]; then
+      # API unreachable: do NOT burn the daily slot — retry on the next tick
+      logger -t pz-modupdate "steam api unreachable during scheduled check; retrying next tick"
+    else
+      pending="$(printf '%s' "$pending" | tr '\n' ' ')"
+      state_set LAST_CHECK "$now"
+      state_set PENDING "${pending% }"
+      if [ -n "${pending% }" ]; then
+        logger -t pz-modupdate "check: updates pending for: ${pending% }"
+        log_modupdate "check   | updates detected, waiting for an empty server"
+      fi
     fi
   fi
 
@@ -173,5 +189,5 @@ case "${1:-}" in
   check) do_check "${2:-}" ;;
   apply) do_apply "${2:-}" ;;
   auto)  do_auto ;;
-  *) sed -n '2,20p' "$0" | sed 's/^#//;s/^ //'; exit 1 ;;
+  *) sed -n '2,18p' "$0" | sed 's/^#//;s/^ //'; exit 1 ;;
 esac

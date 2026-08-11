@@ -90,7 +90,10 @@ DEF_RAM=$(( DETECT_GB>16 ? 12 : (DETECT_GB>8 ? DETECT_GB-4 : DETECT_GB/2) )); [ 
 if [ -n "${PZ_ADMIN_PW-}" ]; then ADMIN_PW="$PZ_ADMIN_PW"; else
   ADMIN_PW="$(ask 'Admin password (for the in-game admin account):' 'admin')"
 fi
-while [[ "$ADMIN_PW" =~ [\"\'\\\ ] ]]; do
+# case-based on purpose: regex bracket expressions with escaped quotes/spaces are
+# fragile across shells and transports
+bad_pw() { case "$1" in *' '*|*'"'*|*"'"*|*'\'*) return 0 ;; *) return 1 ;; esac; }
+while bad_pw "$ADMIN_PW"; do
   warn "The admin password can't contain spaces, quotes or backslashes (it goes on the server command line)."
   ADMIN_PW="$(ask 'Admin password:' 'admin')"
 done
@@ -148,8 +151,9 @@ say "Branch: $(b "$BRANCH")"
 step "Installing dependencies"
 # No system Java needed (the server bundles its own x86 jre64, run via box64).
 # No box86 / armhf libs needed (we use DepotDownloader, not 32-bit steamcmd).
-apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates python3 >/dev/null || \
-  apt-get install -y -qq ciopfs fuse wget curl unzip jq gnupg ca-certificates python3 >/dev/null
+# tcpdump powers pz-boot-retry's Steam-session health gate (relay players need a live session)
+apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates python3 tcpdump >/dev/null || \
+  apt-get install -y -qq ciopfs fuse wget curl unzip jq gnupg ca-certificates python3 tcpdump >/dev/null
 # allow_other for the ciopfs FUSE mount
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || echo 'user_allow_other' >> /etc/fuse.conf
 

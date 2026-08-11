@@ -2,6 +2,28 @@
 
 Versions are git tags; every release ships with these notes on the GitHub Releases page.
 
+## v2.1.1 — 2026-08-11 — Steam-session boot gate + audit fixes
+
+### Added
+- **Steam-session health gate in `pz-boot-retry`**: a box64 boot can reach "listening" with a
+  dead Steam game-server session, and players joining through Steam Relay can never reach such
+  a server (stuck at "Getting Server Info"). After LISTENING the boot loop now samples for
+  traffic to Valve's network and restarts the boot if the session never comes up. On by
+  default when `tcpdump` is available (now installed as a dependency); disable with
+  `PZ_REQUIRE_STEAM=0`.
+
+### Fixed
+- A scheduled mod-update check no longer burns its daily slot when the Steam API is
+  unreachable; it retries on the next 30-minute tick, and `check`/`apply` report "API
+  unreachable" instead of pretending everything is current.
+- Mod reorder: the `5>1` move syntax is now parsed with plain string operations. The old
+  regex (`\>`) is interpreted as a word boundary by some regex engines, which would have
+  silently broken moves on those platforms; malformed inputs (`a>b`, `>5`, `1>2>3`) are
+  rejected with a clear message.
+- The installer's admin-password validation was rewritten the same way (an escaped-quote
+  regex class that can break depending on the shell transporting it).
+- Status shows `0 mods` instead of a blank when `Mods=` is empty.
+
 ## v2.1.0 — 2026-08-11 — map mods, faster re-adds, import hardening
 
 ### Added

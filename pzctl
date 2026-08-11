@@ -8,7 +8,7 @@
 #
 set -uo pipefail
 
-PZCTL_VERSION="2.1.0"
+PZCTL_VERSION="2.1.1"
 
 # ------------------------------------------------------------ config (from installer)
 ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
@@ -55,7 +55,8 @@ do_status() {
   echo "$(bold 'Branch:')      ${PZ_BRANCH}"
   echo "$(bold 'Scripts:')     pzctl v$PZCTL_VERSION"
   echo "$(bold 'Version:')     $(grep -am1 -oE 'version=[0-9][0-9.]*' "$PZ_CONSOLE" 2>/dev/null | cut -d= -f2 || echo '?')"
-  echo "$(bold 'Active mods:') $(mods_get | awk -F';' '{print (length($0) ? NF : 0)" mods"}')"
+  local mlist; mlist="$(mods_get)"
+  echo "$(bold 'Active mods:') $( [ -n "$mlist" ] && awk -F';' '{print NF}' <<< "$mlist" || echo 0 ) mods"
   echo "$(bold 'RAM (-Xmx):')  $(grep -oE '"-Xmx[0-9]+g"' "$PZ_JSON" 2>/dev/null | tr -d '"-')"
   echo
   echo "$(bold 'Directories & files:')"
@@ -223,13 +224,17 @@ do_reorder() {
   while :; do
     read -rp '  order> ' input || break
     [ -z "$input" ] && break
-    if [[ "$input" =~ ^[0-9]+\>[0-9]+$ ]]; then
-      local from="${input%>*}" to="${input#*>}"
-      if [ "$from" -ge 1 ] && [ "$from" -le "$n" ] && [ "$to" -ge 1 ] && [ "$to" -le "$n" ]; then
+    if [[ "$input" == *'>'* ]]; then
+      # string ops, not regex: '\>' means word-boundary in some regex engines
+      local from="${input%%>*}" to="${input##*>}" okmv=1
+      [ "$from>$to" = "$input" ] || okmv=0
+      [ -n "$from" ] && [ -n "$to" ] || okmv=0
+      case "$from$to" in *[!0-9]*) okmv=0 ;; esac
+      if [ "$okmv" = 1 ] && [ "$from" -ge 1 ] && [ "$from" -le "$n" ] && [ "$to" -ge 1 ] && [ "$to" -le "$n" ]; then
         local mv="${ACTIVE[$((from-1))]}"; local -a rest=()
         for i in "${!ACTIVE[@]}"; do [ "$i" != $((from-1)) ] && rest+=("${ACTIVE[$i]}"); done
         ACTIVE=("${rest[@]:0:$((to-1))}" "$mv" "${rest[@]:$((to-1))}")
-      else red "Out of range."; echo; fi
+      else red "Moves look like \"5>1\" with numbers 1..$n."; echo; fi
     else
       local -a order=(); mapfile -t order < <(parse_selection "$input" "$n")
       if [ ${#order[@]} -eq "$n" ]; then
