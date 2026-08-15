@@ -203,7 +203,7 @@ restart.
 - **8 GB+ RAM** recommended (6 GB is a practical minimum: bundled JVM + emulation overhead),
   **~12 GB free disk** (the server alone is ~7 GB), 2+ cores.
 - **UDP 16261-16262** reachable. The installer opens the box's **local firewall** (iptables) for
-  you; **Oracle Cloud** users must *also* allow UDP 16261 in the **VCN Security List** (web
+  you; **Oracle Cloud** users must *also* allow UDP 16261-16262 in the **VCN Security List** (web
   console), because that cloud layer can't be opened from inside the machine.
 - That's it. The installer pulls in everything else (FEX or Box64, ciopfs, DepotDownloader).
   **No system Java needed**, the server bundles its own.
@@ -214,7 +214,7 @@ restart.
 |---|---|
 | Oracle Cloud Ampere (A1) | ✅ Tested, the reference setup |
 | Other aarch64 cloud VMs (AWS Graviton, Hetzner, ...) with Ubuntu/Debian | ✅ Expected to work, same stack |
-| Raspberry Pi 5 / Pi 4 (8 GB) | ✅ Should work; the installer picks the Pi-optimized box64 build. Fine for a few friends, don't expect miracles |
+| Raspberry Pi 5 / Pi 4 (8 GB) | ✅ Should work with the Box64 fallback; the installer picks the Pi-optimized build. Fine for a few friends, don't expect miracles |
 | Boards with < 6 GB RAM | ⚠️ The installer warns you; expect trouble |
 | 32-bit ARM (armhf), non-apt distros | ❌ Not supported by these scripts |
 
@@ -226,7 +226,7 @@ after a crash, a hung boot, or a reboot. You normally never touch it after insta
 ## 🧹 Uninstalling
 
 `sudo ./uninstall.sh` removes the server, its services, scripts and firewall rules. It asks
-separately before touching your worlds/saves, and leaves the shared box64 emulator alone unless
+separately before touching your worlds/saves, and leaves shared emulation runtimes alone unless
 you opt in. One thing to know: the removal uses `rm -rf` on the server folder (and on
 `~/Zomboid` if you confirm that prompt), so if you manually stored unrelated files in those
 folders, move them out first.
@@ -254,13 +254,13 @@ handle every one:
 | # | Problem | Fix baked in |
 |---|---|---|
 | 1 | `steamcmd` won't run on ARM | Uses **DepotDownloader** (native ARM) instead |
-| 2 | JVM deadlocks at boot | `BOX64_DYNAREC_STRONGMEM=3` |
-| 3 | Freezes/crashes under load | `-XX:+UseSerialGC` (ZGC deadlocks under box64) + tuned flags |
+| 2 | JVM deadlocks at boot under the Box64 fallback | `BOX64_DYNAREC_STRONGMEM=3` |
+| 3 | Freezes/crashes under emulation | `-XX:+UseSerialGC` + tuned JVM flags; Box64 also gets per-app tuning |
 | 4 | Clients get "server did not respond" | `-Dzomboid.steam=1` |
 | 5 | Mods "no such file" | Mods placed in the workshop path PZ actually reads |
 | 6 | Clothing bug / crash on unequip (Linux case-sensitivity) | **ciopfs** case-insensitive overlay |
 | 7 | Server won't restart after a crash | `Restart=always` (start script masks crashes) |
-| 8 | SIGSEGV when a player joins | `-XX:CompileCommand=exclude,…` for the mis-compiled method |
+| 8 | SIGSEGV when a player joins under the Box64 fallback | `-XX:CompileCommand=exclude,…` for the mis-compiled method |
 | 9 | Some mods spam errors / tank performance | Guidance + easy remove/disable via `pzctl` |
 | 10 | **Adding a mod crash-loops the server** (`EResult 33`) | `pzctl` installs new mods as **local mods** (no Steam re-download) |
 | 11 | Watchdog kills healthy boots | **Hybrid** hang detection (console-static **and** CPU-idle) |
@@ -272,8 +272,8 @@ A few worth expanding:
   filenames render broken clothing/models and even crash the JVM. We mount the workshop folder
   through [ciopfs](https://www.brain-dump.org/projects/ciopfs/) so it behaves like Windows.
   (Lowercasing the files instead **breaks** them, because mods reference their own original casing.)
-- **#8 the JIT crash**: box64's dynarec mis-translates one hot animation method; joining a
-  player would SIGSEGV. Telling the JVM to run just that method interpreted
+- **#8 the JIT crash (Box64 fallback)**: Box64's dynarec mis-translates one hot animation
+  method; joining a player would SIGSEGV. Telling the JVM to run just that method interpreted
   (`-XX:CompileCommand=exclude,zombie/core/skinnedmodel/advancedanimation/IAnimationVariableRegistry.setVariable`)
   fixes it at ~zero cost.
 - **#10 adding mods**: with `steam=1` the server tries to *Steam-download* every `WorkshopItems=`
@@ -311,8 +311,8 @@ The installer needs little on a fresh box, because:
   No system JDK is required.
 - **No box86 / 32-bit libs**: we fetch with [DepotDownloader](https://github.com/SteamRE/DepotDownloader)
   (a native ARM64 binary), so the 32-bit `steamcmd` that needs box86 + `armhf` libs isn't required.
-- Box64 is registered with **binfmt_misc** when the Box64 backend is selected. On
-  Raspberry Pi 4/5 the installer picks the Pi-optimized box64 package automatically.
+- Box64 is installed and registered with **binfmt_misc** only when the Box64 backend is
+  selected. On Raspberry Pi 4/5 the installer then picks the Pi-optimized Box64 package.
 
 Prefer SteamCMD? [sonroyaalmerol/steamcmd-arm64](https://github.com/sonroyaalmerol/steamcmd-arm64)
 provides it for ARM, but it's a **Docker image**, which adds Docker as a dependency. We use
@@ -325,7 +325,7 @@ DepotDownloader to keep the install Docker-free and single-binary.
   emulated ARM behind cloud NAT (`16262` looks open but the handshake stalls, a PZ quirk since
   B41, not fixable server-side). See [How friends join](#-how-friends-join-important) above.
 - **Players can't connect at all**: there are *two* firewalls. The installer opens the box's
-  **iptables** (UDP 16261-16262), but **Oracle Cloud** also needs UDP 16261 in the **VCN
+  **iptables** (UDP 16261-16262), but **Oracle Cloud** also needs UDP 16261-16262 in the **VCN
   Security List** (web console → Networking → your VCN → Security Lists). Both must be open.
 - **Box64 server won't start / "Exec format error"**: Box64 isn't registered with binfmt_misc. Run
   `sudo systemctl restart systemd-binfmt` and check `ls /proc/sys/fs/binfmt_misc/ | grep box64`,

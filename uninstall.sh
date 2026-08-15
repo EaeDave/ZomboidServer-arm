@@ -54,7 +54,7 @@ echo "the watchdog + mod updater, the selected runtime launcher, and"
 echo "the UDP $PORT-$((PORT+1)) firewall rules."
 echo
 echo "Your worlds/saves in $CACHEDIR are asked about separately below, and the"
-echo "shared box64 emulator stays unless you opt in. If you manually stored"
+echo "shared emulation runtimes stay unless you opt in. If you manually stored"
 echo "unrelated files inside those folders, move them out first."
 is_yes "$(ask 'Continue? (type y to proceed)' 'n')" || { echo "Aborted."; exit 0; }
 

@@ -18,6 +18,7 @@
 #    PZ_SKIP_FIREWALL=1             don't touch iptables
 #    PZ_RUNTIME=fex|box64                              emulation backend (default: fex)
 #    PZ_FEX_COMMIT / PZ_FEX_PREFIX / PZ_FEX_ROOTFS     pinned FEX settings
+#    PZ_FEX_SOURCE / PZ_FEX_JOBS                       isolated source/build controls
 #    PZ_ANNOUNCED_IP=x.x.x.x                            public IP advertised to PZ/Steam
 #    PZ_BRANCH / PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB   preseed the prompts
 #
@@ -42,11 +43,11 @@ EOF
 ARCH="$(uname -m)"
 case "$ARCH" in
   aarch64|arm64) : ;;
-  x86_64|amd64) die "You're on x86-64 — you do NOT need this. Run the PZ server natively; box64 is only for ARM/other non-x86 CPUs." ;;
-  *) warn "Unrecognised arch '$ARCH'. box64 targets ARM64 (also RISC-V/LoongArch). Continuing, but you're off the tested path." ;;
+  x86_64|amd64) die "You're on x86-64 — you do NOT need this. Run the PZ server natively; emulation is only for ARM/other non-x86 CPUs." ;;
+  *) warn "Unrecognised arch '$ARCH'. The emulation backends target ARM64 (also RISC-V/LoongArch). Continuing, but you're off the tested path." ;;
 esac
 command -v systemctl >/dev/null || die "This installer needs systemd."
-command -v apt-get   >/dev/null || die "This installer needs an apt-based distro (Ubuntu/Debian family). For others, install box64 + deps manually following the README."
+command -v apt-get   >/dev/null || die "This installer needs an apt-based distro (Ubuntu/Debian family). For others, install the selected emulation runtime and deps manually following the README."
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGET_USER="${SUDO_USER:-ubuntu}"
@@ -102,7 +103,7 @@ apt-get update -y || die "apt update failed — check the box's network/DNS, the
 # ----------------------------------------------------------------- resource sanity
 DETECT_GB=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)
 AVAIL_DISK_GB=$(df -BG --output=avail "$(dirname "$INSTALL_DIR")" 2>/dev/null | tail -1 | tr -dc '0-9')
-[ "${DETECT_GB:-0}" -lt 6 ] && warn "Only ${DETECT_GB}G RAM. 8G+ is recommended; below 6G expect trouble (JVM + box64 overhead)."
+[ "${DETECT_GB:-0}" -lt 6 ] && warn "Only ${DETECT_GB}G RAM. 8G+ is recommended; below 6G expect trouble (JVM + emulation overhead)."
 [ "${AVAIL_DISK_GB:-99}" -lt 12 ] && warn "Only ${AVAIL_DISK_GB}G free disk. The server alone is ~7G; 12G+ free is recommended."
 
 # ----------------------------------------------------------------- interactive config
@@ -171,7 +172,7 @@ say "Branch: $(b "$BRANCH")"
 
 # ----------------------------------------------------------------- 1. dependencies
 step "Installing dependencies"
-# No system Java needed (the server bundles its own x86 jre64, run via box64).
+# No system Java needed (the server bundles its own x86 jre64, run via the selected runtime).
 # No box86 / armhf libs needed (we use DepotDownloader, not 32-bit steamcmd).
 # tcpdump powers pz-boot-retry's Steam-session health gate (relay players need a live session)
 apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates python3 tcpdump >/dev/null || \
@@ -179,38 +180,42 @@ apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates pyt
 # allow_other for the ciopfs FUSE mount
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || echo 'user_allow_other' >> /etc/fuse.conf
 
-if ! command -v box64 >/dev/null; then
-  say "Adding the box64 apt repo (ryanfortner/box64-debs)..."
-  curl -fsSL https://ryanfortner.github.io/box64-debs/box64.list -o /etc/apt/sources.list.d/box64.list
-  curl -fsSL https://ryanfortner.github.io/box64-debs/KEY.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/box64-debs-archive-keyring.gpg
-  apt-get update -qq
-  # Pick the build matching the hardware where it matters (Raspberry Pi), generic otherwise.
-  BOX64_PKG=box64-generic-arm
-  PI_MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
-  case "$PI_MODEL" in
-    *"Raspberry Pi 5"*) BOX64_PKG=box64-rpi5arm64 ;;
-    *"Raspberry Pi 4"*) BOX64_PKG=box64-rpi4arm64 ;;
-  esac
-  apt-get install -y -qq "$BOX64_PKG" || apt-get install -y -qq box64-generic-arm || apt-get install -y -qq box64 || \
-    die "box64 install failed. Install it manually (https://github.com/ptitSeb/box64) and re-run."
-fi
-say "box64 ready: $(box64 --version 2>&1 | head -1 || echo installed)"
+if [ "$RUNTIME" = box64 ]; then
+  if ! command -v box64 >/dev/null; then
+    say "Adding the Box64 apt repo (ryanfortner/box64-debs)..."
+    curl -fsSL https://ryanfortner.github.io/box64-debs/box64.list -o /etc/apt/sources.list.d/box64.list
+    curl -fsSL https://ryanfortner.github.io/box64-debs/KEY.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/box64-debs-archive-keyring.gpg
+    apt-get update -qq
+    # Pick the build matching the hardware where it matters (Raspberry Pi), generic otherwise.
+    BOX64_PKG=box64-generic-arm
+    PI_MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+    case "$PI_MODEL" in
+      *"Raspberry Pi 5"*) BOX64_PKG=box64-rpi5arm64 ;;
+      *"Raspberry Pi 4"*) BOX64_PKG=box64-rpi4arm64 ;;
+    esac
+    apt-get install -y -qq "$BOX64_PKG" || apt-get install -y -qq box64-generic-arm || apt-get install -y -qq box64 || \
+      die "Box64 install failed. Install it manually (https://github.com/ptitSeb/box64) and re-run."
+  fi
+  say "Box64 ready: $(box64 --version 2>&1 | head -1 || echo installed)"
 
-# box64 must be registered with binfmt_misc so the x86-64 server binary runs transparently
-# (start-server.sh calls ./ProjectZomboid64 with no box64 prefix). The apt package usually
-# handles this; ensure it, with a manual fallback using box64's ELF magic + mask.
-ensure_binfmt() {
-  systemctl restart systemd-binfmt 2>/dev/null || true
-  if [ -e /proc/sys/fs/binfmt_misc/box64 ]; then return 0; fi
-  say "Registering box64 with binfmt_misc (fallback)..."
-  mkdir -p /etc/binfmt.d
-  cat > /etc/binfmt.d/box64.conf <<EOF
+  # Box64 must be registered with binfmt_misc so the x86-64 server binary runs transparently
+  # (start-server.sh calls ./ProjectZomboid64 with no Box64 prefix). The apt package usually
+  # handles this; ensure it, with a manual fallback using Box64's ELF magic + mask.
+  ensure_binfmt() {
+    systemctl restart systemd-binfmt 2>/dev/null || true
+    if [ -e /proc/sys/fs/binfmt_misc/box64 ]; then return 0; fi
+    say "Registering Box64 with binfmt_misc (fallback)..."
+    mkdir -p /etc/binfmt.d
+    cat > /etc/binfmt.d/box64.conf <<EOF
 :box64:M::\x7f\x45\x4c\x46\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\xff\xff\xff\xff\xff\xfe\xff\xff\xff:$(command -v box64):F
 EOF
-  systemctl restart systemd-binfmt 2>/dev/null || true
-}
-ensure_binfmt
-[ -e /proc/sys/fs/binfmt_misc/box64 ] || warn "box64 not registered with binfmt_misc — the server may fail to start (see README Troubleshooting)."
+    systemctl restart systemd-binfmt 2>/dev/null || true
+  }
+  ensure_binfmt
+  [ -e /proc/sys/fs/binfmt_misc/box64 ] || warn "Box64 not registered with binfmt_misc — the server may fail to start (see README Troubleshooting)."
+else
+  say "FEX selected; skipping Box64 package, binfmt_misc and box64rc setup."
+fi
 
 if [ "$RUNTIME" = fex ]; then
   step "Installing pinned FEX ARM64 runtime"
@@ -218,6 +223,8 @@ if [ "$RUNTIME" = fex ]; then
   PZ_FEX_COMMIT="$FEX_COMMIT" \
   PZ_FEX_PREFIX="$FEX_PREFIX" \
   PZ_FEX_ROOTFS="$FEX_ROOTFS" \
+  PZ_FEX_SOURCE="${PZ_FEX_SOURCE:-/var/cache/zomboid-arm/fex-$FEX_COMMIT}" \
+  PZ_FEX_JOBS="${PZ_FEX_JOBS:-2}" \
   "$REPO_DIR/scripts/install-fex.sh"
 fi
 
@@ -257,12 +264,16 @@ chmod +x "$INSTALL_DIR"/jre64/bin/* 2>/dev/null || true
 [ -e "$INSTALL_DIR/jre64/lib/jspawnhelper" ] && chmod +x "$INSTALL_DIR/jre64/lib/jspawnhelper" || true
 
 # ----------------------------------------------------------------- 4. config files
-step "Writing box64 + JVM configuration"
-if ! grep -q '^\[ProjectZomboid64\]' /etc/box64.box64rc 2>/dev/null; then
-  cat "$REPO_DIR/templates/box64rc-ProjectZomboid64.conf" >> /etc/box64.box64rc
-  say "Added [ProjectZomboid64] tuning to /etc/box64.box64rc"
+step "Writing JVM configuration"
+if [ "$RUNTIME" = box64 ]; then
+  if ! grep -q '^\[ProjectZomboid64\]' /etc/box64.box64rc 2>/dev/null; then
+    cat "$REPO_DIR/templates/box64rc-ProjectZomboid64.conf" >> /etc/box64.box64rc
+    say "Added [ProjectZomboid64] Box64 tuning to /etc/box64.box64rc"
+  else
+    say "box64rc already has a [ProjectZomboid64] section — left as-is"
+  fi
 else
-  say "box64rc already has a [ProjectZomboid64] section — left as-is"
+  say "FEX selected; leaving /etc/box64.box64rc unchanged."
 fi
 sed "s/__XMX__/${RAM_GB}g/" "$REPO_DIR/templates/ProjectZomboid64.json" > "$INSTALL_DIR/ProjectZomboid64.json"
 
@@ -405,7 +416,7 @@ cat <<EOF
   $( [ -n "$JOIN_PW" ] && echo "Join pw:  $(b "$JOIN_PW")" || echo "Join pw:  (none — open server)" )
 
   The local firewall (iptables) is open for UDP $PORT-$((PORT+1)).
-  1) $(b 'Oracle Cloud users:') also allow $(b "UDP $PORT") in your VCN Security List
+  1) $(b 'Oracle Cloud users:') also allow $(b "UDP $PORT-$((PORT+1))") in your VCN Security List
      (cloud console -> Networking -> VCN -> Security Lists) — that cloud layer is
      separate from the box's firewall and cannot be opened from inside the machine.
   2) Manage the server anytime with:   $(b "${BIN_PZCTL##*/}")

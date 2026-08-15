@@ -2,10 +2,24 @@
 
 Versions are git tags; every release ships with these notes on the GitHub Releases page.
 
+## Unreleased — FEX ARM64 fork
+
+### Added
+- FEX is now the default runtime for the tested Oracle Ampere reference setup: Ubuntu 24.04,
+  4 OCPUs, 24 GiB RAM, 4 GiB swap, Build 42.20.2 and 10 GiB allocated to the server.
+- The pinned FEX commit, launcher, RootFS settings and systemd unit are reproducible through
+  `install.sh`; Steam Relay remains the recommended client path behind Oracle cloud NAT.
+
+### Changed
+- Box64 is now an explicit fallback. Its package, `binfmt_misc` registration and
+  `/etc/box64.box64rc` tuning are configured only when `PZ_RUNTIME=box64` is selected.
+- Documentation distinguishes the tested FEX path from historical Box64 workarounds. The
+  clean-install namespace validation remains pending and will not stop the production unit.
+
 ## v2.1.1 — 2026-08-11 — Steam-session boot gate + audit fixes
 
 ### Added
-- **Steam-session health gate in `pz-boot-retry`**: a box64 boot can reach "listening" with a
+- **Steam-session health gate in `pz-boot-retry`**: an emulated boot can reach "listening" with a
   dead Steam game-server session, and players joining through Steam Relay can never reach such
   a server (stuck at "Getting Server Info"). After LISTENING the boot loop now samples for
   traffic to Valve's network and restarts the boot if the session never comes up. On by

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Box64 boot-hang watchdog — HYBRID detection (console-static AND cpu-idle = real hang).
+# Emulation boot-hang watchdog — HYBRID detection (console-static AND cpu-idle = real hang).
 #
 # Why hybrid: emulated boots can be slow and hang at random points, but two states LOOK
 # like a hang without being one, and killing them wastes boot attempts:
