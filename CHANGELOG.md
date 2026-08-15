@@ -13,8 +13,15 @@ Versions are git tags; every release ships with these notes on the GitHub Releas
 ### Changed
 - Box64 is now an explicit fallback. Its package, `binfmt_misc` registration and
   `/etc/box64.box64rc` tuning are configured only when `PZ_RUNTIME=box64` is selected.
-- Documentation distinguishes the tested FEX path from historical Box64 workarounds. The
-  clean-install namespace validation remains pending and will not stop the production unit.
+- Documentation distinguishes the tested FEX path from historical Box64 workarounds, and
+  explicitly documents both firewall layers for the default UDP ports `16261/16262`.
+- A disposable clean-install namespace was validated on the Oracle reference host. Production
+  kept its PID, uptime and ports; an external Steam Relay client reached the test world. The
+  test namespace and its temporary local firewall rules were then removed.
+
+### Known validation note
+- The test-only settings restart required the stop timeout and produced the known FEX guest
+  shutdown `SIGBUS`; the replacement instance booted normally and passed the client test.
 
 ## v2.1.1 — 2026-08-11 — Steam-session boot gate + audit fixes
 

@@ -32,12 +32,36 @@ Answer a few questions (admin password, join password, RAM, game branch; Enter a
 defaults). The installer installs the pinned FEX runtime, downloads the server, sets up
 auto-restart and boots.
 
-When it finishes, **open UDP ports `16261` and `16262`** in your cloud firewall, and you're live. 🎉
+When it finishes, allow the two default UDP ports in both firewall layers described below, and
+you're live. 🎉
 
 To use the original backend instead:
 
 ```bash
 sudo PZ_RUNTIME=box64 ./install.sh
+```
+
+### 🔥 Firewall: open both layers
+
+The default Project Zomboid server uses **UDP `16261` and UDP `16262`**. Both ports must be
+allowed in both places:
+
+1. **On the VPS**, in the local `iptables` firewall. The installer opens both automatically
+   unless `PZ_SKIP_FIREWALL=1` is used.
+2. **In Oracle Cloud**, in the VCN Security List or Network Security Group, create ingress
+   rules for both UDP ports. Opening the Oracle rule alone is not enough if local `iptables`
+   ends in a reject rule.
+
+For a custom `PZ_PORT`, open `PZ_PORT` and `PZ_PORT+1` in both layers. Steam Relay is still
+recommended behind Oracle cloud NAT, but it does not replace the two firewall rules in the
+tested setup.
+
+Manual local recovery, if the installer firewall step was skipped:
+
+```bash
+sudo iptables -I INPUT -p udp --dport 16261 -j ACCEPT
+sudo iptables -I INPUT -p udp --dport 16262 -j ACCEPT
+sudo netfilter-persistent save
 ```
 
 ### Picking a branch

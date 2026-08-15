@@ -25,6 +25,19 @@ The direct UDP `16262` warning may remain visible while Relay is in use; it does
 not prevent a working session, but a direct route can have lower latency when it
 is available.
 
+## Network and firewall
+
+The default PZ ports are **UDP `16261` and UDP `16262`**. Both must be allowed
+twice: in the VPS local `iptables` firewall and in the Oracle VCN Security List
+or Network Security Group. Opening only the Oracle rule is insufficient when
+the host firewall rejects the packet. For a custom `PZ_PORT`, the pair is
+`PZ_PORT` and `PZ_PORT+1`.
+
+The disposable clean-install validation used `17261/17262` and confirmed the
+same requirement: the Oracle rules existed, but the client could not connect
+until the corresponding local `iptables` rules were added. The client then
+connected through Steam Relay and reached the game world.
+
 ## Reproducing the runtime
 
 The installer defaults to the tested FEX backend:

@@ -407,6 +407,11 @@ systemctl start "$SVC-watchdog.timer" "$SVC-modupdate.timer" >/dev/null 2>&1 || 
 
 # ----------------------------------------------------------------- done
 PUBIP="$(curl -fsSL --max-time 5 ifconfig.me 2>/dev/null || echo YOUR_SERVER_IP)"
+if [ "${PZ_SKIP_FIREWALL:-0}" = 1 ]; then
+  FIREWALL_STATUS="  Local firewall: skipped (PZ_SKIP_FIREWALL=1); allow UDP $PORT-$((PORT+1)) manually."
+else
+  FIREWALL_STATUS="  Local firewall (iptables): allowed UDP $PORT-$((PORT+1))."
+fi
 step "Done"
 cat <<EOF
   Server:   $(b "$PUBIP:$PORT")   (UDP)
@@ -415,7 +420,7 @@ cat <<EOF
   Admin pw: $(b "$ADMIN_PW")
   $( [ -n "$JOIN_PW" ] && echo "Join pw:  $(b "$JOIN_PW")" || echo "Join pw:  (none — open server)" )
 
-  The local firewall (iptables) is open for UDP $PORT-$((PORT+1)).
+${FIREWALL_STATUS}
   1) $(b 'Oracle Cloud users:') also allow $(b "UDP $PORT-$((PORT+1))") in your VCN Security List
      (cloud console -> Networking -> VCN -> Security Lists) — that cloud layer is
      separate from the box's firewall and cannot be opened from inside the machine.

@@ -212,26 +212,28 @@ worlds" tone; em dashes thinned out to commas/periods except where genuinely nee
 GitHub rename executed via authenticated `gh repo rename` (old URLs auto-redirect), local
 `origin` updated. `uninstall.sh` learns about the new units/files/paths.
 
-## 4. Testing plan (isolated namespace on the reference box)
+## 4. Testing record (isolated namespace on the reference box)
 
-The live FEX runtime has been validated separately. The clean installer test below is a
-planned, disposable namespace test and must not be described as a pristine-OS test or as a
-production restart. Namespace `zomboid-b42-clean`, everything under
-`/home/ubuntu/Zomboid-clean/` and `/opt/zomboid-server-clean/`, ports 17261/17262, RCON 27261,
-firewall step skipped, and a small RAM/CPU limit so production keeps headroom. Flow:
+The disposable clean-install validation completed successfully on the Oracle reference host;
+this was a side-by-side host test, not a pristine-OS test. The published fork commit
+`7fd584c` was cloned into a temporary checkout and installed as `zomboid-b42-clean` with
+`/home/ubuntu/Zomboid-clean/` and `/opt/zomboid-server-clean/`, ports `17261/17262`, RCON
+`27261`, FEX, a 4 GiB JVM limit, `CPUQuota=200%`, `MemoryMax=6G` and `Nice=10`.
 
-1. Clone the published fork at the tested commit; run a non-interactive install with preseeded
-   answers and branch `public`.
-2. Boot to LISTENING via `pz-boot-retry`; verify the test ini, service and ports while proving
-   the production unit, PID, uptime and ports are unchanged after every heavy step.
-3. Mod cycle: add a small real mod; fake-stale its manifest row; `check` flags it; `apply`
-   re-downloads, logs, rotates backups (run to overflow to prove rotation + 1000-line trim).
-4. RCON: enable in test ini, `players`, `servermsg`, console loop; empty-server auto path with
-   `MODUPDATE_EMPTY_MIN` lowered.
-5. pzctl interactive paths driven by piped stdin (menu reads get EOF-safe exits).
-6. World reset, reorder/disable, multi-remove, remove-all, import from a crafted foreign ini.
-7. Full cleanup: stop/disable/rm test units + drop-ins, env file, suffixed scripts, `pztest/`;
-   final prod health check.
+The production service stayed active throughout: its PID remained `2804567`, its active-start
+timestamp did not change, UDP `16261/16262` stayed bound, and its systemd journal had no
+restart entries. The test reached `SERVER STARTED` with Steam enabled. After both Oracle VCN
+rules and the matching local `iptables` rules were present, an external client connected
+through Steam Relay and reached the game world.
+
+The test namespace, units, helper scripts, data, logs, temporary local firewall rules and
+checkout were removed afterward. The shared production FEX prefix, RootFS and DepotDownloader
+were preserved. During the installer-applied settings restart, the old test JVM needed the
+systemd stop timeout and emitted the known FEX shutdown `SIGBUS`; the replacement instance
+started normally and was the one used for the successful client connection.
+
+The broader mod-update, RCON, world-reset and full pzctl workflow tests remain a separate
+validation task; they are not being presented as completed by this install smoke test.
 
 ## 5. Risks
 
