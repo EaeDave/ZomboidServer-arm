@@ -6,7 +6,7 @@
 #
 #  Removes the server files, systemd services, helper scripts, config and firewall
 #  rules that install.sh created. Your worlds/saves are only deleted if you say yes
-#  to that question, and the shared box64 emulator is left alone unless you opt in.
+#  to that question, and shared emulation runtimes are left alone unless you opt in.
 #
 #  Heads-up: the server directory is deleted with `rm -rf`, so if you manually
 #  stored unrelated files inside it (or inside ~/Zomboid and you confirm that
@@ -42,11 +42,15 @@ BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
 WATCHDOG="${PZ_WATCHDOG:-/usr/local/sbin/zomboid-watchdog.sh}"
 MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 PZCTL_BIN="${PZ_PZCTL:-/usr/local/bin/pzctl}"
+RUNTIME="${PZ_RUNTIME:-box64}"
+FEXSTART="${PZ_FEX_START:-/usr/local/sbin/zomboid-fex-start.sh}"
+FEX_PREFIX="${PZ_FEX_PREFIX:-/opt/fex-a08}"
+FEX_DATA_HOME="${PZ_FEX_DATA_HOME:-$PZ_HOME/.local/share/${SVC}-fex}"
 LIBDIR="$(dirname "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}")"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
 
 echo "This removes: the PZ B42 server in $INSTALL_DIR, its systemd services, pzctl,"
-echo "the watchdog + mod updater, the box64 [ProjectZomboid64] tuning we added, and"
+echo "the watchdog + mod updater, the selected runtime launcher, and"
 echo "the UDP $PORT-$((PORT+1)) firewall rules."
 echo
 echo "Your worlds/saves in $CACHEDIR are asked about separately below, and the"
@@ -74,7 +78,7 @@ rm -f "/etc/systemd/system/$SVC.service" \
       "/etc/systemd/system/$SVC-watchdog.timer" \
       "/etc/systemd/system/$SVC-modupdate.service" \
       "/etc/systemd/system/$SVC-modupdate.timer"
-rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$ENVF"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$ENVF" "$FEXSTART"
 case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
 systemctl reset-failed "$SVC.service" 2>/dev/null
@@ -119,13 +123,22 @@ else
 fi
 
 # ----------------------------------------------------------------- 8. box64 (prompt, shared)
-step "box64 emulator (shared)"
+step "shared emulation runtimes"
 if is_yes "$(ask 'Remove box64 too? Only if nothing else on this box needs x86 emulation.' 'n')"; then
   rm -f /etc/binfmt.d/box64.conf 2>/dev/null; systemctl restart systemd-binfmt 2>/dev/null || true
   apt-get remove -y -qq 'box64*' >/dev/null 2>&1 || warn "box64 wasn't an apt package (source build?) — remove /usr/local/bin/box64 by hand if you want it gone."
   say "box64 removal attempted."
 else
   say "left box64 in place."
+fi
+
+if [ "$RUNTIME" = fex ]; then
+  if is_yes "$(ask "Remove this install's FEX data at $FEX_DATA_HOME?" 'y')"; then
+    rm -rf "$FEX_DATA_HOME"; say "removed FEX runtime data for this install."
+  else
+    say "left FEX runtime data in place."
+  fi
+  echo "  FEX binaries/source were left in $FEX_PREFIX because they may be shared by another install."
 fi
 
 step "Done"

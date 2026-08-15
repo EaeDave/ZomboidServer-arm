@@ -12,6 +12,7 @@ Zomboid/
 server-console.txt
 *.log
 hs_err_pid*
+graphify-out/
 
 # OS cruft
 .DS_Store

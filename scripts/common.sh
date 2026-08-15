@@ -24,6 +24,13 @@ pz_load_env() {
   PZ_RCONPORT="${PZ_RCONPORT:-27015}"
   PZ_BRANCH="${PZ_BRANCH:-public}"
   PZ_SERVERNAME="${PZ_SERVERNAME:-servertest}"
+  PZ_RUNTIME="${PZ_RUNTIME:-box64}"
+  PZ_FEX_COMMIT="${PZ_FEX_COMMIT:-}"
+  PZ_FEX_PREFIX="${PZ_FEX_PREFIX:-}"
+  PZ_FEX_ROOTFS="${PZ_FEX_ROOTFS:-}"
+  PZ_FEX_DATA_HOME="${PZ_FEX_DATA_HOME:-}"
+  PZ_FEX_SOCKET="${PZ_FEX_SOCKET:-}"
+  PZ_FEX_START="${PZ_FEX_START:-}"
   PZ_JSON="$PZ_INSTALL/ProjectZomboid64.json"
   PZ_WS="$PZ_INSTALL/steamapps/workshop/content/108600"
   PZ_CONF="${PZ_CONF:-$PZ_CACHEDIR/pzctl.conf}"
@@ -36,7 +43,7 @@ pz_load_env() {
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
   # keys that identify THIS host/world; import must never take these from a foreign ini
   PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
-  export PZ_SERVICE PZ_CONSOLE PZ_PORT
+  export PZ_SERVICE PZ_CONSOLE PZ_PORT PZ_RUNTIME
 }
 
 # ------------------------------------------------------------ small utils

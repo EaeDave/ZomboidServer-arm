@@ -1,7 +1,7 @@
 #!/bin/bash
 # Box64 boot-hang watchdog — HYBRID detection (console-static AND cpu-idle = real hang).
 #
-# Why hybrid: box64 boots are flaky and hang at random points, but two states LOOK
+# Why hybrid: emulated boots can be slow and hang at random points, but two states LOOK
 # like a hang without being one, and killing them wastes boot attempts:
 #   1. "Waiting for response from Steam servers" — low CPU, but progressing.
 #   2. Silent asset loading — no console output, but high CPU (working).

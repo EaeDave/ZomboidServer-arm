@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#  pzctl — interactive control panel for the Project Zomboid B42 (ARM/box64) server.
+#  pzctl — interactive control panel for the Project Zomboid B42 ARM server.
 #  Run it as your normal user:   pzctl
 #
 #  Point PZCTL_ENV at an alternate env file to drive a non-default install
@@ -8,7 +8,7 @@
 #
 set -uo pipefail
 
-PZCTL_VERSION="2.1.1"
+PZCTL_VERSION="2.2.0-fex"
 
 # ------------------------------------------------------------ config (from installer)
 ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
@@ -31,7 +31,7 @@ status_line() {
 run_boot_retry() { PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY"; }
 
 do_start() {
-  echo "Bringing the server up (box64 boot is flaky — auto-retries until it listens)..."
+  echo "Bringing the server up ($PZ_RUNTIME runtime — auto-retries until it listens)..."
   run_boot_retry
   pause
 }
@@ -53,6 +53,7 @@ do_status() {
   echo "$(bold 'Uptime:')      $(sudo systemctl show "$PZ_SERVICE" -p ActiveEnterTimestamp --value 2>/dev/null)"
   echo "$(bold 'Public IP:')   $(curl -fsSL --max-time 4 ifconfig.me 2>/dev/null || echo '?'):$PZ_PORT"
   echo "$(bold 'Branch:')      ${PZ_BRANCH}"
+  echo "$(bold 'Runtime:')     ${PZ_RUNTIME}"
   echo "$(bold 'Scripts:')     pzctl v$PZCTL_VERSION"
   echo "$(bold 'Version:')     $(grep -am1 -oE 'version=[0-9][0-9.]*' "$PZ_CONSOLE" 2>/dev/null | cut -d= -f2 || echo '?')"
   local mlist; mlist="$(mods_get)"

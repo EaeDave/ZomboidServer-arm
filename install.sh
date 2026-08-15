@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#  Project Zomboid Build 42 — one-shot dedicated-server installer for ARM64 (box64)
+#  Project Zomboid Build 42 — one-shot dedicated-server installer for ARM64
 #
 #  Usage:   sudo ./install.sh
 #
@@ -16,6 +16,9 @@
 #    PZ_RCONPORT=27025              RCON port written to the ini (default 27015)
 #    PZ_BACKUPS=/path               backup dir (default ~/pz_backups)
 #    PZ_SKIP_FIREWALL=1             don't touch iptables
+#    PZ_RUNTIME=fex|box64                              emulation backend (default: fex)
+#    PZ_FEX_COMMIT / PZ_FEX_PREFIX / PZ_FEX_ROOTFS     pinned FEX settings
+#    PZ_ANNOUNCED_IP=x.x.x.x                            public IP advertised to PZ/Steam
 #    PZ_BRANCH / PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB   preseed the prompts
 #
 set -euo pipefail
@@ -30,7 +33,7 @@ ask()  { local p="$1" d="${2:-}" a; read -rp "$(printf '\033[1;36m?\033[0m') $p 
 
 cat <<'EOF'
 
-  Project Zomboid  B42  ->  ARM64 (box64)
+  Project Zomboid  B42  ->  ARM64 (FEX/box64)
   ---------------------------------------
 EOF
 
@@ -66,8 +69,27 @@ BIN_PZCTL="/usr/local/bin/pzctl${SFX}"
 BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
 BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
 BIN_MODUPDATE="/usr/local/sbin/pz-modupdate${SFX}"
+BIN_FEXSTART="/usr/local/sbin/zomboid-fex-start${SFX}.sh"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
-say "Service: $(b "$SVC")   user: $(b "$TARGET_USER")   data: $(b "$CACHEDIR")"
+
+# FEX a08a6ce is the tested pre-FEX-2506 build. Keep the backend selectable so
+# box64 remains available as a fallback on hosts where FEX is not appropriate.
+RUNTIME="${PZ_RUNTIME:-}"
+if [ -z "$RUNTIME" ] && [ -f "$ENVFILE" ]; then
+  RUNTIME="$(grep -m1 '^PZ_RUNTIME=' "$ENVFILE" | cut -d= -f2- || true)"
+fi
+RUNTIME="${RUNTIME:-fex}"
+case "$RUNTIME" in
+  fex|box64) : ;;
+  *) die "PZ_RUNTIME must be 'fex' or 'box64' (got '$RUNTIME')" ;;
+esac
+FEX_COMMIT="${PZ_FEX_COMMIT:-a08a6ce5de51f5e625357ecaed46c463aa1e3c99}"
+FEX_PREFIX="${PZ_FEX_PREFIX:-/opt/fex-a08}"
+FEX_ROOTFS="${PZ_FEX_ROOTFS:-$TARGET_HOME/.local/share/fex-emu/RootFS/Ubuntu_24_04.sqsh}"
+FEX_DATA_HOME="${PZ_FEX_DATA_HOME:-$TARGET_HOME/.local/share/${SVC}-fex}"
+FEX_SOCKET="${PZ_FEX_SOCKET:-/tmp/${SVC}-fex.sock}"
+ANNOUNCED_IP="${PZ_ANNOUNCED_IP:-}"
+say "Service: $(b "$SVC")   user: $(b "$TARGET_USER")   data: $(b "$CACHEDIR")   runtime: $(b "$RUNTIME")"
 
 [[ "$PORT" =~ ^[0-9]+$ ]] || die "PZ_PORT must be a number."
 
@@ -190,6 +212,15 @@ EOF
 ensure_binfmt
 [ -e /proc/sys/fs/binfmt_misc/box64 ] || warn "box64 not registered with binfmt_misc — the server may fail to start (see README Troubleshooting)."
 
+if [ "$RUNTIME" = fex ]; then
+  step "Installing pinned FEX ARM64 runtime"
+  PZ_USER="$TARGET_USER" \
+  PZ_FEX_COMMIT="$FEX_COMMIT" \
+  PZ_FEX_PREFIX="$FEX_PREFIX" \
+  PZ_FEX_ROOTFS="$FEX_ROOTFS" \
+  "$REPO_DIR/scripts/install-fex.sh"
+fi
+
 # ----------------------------------------------------------------- 2. DepotDownloader
 step "Setting up DepotDownloader (native ARM Steam content downloader)"
 DD_DIR=/opt/depotdownloader
@@ -254,8 +285,17 @@ render() { sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__INSTALL_DIR__|$(e
                -e "s|__CONSOLE__|$(esc "$CACHEDIR/server-console.txt")|g" \
                -e "s|__SERVERNAME__|$SERVERNAME|g" -e "s|__EXTRA_ARGS__|$(esc "$EXTRA_ARGS")|g" \
                -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" -e "s|__MODUPDATE__|$(esc "$BIN_MODUPDATE")|g" \
-               -e "s|__WATCHDOG__|$(esc "$BIN_WATCHDOG")|g" -e "s|__LIBDIR__|$(esc "$LIBDIR")|g" "$1"; }
-render "$REPO_DIR/templates/zomboid-b42.service"       > "/etc/systemd/system/$SVC.service"
+               -e "s|__WATCHDOG__|$(esc "$BIN_WATCHDOG")|g" -e "s|__LIBDIR__|$(esc "$LIBDIR")|g" \
+               -e "s|__FEX_PREFIX__|$(esc "$FEX_PREFIX")|g" -e "s|__FEX_ROOTFS__|$(esc "$FEX_ROOTFS")|g" \
+               -e "s|__FEX_DATA_HOME__|$(esc "$FEX_DATA_HOME")|g" -e "s|__FEX_SOCKET__|$(esc "$FEX_SOCKET")|g" \
+               -e "s|__FEX_START__|$(esc "$BIN_FEXSTART")|g" "$1"; }
+if [ "$RUNTIME" = fex ]; then
+  render "$REPO_DIR/templates/zomboid-fex.service" > "/etc/systemd/system/$SVC.service"
+  render "$REPO_DIR/templates/zomboid-fex-start.sh" > "$BIN_FEXSTART"
+  chmod 755 "$BIN_FEXSTART"
+else
+  render "$REPO_DIR/templates/zomboid-b42.service" > "/etc/systemd/system/$SVC.service"
+fi
 render "$REPO_DIR/templates/zomboid-ciopfs.service"    > "/etc/systemd/system/$SVC-ciopfs.service"
 render "$REPO_DIR/templates/zomboid-watchdog.service"  > "/etc/systemd/system/$SVC-watchdog.service"
 render "$REPO_DIR/templates/zomboid-watchdog.timer"    > "/etc/systemd/system/$SVC-watchdog.timer"
@@ -286,6 +326,14 @@ PZ_PORT=$PORT
 PZ_RCONPORT=$RCONPORT
 PZ_BRANCH=$BRANCH
 PZ_SERVERNAME=$SERVERNAME
+PZ_RUNTIME=$RUNTIME
+PZ_FEX_COMMIT=$FEX_COMMIT
+PZ_FEX_PREFIX=$FEX_PREFIX
+PZ_FEX_ROOTFS=$FEX_ROOTFS
+PZ_FEX_DATA_HOME=$FEX_DATA_HOME
+PZ_FEX_SOCKET=$FEX_SOCKET
+PZ_FEX_START=$BIN_FEXSTART
+PZ_ANNOUNCED_IP=$ANNOUNCED_IP
 PZ_COMMON=$LIBDIR/common.sh
 PZ_RCON=$LIBDIR/pz-rcon.py
 PZ_BOOTRETRY=$BIN_BOOTRETRY
@@ -319,7 +367,7 @@ else
 fi
 
 # ----------------------------------------------------------------- 7. first boot -> generate ini
-step "First boot (generates server config; box64 boot is flaky so this may retry)"
+step "First boot (generates server config; the emulated ARM boot may take a few minutes)"
 PZ_SERVICE="$SVC" PZ_PORT="$PORT" PZ_CONSOLE="$CACHEDIR/server-console.txt" "$BIN_BOOTRETRY" || \
   warn "Server didn't reach 'listening' automatically. You can retry later with:  ${BIN_PZCTL##*/}  (menu: Start)"
 
@@ -330,6 +378,12 @@ CHANGED=0
 if [ -f "$INI" ]; then
   if [ -n "$JOIN_PW" ]; then ini_set Password "$JOIN_PW" "$INI"; CHANGED=1; fi
   if [ "$RCONPORT" != 27015 ]; then ini_set RCONPort "$RCONPORT" "$INI"; CHANGED=1; fi
+  if [ -z "$ANNOUNCED_IP" ] && [ "${PZ_SKIP_ANNOUNCED_IP:-0}" != 1 ]; then
+    ANNOUNCED_IP="$(curl -4fsSL --max-time 8 https://api.ipify.org 2>/dev/null || true)"
+  fi
+  if [ -n "$ANNOUNCED_IP" ]; then
+    ini_set server_browser_announced_ip "$ANNOUNCED_IP" "$INI"; CHANGED=1
+  fi
   chown "$TARGET_USER":"$TARGET_USER" "$INI" 2>/dev/null || true
   if [ "$CHANGED" = 1 ]; then
     systemctl restart "$SVC.service"
@@ -346,6 +400,7 @@ step "Done"
 cat <<EOF
   Server:   $(b "$PUBIP:$PORT")   (UDP)
   Branch:   $(b "$BRANCH")
+  Runtime:  $(b "$RUNTIME")
   Admin pw: $(b "$ADMIN_PW")
   $( [ -n "$JOIN_PW" ] && echo "Join pw:  $(b "$JOIN_PW")" || echo "Join pw:  (none — open server)" )
 

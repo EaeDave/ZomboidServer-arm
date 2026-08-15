@@ -4,11 +4,15 @@ Run a **modded Project Zomboid Build 42** dedicated server on a cheap (or **free
 box, like an **Oracle Cloud Ampere** VM, with **one command**. Then manage everything from a
 terminal menu: mods, automatic mod updates, backups, world resets, an admin console.
 
-> **Why ARM / box64?** The PZ server is x86-only, so on ARM it runs through
-> [box64](https://github.com/ptitSeb/box64) emulation. The scripts carry all the required
-> fixes. The classic roadblock, `steamcmd` (32-bit x86, effectively broken on ARM), is not
-> used at all: server files and mods come through **DepotDownloader**, which runs natively
-> on ARM64.
+This fork defaults to a pinned **FEX** runtime for the tested Oracle Ampere setup, while
+retaining the original Box64 path as a fallback. See the complete tested hardware/software
+reference in [`docs/oracle-a1-fex-reference.md`](docs/oracle-a1-fex-reference.md).
+
+> **Why ARM / emulation?** The PZ server is x86-only. The tested ARM64 path uses pinned
+> [FEX](https://fex-emu.github.io/) emulation; [box64](https://github.com/ptitSeb/box64)
+> remains available as a fallback. The classic roadblock, `steamcmd` (32-bit x86,
+> effectively broken on ARM), is not used at all: server files and mods come through
+> **DepotDownloader**, which runs natively on ARM64.
 
 ![pzctl — the terminal control panel](docs/img/pzctl.png)
 
@@ -25,9 +29,16 @@ sudo ./install.sh
 ```
 
 Answer a few questions (admin password, join password, RAM, game branch; Enter accepts the
-defaults). The installer installs box64, downloads the server, sets up auto-restart and boots.
+defaults). The installer installs the pinned FEX runtime, downloads the server, sets up
+auto-restart and boots.
 
-When it finishes, **open UDP port `16261`** in your cloud firewall, and you're live. 🎉
+When it finishes, **open UDP ports `16261` and `16262`** in your cloud firewall, and you're live. 🎉
+
+To use the original backend instead:
+
+```bash
+sudo PZ_RUNTIME=box64 ./install.sh
+```
 
 ### Picking a branch
 
@@ -62,7 +73,7 @@ Each player must tick **"Use Steam Relay"** when they add the server. Otherwise 
 In Project Zomboid: **Join → Favorites / Add a server** (or edit the saved server) →
 tick **`Use Steam Relay`** → Save → connect. Done.
 
-> **Why:** on box64/ARM behind cloud NAT, PZ's *direct* UDP session never completes. The second
+> **Why:** on emulated ARM behind cloud NAT, PZ's *direct* UDP session may never complete. The second
 > port `16262` even reports "open", but the handshake stalls. This is a long-standing PZ quirk
 > (present since B41) that can't be fixed server-side. **Steam Relay** routes the session
 > through Steam and just works.
@@ -189,12 +200,12 @@ restart.
 
 - An **ARM64** (`aarch64`) server running **Ubuntu 22.04/24.04** (or another apt-based distro
   with systemd). Oracle Ampere free tier is perfect: 4 cores / 24 GB.
-- **8 GB+ RAM** recommended (6 GB is a practical minimum: bundled JVM + box64 overhead),
+- **8 GB+ RAM** recommended (6 GB is a practical minimum: bundled JVM + emulation overhead),
   **~12 GB free disk** (the server alone is ~7 GB), 2+ cores.
-- **UDP 16261** reachable. The installer opens the box's **local firewall** (iptables) for
+- **UDP 16261-16262** reachable. The installer opens the box's **local firewall** (iptables) for
   you; **Oracle Cloud** users must *also* allow UDP 16261 in the **VCN Security List** (web
   console), because that cloud layer can't be opened from inside the machine.
-- That's it. The installer pulls in everything else (box64 + binfmt, ciopfs, DepotDownloader).
+- That's it. The installer pulls in everything else (FEX or Box64, ciopfs, DepotDownloader).
   **No system Java needed**, the server bundles its own.
 
 ### Will it run on my ARM box?
@@ -229,7 +240,7 @@ folders, move them out first.
 
 This is **x86 emulated on ARM**. It runs great for you and a group of friends, but:
 
-- **Boot is flaky**: box64 hangs at random points during JVM startup. The included retry loop
+- **Boot is slow/flaky under emulation**: the included retry loop
   and watchdog handle this automatically; you just wait a few minutes on first boot.
 - **Performance is emulated**: fine for a moderate mod list and a handful of players; it can
   rubber-band under heavy load (huge hordes, many players, script-heavy mods). **More RAM does
@@ -277,7 +288,7 @@ A few worth expanding:
 install.sh                one-shot installer (arch-checked, interactive, branch selection)
 uninstall.sh              removes everything; asks before deleting worlds (rm -rf inside)
 pzctl                     control panel (start/stop, mods, updates, console, reset, backup)
-templates/                JVM config, box64 tuning, systemd units (filled in at install)
+templates/                JVM config, runtime launchers, systemd units (filled in at install)
 scripts/
   common.sh               shared library (env, ini editing, workshop installs, manifest)
   pz-modupdate.sh         mod update checker/applier (manual + systemd timer)
@@ -296,10 +307,11 @@ extra namespaced instance next to the main one; see the header of `install.sh`.
 
 The installer needs little on a fresh box, because:
 
-- **Java is bundled**: the server ships its own x86 `jre64`, which box64 runs. No system JDK.
+- **Java is bundled**: the server ships its own x86 `jre64`, which the selected runtime runs.
+  No system JDK is required.
 - **No box86 / 32-bit libs**: we fetch with [DepotDownloader](https://github.com/SteamRE/DepotDownloader)
   (a native ARM64 binary), so the 32-bit `steamcmd` that needs box86 + `armhf` libs isn't required.
-- box64 is registered with **binfmt_misc** so the x86 server binary runs transparently. On
+- Box64 is registered with **binfmt_misc** when the Box64 backend is selected. On
   Raspberry Pi 4/5 the installer picks the Pi-optimized box64 package automatically.
 
 Prefer SteamCMD? [sonroyaalmerol/steamcmd-arm64](https://github.com/sonroyaalmerol/steamcmd-arm64)
@@ -310,15 +322,15 @@ DepotDownloader to keep the install Docker-free and single-binary.
 
 - **Players stuck on "Joining game…"** (connects, gets the server name, then hangs): they need
   **"Use Steam Relay"** ticked when adding the server. Direct connection doesn't complete on
-  box64/ARM behind cloud NAT (`16262` looks open but the handshake stalls, a PZ quirk since
+  emulated ARM behind cloud NAT (`16262` looks open but the handshake stalls, a PZ quirk since
   B41, not fixable server-side). See [How friends join](#-how-friends-join-important) above.
 - **Players can't connect at all**: there are *two* firewalls. The installer opens the box's
   **iptables** (UDP 16261-16262), but **Oracle Cloud** also needs UDP 16261 in the **VCN
   Security List** (web console → Networking → your VCN → Security Lists). Both must be open.
-- **Server won't start / "Exec format error"**: box64 isn't registered with binfmt_misc. Run
+- **Box64 server won't start / "Exec format error"**: Box64 isn't registered with binfmt_misc. Run
   `sudo systemctl restart systemd-binfmt` and check `ls /proc/sys/fs/binfmt_misc/ | grep box64`,
   or just re-run `sudo ./install.sh`.
-- **Boot seems stuck**: box64 boots are flaky; the watchdog + retry loop handle it. Give it a
+- **Boot seems stuck**: emulated boots can take several minutes; the watchdog + retry loop handle it. Give it a
   few minutes, or run `pzctl` → Start.
 - **Mod updates never auto-apply**: the scheduler only updates after the server has been empty
   for the configured time, and it needs RCON to count players (menu 12 turns it on). Check the
@@ -328,7 +340,8 @@ DepotDownloader to keep the install Docker-free and single-binary.
 
 Builds on [Dyarven/zomboid-server-on-arm](https://github.com/Dyarven/zomboid-server-on-arm)
 (which covers **B41**); B42 bundles a newer JVM and needed a different recipe.
-Powered by [box64](https://github.com/ptitSeb/box64),
+Powered by [FEX](https://fex-emu.github.io/) (pinned for the Oracle reference setup),
+[box64](https://github.com/ptitSeb/box64) fallback,
 [DepotDownloader](https://github.com/SteamRE/DepotDownloader), and
 [ciopfs](https://www.brain-dump.org/projects/ciopfs/).
 
