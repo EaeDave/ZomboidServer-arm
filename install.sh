@@ -335,6 +335,7 @@ install -m755 "$REPO_DIR/scripts/pz-agent.sh"          "$BIN_AGENT"
 install -m755 "$REPO_DIR/scripts/pz-agent-priv.sh"      "$BIN_AGENT_PRIV"
 mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
+install -m755 "$REPO_DIR/scripts/zomboid-admin-bootstrap.sh" "$LIBDIR/zomboid-admin-bootstrap.sh"
 install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
 # namespaced installs: point the installed copies at their own env file
 if [ -n "$SFX" ]; then

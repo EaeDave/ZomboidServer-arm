@@ -27,6 +27,8 @@ SESSION_SECRET=<long-random-value>
 PUBLIC_URL=https://panel.example.com
 AGENT_ENROLLMENT_TOKEN=<one-time-or-rotated-enrollment-value>
 AGENT_STALE_SECONDS=60
+# Optional: exact Coolify proxy peer IPs, only when it overwrites X-Forwarded-For.
+TRUSTED_PROXY_IPS=
 PORT=3000
 ```
 
@@ -45,7 +47,9 @@ mutating flows still require staging validation before production access is enab
 4. Add the environment secrets above; do not upload server passwords, saves, FEX RootFS files or
    SSH private keys to the image.
 5. Run the migration as a one-off/release task with `bun run db:migrate`; do not run schema
-   generation against production.
+   generation against production. If Coolify's reverse proxy is in front of the API, set
+   `TRUSTED_PROXY_IPS` to its exact source IP(s) only after confirming it overwrites
+   `X-Forwarded-For`; otherwise leave it empty and use the proxy socket address for throttling.
 6. Configure the health check as `GET /api/health` on port `3000` and use
    `GET /api/health/database` to verify PostgreSQL.
 7. Deploy one replica and verify `/api/health`, `/docs` and the browser bundle.
@@ -59,6 +63,7 @@ mutating flows still require staging validation before production access is enab
    PZ_AGENT_ID=<returned-agent-id>
    PZ_AGENT_ACCESS_TOKEN=<returned-access-token>
    PZ_AGENT_INTERVAL=15
+   PZ_AGENT_PENDING_COMPLETION_RETRIES=3
    ```
 
    Rerun the host installer with `PZ_AGENT_ENABLE=1` after configuring this file; that validated

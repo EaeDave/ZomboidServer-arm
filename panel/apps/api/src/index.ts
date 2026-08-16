@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { cors } from "@elysiajs/cors";
 import { staticPlugin } from "@elysiajs/static";
 import { swagger } from "@elysiajs/swagger";
@@ -217,7 +218,19 @@ export function createApp(
       "/api/auth/login",
       async ({ body, request, server, set }) => {
         try {
-          const clientIp = server?.requestIP(request)?.address;
+          const peerIp = server?.requestIP(request)?.address;
+          const trustedProxyIps = new Set(
+            (process.env.TRUSTED_PROXY_IPS ?? "")
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean),
+          );
+          const forwardedIp = request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
+          // Forwarded headers are accepted only from explicitly configured proxy peers.
+          const clientIp =
+            peerIp && trustedProxyIps.has(peerIp) && forwardedIp && isIP(forwardedIp)
+              ? forwardedIp
+              : peerIp;
           const session = await auth.login(body.email, body.password, { clientIp });
           if (!session) {
             set.status = 401;

@@ -262,20 +262,28 @@ post_completion() {
 poll_agent() {
   local url="${PZ_AGENT_URL:-}" agent_id="${PZ_AGENT_ID:-}" access_token="${PZ_AGENT_ACCESS_TOKEN:-}"
   local interval="${PZ_AGENT_INTERVAL:-15}" status payload completion_rc fallback_completion
-  local pending_job_id="" pending_completion=""
+  local pending_job_id="" pending_completion="" pending_completion_attempts=0
+  local pending_completion_retry_limit="${PZ_AGENT_PENDING_COMPLETION_RETRIES:-3}"
   [ -n "$url" ] || { printf 'pz-agent: PZ_AGENT_URL is required\n' >&2; return 64; }
   [ -n "$agent_id" ] || { printf 'pz-agent: PZ_AGENT_ID is required\n' >&2; return 64; }
   [ -n "$access_token" ] || { printf 'pz-agent: PZ_AGENT_ACCESS_TOKEN is required\n' >&2; return 64; }
   case "$interval" in ''|*[!0-9]*) printf 'pz-agent: PZ_AGENT_INTERVAL must be an integer\n' >&2; return 64 ;; esac
   [ "$interval" -ge 5 ] 2>/dev/null || { printf 'pz-agent: PZ_AGENT_INTERVAL must be at least 5 seconds\n' >&2; return 64; }
+  case "$pending_completion_retry_limit" in ''|*[!0-9]*) printf 'pz-agent: PZ_AGENT_PENDING_COMPLETION_RETRIES must be an integer\n' >&2; return 64 ;; esac
+  [ "$pending_completion_retry_limit" -ge 1 ] 2>/dev/null || {
+    printf 'pz-agent: PZ_AGENT_PENDING_COMPLETION_RETRIES must be at least 1\n' >&2
+    return 64
+  }
   url="${url%/}"
   require_secure_url "$url" || return $?
 
   while :; do
     if [ -n "$pending_job_id" ]; then
+      pending_completion_attempts=$((pending_completion_attempts + 1))
       if post_completion "$url/api/agents/$agent_id/jobs/$pending_job_id/complete" "$access_token" "$pending_completion"; then
         pending_job_id=""
         pending_completion=""
+        pending_completion_attempts=0
       else
         completion_rc=$?
         [ "$completion_rc" -eq 2 ] && {
@@ -286,10 +294,20 @@ poll_agent() {
         if post_completion "$url/api/agents/$agent_id/jobs/$pending_job_id/complete" "$access_token" "$fallback_completion"; then
           pending_job_id=""
           pending_completion=""
+          pending_completion_attempts=0
         else
           completion_rc=$?
           [ "$completion_rc" -eq 2 ] && return 1
-          printf 'pz-agent: pending completion rejected; retaining retry\n' >&2
+          if [ "$pending_completion_attempts" -ge "$pending_completion_retry_limit" ]; then
+            printf 'pz-agent: pending completion dead-lettered after %s attempts; continuing\n' \
+              "$pending_completion_attempts" >&2
+            pending_job_id=""
+            pending_completion=""
+            pending_completion_attempts=0
+          else
+            printf 'pz-agent: pending completion rejected; retaining retry (%s/%s)\n' \
+              "$pending_completion_attempts" "$pending_completion_retry_limit" >&2
+          fi
         fi
       fi
     fi
@@ -419,6 +437,7 @@ PY
             }
             pending_job_id="$job_id"
             pending_completion="$completion"
+            pending_completion_attempts=1
             printf 'pz-agent: job completion failed; retaining for retry\n' >&2
           fi
         fi
