@@ -1,0 +1,31 @@
+[Unit]
+Description=Project Zomboid B42 Dedicated Server (FEX ARM64)
+After=network-online.target __SVC__-ciopfs.service
+Wants=network-online.target
+Requires=__SVC__-ciopfs.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__INSTALL_DIR__
+RuntimeDirectory=__SVC__-fex
+RuntimeDirectoryMode=0750
+EnvironmentFile=__ENVFILE__
+Environment=HOME=__HOME__
+Environment=XDG_DATA_HOME=__FEX_DATA_HOME__
+Environment=FEX_ROOTFS=__FEX_ROOTFS__
+Environment=FEX_SERVERSOCKETPATH=__FEX_SOCKET__
+Environment=FEX_MULTIBLOCK=0
+Environment=PATH=__INSTALL_DIR__/jre64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LD_LIBRARY_PATH=__INSTALL_DIR__/linux64:__INSTALL_DIR__:__INSTALL_DIR__/jre64/lib:__INSTALL_DIR__/jre64/lib/server
+ExecStart=__FEX_START__ -servername __SERVERNAME__ __EXTRA_ARGS__
+StandardOutput=append:__CONSOLE__
+StandardError=append:__CONSOLE__
+# The FEX launcher exits non-zero on a guest crash; always restart the service.
+Restart=always
+RestartSec=20
+TimeoutStopSec=120
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

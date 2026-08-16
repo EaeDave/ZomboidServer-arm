@@ -1,0 +1,55 @@
+{
+  "name": "@zomboid/control-plane",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "bun run dev:api",
+    "dev:api": "bun --cwd apps/api dev",
+    "dev:web": "bun --cwd apps/web dev",
+    "build": "bun run build:web",
+    "build:web": "bun --cwd apps/web build",
+    "start": "bun run start:api",
+    "start:api": "bun --cwd apps/api start",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint apps/api/src apps/web/src packages/contracts/src packages/db/src",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run format:check && bun run lint && bun run typecheck",
+    "test": "bun test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "auth:bootstrap-admin": "bun apps/api/src/bootstrap-admin.ts"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "1.4.2",
+    "@elysiajs/static": "1.4.10",
+    "@elysiajs/swagger": "1.3.1",
+    "@sinclair/typebox": "0.34.52",
+    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-router": "1.170.29",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "elysia": "1.4.29",
+    "postgres": "3.4.9",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/bun": "1.3.14",
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "oxfmt": "0.63.0",
+    "oxlint": "1.78.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.2.1"
+  },
+  "packageManager": "bun@1.4.0"
+}

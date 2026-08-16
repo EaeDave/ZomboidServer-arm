@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786841611845,
+      "tag": "0000_sturdy_darwin",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786844820164,
+      "tag": "0001_acoustic_champions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786845208604,
+      "tag": "0002_productive_old_lace",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786845736512,
+      "tag": "0003_military_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786845958412,
+      "tag": "0004_wise_punisher",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786854200860,
+      "tag": "0005_empty_meltdown",
+      "breakpoints": true
+    }
+  ]
+}

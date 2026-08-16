@@ -19,10 +19,13 @@ The `unstable` branch no longer exists, so the installer's hardcoded `-branch un
 broken and must go.
 
 Reference environment (Oracle Ampere, surveyed 2026-08-10): Ubuntu 24.04.4, aarch64, 4 cores,
-24 GB RAM, box64 v0.4.3, python3 3.12, server v42.20.x from `/opt/zomboid-server` (~7 GB),
-local mods only (`WorkshopItems=` empty), RCON off by default. All testing happens on such a
-box in an isolated namespace; a production install on the same machine must not be touched
-or slowed.
+24 GB RAM plus 4 GB swap, python3 3.12, server v42.20.2 from `/opt/zomboid-server` (~7 GB),
+the bundled x86-64 Java 25 runtime, and local mods only (`WorkshopItems=` empty). The primary
+runtime is FEX commit `a08a6ce5de51f5e625357ecaed46c463aa1e3c99`, with Ubuntu 24.04 x86-64
+RootFS and `FEX_MULTIBLOCK=0`; Box64 v0.4.3 is retained as a fallback, not as the reference
+runtime. The live runtime was validated with 10 GB for the server and Steam Relay clients;
+the clean installer validation is deliberately performed in an isolated namespace so a
+production install on the same machine is not touched or stopped.
 
 ## 2. Goals
 
@@ -36,7 +39,8 @@ or slowed.
 4. README: B42-stable wording, softer uninstall warning, fewer em dashes, ARM compatibility +
    general-specs section, new repo name **ZomboidServer-arm** everywhere.
 5. Portability: state clearly what the scripts need (aarch64 + apt + systemd), fail early
-   otherwise, pick the right box64 package on Raspberry Pi.
+   otherwise, use pinned FEX by default, and keep the right Box64 package available for the
+   fallback path on Raspberry Pi.
 
 ## 3. Architecture decisions
 
@@ -80,14 +84,27 @@ PZ_INSTALL_DIR  server files             (default /opt/zomboid-server)
 PZ_CACHEDIR     Zomboid data dir         (default $HOME/Zomboid; passed as -cachedir when non-default)
 PZ_PORT         game port                (default 16261; passed as -port/-udpport when non-default)
 PZ_SKIP_FIREWALL=1  skip iptables step
+PZ_RUNTIME      fex|box64                backend (default fex)
+PZ_FEX_*        commit/prefix/RootFS    pinned FEX settings
 PZ_BRANCH       preseed branch (skips the prompt)
 PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB    preseed the other prompts (non-interactive installs)
 ```
+
+The PZ launcher only accepts the initial admin password through `-adminpassword`. The generated
+launcher uses the protected env file for the first bootstrap, watches for PZ's successful password
+change log line, and writes `$PZ_ADMIN_MARKER`; later starts omit the password argument. World reset
+removes the marker. Remove the marker manually after restoring an account database so the next boot
+re-applies the configured bootstrap password.
 
 Non-default `PZ_SVC` suffixes every installed artifact (units, env file, pzctl, sbin scripts,
 lib dir) so a test install coexists with production without overwriting production's scripts.
 Unit names derive from `PZ_SVC`: `<svc>.service`, `<svc>-ciopfs.service`, `<svc>-watchdog.*`,
 `<svc>-modupdate.*`.
+
+FEX is the default backend and launches the bundled x86-64 server explicitly through
+`FEXLoader`; its prefix, RootFS, data home and server socket are namespaced/configurable.
+The Box64 fallback is the only path that installs Box64, registers `binfmt_misc`, or modifies
+`/etc/box64.box64rc`.
 
 ### 3.3 Branch selection
 
@@ -176,14 +193,18 @@ out of scope; the file + in-game admin panel remain the real editors.)
 workshop dir, console log, backups dir, update log, env file, branch, game version (from
 console log).
 
-### 3.6 Portability / requirements (README + install.sh guards)
+### 3.6 Portability / runtime requirements (README + install.sh guards)
 
 - Hard requirements: aarch64, systemd, apt (Debian/Ubuntu family). `install.sh` now also
   checks for `apt-get` and exits with a clear message on non-apt distros.
+- FEX is the default and is pinned to the Oracle-tested commit. It needs a local build and an
+  x86-64 Ubuntu RootFS; FEX is launched directly and does not use `binfmt_misc`.
+- Box64 is a selectable fallback. Only that backend needs the Box64 apt package, the
+  `binfmt_misc` registration, and the `[ProjectZomboid64]` block in `/etc/box64.box64rc`.
 - RAM: warn (not fail) below 6 GB total; default `-Xmx` calculation unchanged.
 - Disk: ~10 GB free needed (6.9 GB server + JRE + mods); checked with a warning.
-- Raspberry Pi 4/5 detected via `/proc/device-tree/model` → install `box64-rpi4arm64` /
-  `box64-rpi5arm64` instead of `box64-generic-arm` (same apt repo).
+- Raspberry Pi 4/5 detected via `/proc/device-tree/model` → when Box64 is selected, install
+  `box64-rpi4arm64` / `box64-rpi5arm64` instead of `box64-generic-arm` (same apt repo).
 - README gets a short "Will it run on my ARM box?" table: Oracle Ampere (tested), AWS
   Graviton/Hetzner/other aarch64 Ubuntu VPS (expected fine), RPi 4/5 8 GB (works, small
   groups), non-apt distros & 32-bit ARM (unsupported).
@@ -197,23 +218,28 @@ worlds" tone; em dashes thinned out to commas/periods except where genuinely nee
 GitHub rename executed via authenticated `gh repo rename` (old URLs auto-redirect), local
 `origin` updated. `uninstall.sh` learns about the new units/files/paths.
 
-## 4. Testing plan (isolated namespace on the reference box — executed 2026-08-10, all green)
+## 4. Testing record (isolated namespace on the reference box)
 
-Namespace `zomboid-b42-test`, everything under `/home/ubuntu/pztest/` (install dir, cachedir),
-port 16371/16372, RCON 27025, firewall step skipped, `CPUQuota=250%` + `Nice=10` set on the
-test service via `systemctl set-property` so production keeps headroom. Flow:
+The disposable clean-install validation completed successfully on the Oracle reference host;
+this was a side-by-side host test, not a pristine-OS test. The published fork commit
+`7fd584c` was cloned into a temporary checkout and installed as `zomboid-b42-clean` with
+`/home/ubuntu/Zomboid-clean/` and `/opt/zomboid-server-clean/`, ports `17261/17262`, RCON
+`27261`, FEX, a 4 GiB JVM limit, `CPUQuota=200%`, `MemoryMax=6G` and `Nice=10`.
 
-1. rsync repo → box; non-interactive test install (preseeded answers, branch `public`).
-2. Boot to LISTENING via pz-boot-retry; verify ini generated in test cachedir, prod untouched
-   (service active, ports up, load sane) after every heavy step.
-3. Mod cycle: add a small real mod; fake-stale its manifest row; `check` flags it; `apply`
-   re-downloads, logs, rotates backups (run to overflow to prove rotation + 1000-line trim).
-4. RCON: enable in test ini, `players`, `servermsg`, console loop; empty-server auto path with
-   `MODUPDATE_EMPTY_MIN` lowered.
-5. pzctl interactive paths driven by piped stdin (menu reads get EOF-safe exits).
-6. World reset, reorder/disable, multi-remove, remove-all, import from a crafted foreign ini.
-7. Full cleanup: stop/disable/rm test units + drop-ins, env file, suffixed scripts, `pztest/`;
-   final prod health check.
+The production service stayed active throughout: its PID remained `2804567`, its active-start
+timestamp did not change, UDP `16261/16262` stayed bound, and its systemd journal had no
+restart entries. The test reached `SERVER STARTED` with Steam enabled. After both Oracle VCN
+rules and the matching local `iptables` rules were present, an external client connected
+through Steam Relay and reached the game world.
+
+The test namespace, units, helper scripts, data, logs, temporary local firewall rules and
+checkout were removed afterward. The shared production FEX prefix, RootFS and DepotDownloader
+were preserved. During the installer-applied settings restart, the old test JVM needed the
+systemd stop timeout and emitted the known FEX shutdown `SIGBUS`; the replacement instance
+started normally and was the one used for the successful client connection.
+
+The broader mod-update, RCON, world-reset and full pzctl workflow tests remain a separate
+validation task; they are not being presented as completed by this install smoke test.
 
 ## 5. Risks
 
@@ -221,6 +247,8 @@ test service via `systemctl set-property` so production keeps headroom. Flow:
 |---|---|
 | Test install overwrites prod scripts/units | namespace suffixes every artifact; prod files never written |
 | Second server steals CPU from players | CPUQuota+Nice on test unit; load checked between steps; test server stopped when idle |
+| FEX rebuild changes the production runtime | use a separate test prefix/source; never rebuild `/opt/fex-a08` while production is running |
+| Box64 setup changes global binfmt/config | FEX test skips Box64 setup; Box64 fallback testing is a separate, explicit run |
 | Steam page scrape (collections) breaks someday | unchanged behavior, documented; API fallback already impossible for unlisted |
 | api.steamcmd.net down at install time | static branch fallback list |
 | RCON exposed | never firewall-opened; random password; documented |

@@ -6,12 +6,21 @@ id_ed25519*
 id_rsa*
 .env
 !/*.env.example
+!panel/.env.example
 
 # Never commit live server data / saves / logs
 Zomboid/
 server-console.txt
 *.log
 hs_err_pid*
+graphify-out/
+
+# Panel build/dependency artifacts
+panel/node_modules/
+**/node_modules/
+panel/apps/web/dist/
+panel/.turbo/
+panel/.cache/
 
 # OS cruft
 .DS_Store

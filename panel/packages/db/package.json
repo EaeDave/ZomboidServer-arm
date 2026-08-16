@@ -1,0 +1,13 @@
+{
+  "name": "@zomboid/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/schema.ts",
+    "./client": "./src/client.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9"
+  }
+}

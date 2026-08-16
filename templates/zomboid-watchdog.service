@@ -1,5 +1,5 @@
 [Unit]
-Description=Zomboid B42 boot-hang watchdog (box64)
+Description=Zomboid B42 boot-hang watchdog (ARM emulation)
 
 [Service]
 Type=oneshot

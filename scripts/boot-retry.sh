@@ -1,14 +1,14 @@
 #!/bin/bash
-# Bring the server up through box64's flaky boot: restart, watch, and if it truly hangs,
-# restart and try again. box64 boots succeed maybe 30-50% of the time on their own, so a
-# few automated retries is the fast way to get to "listening".
+# Bring the server up through the selected ARM emulation runtime: restart, watch, and if it
+# truly hangs, restart and try again. A few automated retries is the fast way to get to
+# "listening" on a cold JVM boot.
 #
 #   success = UDP :16261 is listening (plus, optionally, a live Steam session)
 #   hang    = console silent >2 min AND CPU idle over 8s   -> restart & retry
-#   a box64 JIT SIGSEGV is FLAKY, so `Restart=always` reboots it and we keep trying.
+#   an emulation/JIT crash is treated as recoverable, so `Restart=always` reboots it.
 #   Only a failed Workshop download (onItemNotDownloaded) is deterministic -> STOP (recrashes).
 #
-# PZ_REQUIRE_STEAM=1 (default when tcpdump is available): a box64 boot can reach
+# PZ_REQUIRE_STEAM=1 (default when tcpdump is available): an emulated boot can reach
 # "listening" with a DEAD Steam game-server session — the Steam networking thread
 # wedges the same way boots hang. Players who join through Steam Relay can never
 # reach such a server ("Getting Server Info" forever). With the gate on, after

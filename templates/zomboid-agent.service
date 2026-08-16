@@ -1,0 +1,23 @@
+[Unit]
+Description=Zomboid host agent heartbeat (outbound only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+EnvironmentFile=__ENVFILE__
+EnvironmentFile=-__AGENT_ENVFILE__
+Environment=PZCTL_ENV=__ENVFILE__
+ExecStart=__AGENT__ --poll
+Restart=always
+RestartSec=10
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__CACHEDIR__ __BACKUPS__
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
