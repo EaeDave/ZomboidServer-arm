@@ -345,6 +345,10 @@ if [ -n "$SFX" ]; then
   sed -i "s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_AGENT_PRIV"
 fi
 # let pzctl & friends know the environment on this host
+if [ -z "${PZ_REQUIRE_STEAM+x}" ] && [ -f "$ENVFILE" ]; then
+  PZ_REQUIRE_STEAM="$(grep -m1 '^PZ_REQUIRE_STEAM=' "$ENVFILE" | cut -d= -f2- || true)"
+fi
+PZ_REQUIRE_STEAM="${PZ_REQUIRE_STEAM:-auto}"
 cat > "$ENVFILE" <<EOF
 PZ_SERVICE=$SVC
 PZ_USER=$TARGET_USER
