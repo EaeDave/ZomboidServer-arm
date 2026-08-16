@@ -22,9 +22,9 @@ ENV PORT=3000
 COPY --from=build /app/panel/package.json ./package.json
 COPY --from=build /app/panel/bun.lock ./bun.lock
 COPY --from=build /app/panel/drizzle.config.ts ./drizzle.config.ts
-COPY --from=build /app/panel/node_modules ./node_modules
 COPY --from=build /app/panel/apps ./apps
 COPY --from=build /app/panel/packages ./packages
+RUN bun install --frozen-lockfile --production
 
 USER bun
 EXPOSE 3000

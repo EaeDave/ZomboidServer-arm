@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import type {
   AgentEnrollmentRequest,
   AgentJob,
@@ -55,6 +55,27 @@ export class OperationNotFoundError extends Error {
   constructor() {
     super("operation was not found");
     this.name = "OperationNotFoundError";
+  }
+}
+
+export class ServerNotFoundError extends Error {
+  constructor() {
+    super("server was not found");
+    this.name = "ServerNotFoundError";
+  }
+}
+
+export class AgentStatusMismatchError extends Error {
+  constructor() {
+    super("agent status does not match the enrolled server");
+    this.name = "AgentStatusMismatchError";
+  }
+}
+
+export class AgentAlreadyEnrolledError extends Error {
+  constructor() {
+    super("server is already enrolled");
+    this.name = "AgentAlreadyEnrolledError";
   }
 }
 
@@ -120,11 +141,13 @@ export class DatabaseAgentService implements AgentService {
 
   private async authorizeAgent(agentId: string, accessToken: string) {
     const [agent] = await this.getDatabase()
-      .select({ id: agents.id })
+      .select({ id: agents.id, serviceName: serverInstances.serviceName })
       .from(agents)
+      .innerJoin(serverInstances, eq(serverInstances.agentId, agents.id))
       .where(
         and(
           eq(agents.id, agentId),
+          ne(agents.status, "revoked"),
           eq(agents.accessTokenHash, hashSecret(accessToken).toString("hex")),
         ),
       )
@@ -141,43 +164,55 @@ export class DatabaseAgentService implements AgentService {
       throw new AgentUnauthorizedError();
     }
 
-    const accessToken = randomBytes(32).toString("base64url");
     const database = this.getDatabase();
-    const [agent] = await database
-      .insert(agents)
-      .values({
-        name: input.name.trim(),
-        enrollmentSecretHash: hashSecret(enrollmentToken).toString("hex"),
-        accessTokenHash: hashSecret(accessToken).toString("hex"),
-        status: "offline",
-      })
-      .returning({ id: agents.id });
+    const [existingServer] = await database
+      .select({ id: serverInstances.id })
+      .from(serverInstances)
+      .where(eq(serverInstances.serviceName, input.server.serviceName))
+      .limit(1);
+    if (existingServer) throw new AgentAlreadyEnrolledError();
 
-    if (!agent) throw new Error("agent enrollment did not return an id");
+    const accessToken = randomBytes(32).toString("base64url");
+    return database.transaction(async (transaction) => {
+      const [agent] = await transaction
+        .insert(agents)
+        .values({
+          name: input.name.trim(),
+          enrollmentSecretHash: hashSecret(enrollmentToken).toString("hex"),
+          accessTokenHash: hashSecret(accessToken).toString("hex"),
+          status: "offline",
+        })
+        .returning({ id: agents.id });
 
-    await database.insert(serverInstances).values({
-      agentId: agent.id,
-      displayName: input.server.displayName,
-      serviceName: input.server.serviceName,
-      port: input.server.port,
-      runtime: input.server.runtime,
-      dataDir: input.server.dataDir,
-    });
-    await database.insert(auditEvents).values({
-      agentId: agent.id,
-      action: "agent.enroll",
-      metadata: {
-        name: input.name,
+      if (!agent) throw new Error("agent enrollment did not return an id");
+
+      await transaction.insert(serverInstances).values({
+        agentId: agent.id,
+        displayName: input.server.displayName,
         serviceName: input.server.serviceName,
-      },
-    });
+        port: input.server.port,
+        runtime: input.server.runtime,
+        dataDir: input.server.dataDir,
+      });
+      await transaction.insert(auditEvents).values({
+        agentId: agent.id,
+        action: "agent.enroll",
+        metadata: {
+          name: input.name,
+          serviceName: input.server.serviceName,
+        },
+      });
 
-    return { agentId: agent.id, accessToken };
+      return { agentId: agent.id, accessToken };
+    });
   }
 
   async heartbeat(agentId: string, accessToken: string, status: AgentStatus): Promise<void> {
     const database = this.getDatabase();
     const agent = await this.authorizeAgent(agentId, accessToken);
+    if (status.serverId !== agent.serviceName || status.serviceName !== agent.serviceName) {
+      throw new AgentStatusMismatchError();
+    }
 
     await database
       .update(agents)
@@ -187,15 +222,24 @@ export class DatabaseAgentService implements AgentService {
 
   async getStatus(serverId: string): Promise<AgentStatus> {
     const [row] = await this.getDatabase()
-      .select({ lastStatus: agents.lastStatus, lastSeenAt: agents.lastSeenAt })
+      .select({
+        lastStatus: agents.lastStatus,
+        lastSeenAt: agents.lastSeenAt,
+        agentStatus: agents.status,
+      })
       .from(serverInstances)
       .innerJoin(agents, eq(serverInstances.agentId, agents.id))
       .where(eq(serverInstances.serviceName, serverId))
       .limit(1);
 
-    const staleSeconds = Number(process.env.AGENT_STALE_SECONDS ?? 60);
+    if (!row) throw new ServerNotFoundError();
+    if (row.agentStatus === "revoked") throw new AgentUnavailableError();
+
+    const parsedStaleSeconds = Number(process.env.AGENT_STALE_SECONDS ?? 60);
+    const staleSeconds =
+      Number.isFinite(parsedStaleSeconds) && parsedStaleSeconds > 0 ? parsedStaleSeconds : 60;
     const lastSeen = row?.lastSeenAt?.getTime() ?? 0;
-    if (!row?.lastStatus || !lastSeen || Date.now() - lastSeen > staleSeconds * 1000) {
+    if (!row.lastStatus || !lastSeen || this.now().getTime() - lastSeen > staleSeconds * 1000) {
       throw new AgentUnavailableError();
     }
     return row.lastStatus as AgentStatus;
@@ -213,38 +257,40 @@ export class DatabaseAgentService implements AgentService {
       .where(eq(serverInstances.serviceName, serverId))
       .limit(1);
 
-    if (!server) throw new AgentUnavailableError();
+    if (!server) throw new ServerNotFoundError();
 
-    const [created] = await database
-      .insert(operations)
-      .values({
-        serverId: server.id,
-        actorUserId,
+    return database.transaction(async (transaction) => {
+      const [created] = await transaction
+        .insert(operations)
+        .values({
+          serverId: server.id,
+          actorUserId,
+          kind: request.kind,
+          payload: request.payload,
+        })
+        .returning({
+          operationId: operations.id,
+          status: operations.status,
+          createdAt: operations.createdAt,
+          startedAt: operations.startedAt,
+          finishedAt: operations.finishedAt,
+          error: operations.error,
+        });
+
+      if (!created) throw new Error("operation was not created");
+
+      const record = operationRecord({
+        ...created,
+        serverId: server.serviceName,
         kind: request.kind,
-        payload: request.payload,
-      })
-      .returning({
-        operationId: operations.id,
-        status: operations.status,
-        createdAt: operations.createdAt,
-        startedAt: operations.startedAt,
-        finishedAt: operations.finishedAt,
-        error: operations.error,
       });
-
-    if (!created) throw new Error("operation was not created");
-
-    const record = operationRecord({
-      ...created,
-      serverId: server.serviceName,
-      kind: request.kind,
+      await transaction.insert(auditEvents).values({
+        actorUserId,
+        action: "operation.queued",
+        metadata: { operationId: record.operationId, serverId, kind: record.kind },
+      });
+      return record;
     });
-    await database.insert(auditEvents).values({
-      actorUserId,
-      action: "operation.queued",
-      metadata: { operationId: record.operationId, serverId, kind: record.kind },
-    });
-    return record;
   }
 
   async enqueueStatus(serverId: string, actorUserId: string): Promise<OperationRecord> {
@@ -313,7 +359,7 @@ export class DatabaseAgentService implements AgentService {
   ): Promise<void> {
     const database = this.getDatabase();
     const agent = await this.authorizeAgent(agentId, accessToken);
-    if (result.status === "succeeded" && !result.result) {
+    if (result.status === "succeeded" && result.result === undefined) {
       throw new Error("successful status operation must include a result");
     }
     if (result.status === "failed" && !result.error) {
@@ -335,19 +381,24 @@ export class DatabaseAgentService implements AgentService {
 
     if (!operation) throw new OperationNotFoundError();
 
-    await database
-      .update(operations)
-      .set({
-        status: result.status,
-        result: result.result,
-        error: result.error,
-        finishedAt: this.now(),
-      })
-      .where(eq(operations.id, operation.id));
-    await database.insert(auditEvents).values({
-      agentId: agent.id,
-      action: "operation.completed",
-      metadata: { operationId, status: result.status },
+    await database.transaction(async (transaction) => {
+      const [completed] = await transaction
+        .update(operations)
+        .set({
+          status: result.status,
+          result: result.status === "succeeded" ? result.result : null,
+          error: result.status === "failed" ? result.error : null,
+          finishedAt: this.now(),
+        })
+        .where(and(eq(operations.id, operation.id), eq(operations.status, "running")))
+        .returning({ id: operations.id });
+      if (!completed) throw new OperationNotFoundError();
+
+      await transaction.insert(auditEvents).values({
+        agentId: agent.id,
+        action: "operation.completed",
+        metadata: { operationId, status: result.status },
+      });
     });
   }
 }

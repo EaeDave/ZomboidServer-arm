@@ -7,6 +7,7 @@ on:
       - "scripts/pz-agent*.sh"
       - "templates/zomboid-agent.service"
       - ".github/workflows/panel.yml"
+      - ".dockerignore"
   push:
     branches:
       - main
@@ -17,6 +18,7 @@ on:
       - "scripts/pz-agent*.sh"
       - "templates/zomboid-agent.service"
       - ".github/workflows/panel.yml"
+      - ".dockerignore"
 
 permissions:
   contents: read
@@ -26,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: docker/setup-buildx-action@v3
       - name: Build and test control-plane image
         run: docker build --file panel/Dockerfile --tag zomboid-control-plane:ci .

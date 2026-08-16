@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import {
   agentOperationRequestSchema,
   agentOperationResponseSchema,
+  agentJobCompleteRequestSchema,
   operationCreateRequestSchema,
   worldResetOperationRequestSchema,
 } from "./index";
@@ -69,6 +70,60 @@ describe("agent operation contracts", () => {
         error: { code: "operation_disabled", message: "only status is enabled" },
       }),
     ).toBe(true);
+  });
+
+  it("rejects unknown agent request fields and invalid mod ids", () => {
+    expect(
+      Value.Check(agentOperationRequestSchema, {
+        protocolVersion: 1,
+        requestId: "request-extra",
+        serverId: "production",
+        kind: "logs",
+        payload: { lines: 10, command: "tail" },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.remove",
+        payload: { modIds: ["bad/id"] },
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts successful responses for every non-status operation", () => {
+    for (const kind of [
+      "start",
+      "stop",
+      "restart",
+      "logs",
+      "backup",
+      "mods.list",
+      "mods.add",
+      "mods.remove",
+      "settings.update",
+      "world.reset",
+    ]) {
+      expect(
+        Value.Check(agentOperationResponseSchema, {
+          protocolVersion: 1,
+          requestId: `request-${kind}`,
+          serverId: "production",
+          kind,
+          ok: true,
+          data: { accepted: true },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a completion containing both result and error", () => {
+    expect(
+      Value.Check(agentJobCompleteRequestSchema, {
+        status: "succeeded",
+        result: { ok: true },
+        error: "should not be present",
+      }),
+    ).toBe(false);
   });
 
   it("rejects an unconfirmed world reset request", () => {

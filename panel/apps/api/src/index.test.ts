@@ -6,7 +6,30 @@ import { FakeAgentAdapter } from "./agent";
 import { createApp } from "./index";
 
 describe("control-plane API", () => {
-  const app = createApp(new FakeAgentAdapter(() => new Date("2026-08-15T22:00:00.000Z")));
+  const appAuth: AuthService = {
+    async login() {
+      return null;
+    },
+    async currentUser(token) {
+      return token === "session-token"
+        ? { id: "user-1", email: "admin@example.com", role: "admin" }
+        : null;
+    },
+    async logout() {},
+  };
+  const appAudit: AuditService = {
+    async record() {},
+    async list() {
+      return [];
+    },
+  };
+  const app = createApp(
+    new FakeAgentAdapter(() => new Date("2026-08-15T22:00:00.000Z")),
+    undefined,
+    appAuth,
+    undefined,
+    appAudit,
+  );
 
   it("reports control-plane health", async () => {
     const response = await app.handle(new Request("http://localhost/api/health"));
@@ -204,10 +227,16 @@ describe("control-plane API", () => {
       async getOperation() {
         return operation;
       },
-      async claimNext() {
+      async claimNext(agentId, accessToken) {
+        if (agentId !== "agent-1" || accessToken !== "agent-access") {
+          throw new AgentUnauthorizedError();
+        }
         return job;
       },
-      async completeJob() {
+      async completeJob(agentId, accessToken) {
+        if (agentId !== "agent-1" || accessToken !== "agent-access") {
+          throw new AgentUnauthorizedError();
+        }
         completed = true;
       },
     };
@@ -416,9 +445,18 @@ describe("control-plane API", () => {
     }
   });
 
+  it("requires auth for status outside an explicit development bypass", async () => {
+    const unauthorized = await app.handle(
+      new Request("http://localhost/api/servers/production/status"),
+    );
+    expect(unauthorized.status).toBe(401);
+  });
+
   it("returns typed status from the agent adapter", async () => {
     const response = await app.handle(
-      new Request("http://localhost/api/servers/production/status"),
+      new Request("http://localhost/api/servers/production/status", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
     );
 
     expect(response.status).toBe(200);

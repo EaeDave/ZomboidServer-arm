@@ -7,11 +7,28 @@ import type {
   OperationCreateRequest,
   OperationRecord,
 } from "@zomboid/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const SERVER_ID = "zomboid-b42";
+
+class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+function throwApiError(response: Response, message: string): never {
+  if (response.status === 401) window.dispatchEvent(new Event("zomboid-auth-expired"));
+  throw new ApiError(message, response.status);
+}
 
 async function getHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health");
-  if (!response.ok) throw new Error(`Health request failed: ${response.status}`);
+  if (!response.ok) throwApiError(response, `Health request failed: ${response.status}`);
   return response.json() as Promise<HealthResponse>;
 }
 
@@ -47,31 +64,31 @@ async function logout(): Promise<void> {
 
 async function getServerStatus(serverId: string): Promise<AgentStatus> {
   const response = await fetch(`/api/servers/${serverId}/status`);
-  if (!response.ok) throw new Error(`Server status request failed: ${response.status}`);
+  if (!response.ok) throwApiError(response, `Server status request failed: ${response.status}`);
   return response.json() as Promise<AgentStatus>;
 }
 
 async function queueOperation(requestBody: OperationCreateRequest): Promise<OperationRecord> {
-  const response = await fetch("/api/servers/production/operations", {
+  const response = await fetch(`/api/servers/${SERVER_ID}/operations`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     credentials: "same-origin",
     body: JSON.stringify(requestBody),
   });
   const body = (await response.json()) as { error?: { message?: string } };
-  if (!response.ok) throw new Error(body.error?.message ?? "Operation could not be queued");
+  if (!response.ok) throwApiError(response, body.error?.message ?? "Operation could not be queued");
   return body as OperationRecord;
 }
 
 async function getOperation(operationId: string): Promise<OperationRecord> {
   const response = await fetch(`/api/operations/${operationId}`, { credentials: "same-origin" });
-  if (!response.ok) throw new Error(`Operation request failed: ${response.status}`);
+  if (!response.ok) throwApiError(response, `Operation request failed: ${response.status}`);
   return response.json() as Promise<OperationRecord>;
 }
 
 async function getAudit(): Promise<AuditEvent[]> {
   const response = await fetch("/api/audit", { credentials: "same-origin" });
-  if (!response.ok) throw new Error(`Audit request failed: ${response.status}`);
+  if (!response.ok) throwApiError(response, `Audit request failed: ${response.status}`);
   const body = (await response.json()) as { events: AuditEvent[] };
   return body.events;
 }
@@ -156,8 +173,8 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   const queryClient = useQueryClient();
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth });
   const server = useQuery({
-    queryKey: ["server-status", "production"],
-    queryFn: () => getServerStatus("production"),
+    queryKey: ["server-status", SERVER_ID],
+    queryFn: () => getServerStatus(SERVER_ID),
     refetchInterval: 15_000,
   });
   const [lastOperationId, setLastOperationId] = useState<string>();
@@ -165,14 +182,20 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     mutationFn: queueOperation,
     onSuccess: (operation) => {
       setLastOperationId(operation.operationId);
-      void queryClient.invalidateQueries({ queryKey: ["server-status", "production"] });
+      void queryClient.invalidateQueries({ queryKey: ["server-status", SERVER_ID] });
     },
   });
   const lastOperation = useQuery({
     queryKey: ["operation", lastOperationId],
     queryFn: () => getOperation(lastOperationId!),
     enabled: Boolean(lastOperationId),
-    refetchInterval: lastOperationId ? 2_000 : false,
+    refetchInterval: (query) => {
+      if (!lastOperationId) return false;
+      const status = query.state.data?.status;
+      return status === "succeeded" || status === "failed" || status === "cancelled"
+        ? false
+        : 2_000;
+    },
   });
   const audit = useQuery({
     queryKey: ["audit"],
@@ -182,6 +205,11 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   });
   const canOperate = user?.role === "admin" || user?.role === "operator";
   const canAdmin = user?.role === "admin";
+  useEffect(() => {
+    const handleAuthExpired = () => queryClient.setQueryData(["auth", "me"], null);
+    window.addEventListener("zomboid-auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("zomboid-auth-expired", handleAuthExpired);
+  }, [queryClient]);
   const [workshopId, setWorkshopId] = useState("");
   const [publicName, setPublicName] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
@@ -294,8 +322,8 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               ["backup", "Backup"],
               ["logs", "Fetch logs"],
             ].map(([kind, label]) => {
-              const isStatus = kind === "status";
-              const disabled = operationMutation.isPending || (!isStatus && !canOperate);
+              const isReadOnly = kind === "status" || kind === "logs";
+              const disabled = operationMutation.isPending || (isReadOnly ? !user : !canOperate);
               return (
                 <button
                   className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 hover:border-emerald-400 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
@@ -397,12 +425,19 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               <p className="text-sm text-zinc-400">Settings</p>
               <input
                 className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+                id="public-name"
+                name="publicName"
+                aria-label="Public name (optional)"
                 placeholder="Public name (optional)"
                 value={publicName}
                 onChange={(event) => setPublicName(event.target.value)}
               />
               <input
                 className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+                id="join-password"
+                name="joinPassword"
+                aria-label="New join password (optional)"
+                autoComplete="new-password"
                 placeholder="New join password (optional)"
                 type="password"
                 value={joinPassword}
@@ -492,7 +527,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
 
 export default function App() {
   const queryClient = useQueryClient();
-  const authEnabled = !import.meta.env.DEV;
+  const authEnabled = import.meta.env.VITE_DEV_AUTH_BYPASS !== "1";
   const currentUser = useQuery({
     queryKey: ["auth", "me"],
     queryFn: getCurrentUser,
@@ -509,6 +544,7 @@ export default function App() {
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: () => {
+      queryClient.clear();
       queryClient.setQueryData(["auth", "me"], null);
     },
   });

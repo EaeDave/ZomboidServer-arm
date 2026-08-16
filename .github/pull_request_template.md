@@ -10,7 +10,8 @@
 - [ ] `bun run build` in `panel/`
 - [ ] `docker build -f panel/Dockerfile .`
 - [ ] PostgreSQL migration smoke test
-- [ ] Agent operation matrix (status, start/stop/restart, logs, backup, mods, settings, reset)
+- [ ] Agent operation matrix: `status`, `start`, `stop`, `restart`, `logs`, `backup`,
+      `mods.list`, `mods.add`, `mods.remove`, `settings.update`, `world.reset`
 
 ## Security review
 

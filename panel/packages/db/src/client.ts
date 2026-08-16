@@ -9,14 +9,23 @@ export interface DatabaseHandle {
   db: Database;
 }
 
+function positiveSetting(name: string, fallback: number, integer = false): number {
+  const raw = process.env[name];
+  const value = raw === undefined ? fallback : Number(raw);
+  if (!Number.isFinite(value) || value <= 0 || (integer && !Number.isInteger(value))) {
+    throw new Error(`${name} must be a positive${integer ? " integer" : " number"}`);
+  }
+  return value;
+}
+
 export function createDatabase(connectionString = process.env.DATABASE_URL): DatabaseHandle {
   if (!connectionString) {
     throw new Error("DATABASE_URL is required");
   }
 
   const client = postgres(connectionString, {
-    max: Number(process.env.DATABASE_POOL_MAX ?? 10),
-    connect_timeout: Number(process.env.DATABASE_CONNECT_TIMEOUT ?? 5),
+    max: positiveSetting("DATABASE_POOL_MAX", 10, true),
+    connect_timeout: positiveSetting("DATABASE_CONNECT_TIMEOUT", 5, true),
   });
 
   return {

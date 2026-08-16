@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lte } from "drizzle-orm";
 import { auditEvents, sessions, users } from "@zomboid/db";
 import { createDatabase, type Database } from "@zomboid/db/client";
 
@@ -39,6 +39,13 @@ export class AuthUnavailableError extends Error {
   }
 }
 
+export class AuthRateLimitError extends Error {
+  constructor() {
+    super("too many login attempts");
+    this.name = "AuthRateLimitError";
+  }
+}
+
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -56,7 +63,11 @@ export function readSessionToken(cookieHeader: string | null): string | null {
     if (separator < 0) continue;
     const name = entry.slice(0, separator).trim();
     if (name !== SESSION_COOKIE_NAME) continue;
-    return decodeURIComponent(entry.slice(separator + 1).trim()) || null;
+    try {
+      return decodeURIComponent(entry.slice(separator + 1).trim()) || null;
+    } catch {
+      return null;
+    }
   }
 
   return null;
@@ -81,14 +92,50 @@ export function serializeClearedSessionCookie(): string {
   return serializeSessionCookie("", 0);
 }
 
+const DUMMY_PASSWORD_HASH = Bun.password.hash("zomboid-control-plane-dummy-password");
+const LOGIN_FAILURE_LIMIT = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+type LoginAttempt = { failures: number; lockedUntil: number };
+
 export class DatabaseAuthService implements AuthService {
+  private readonly loginAttempts = new Map<string, LoginAttempt>();
+  private lastSessionPrune = 0;
+
   constructor(
     private readonly getDatabase: () => Database,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  private async pruneExpiredSessions(database: Database): Promise<void> {
+    const now = this.now();
+    if (now.getTime() - this.lastSessionPrune < 60_000) return;
+    await database.delete(sessions).where(lte(sessions.expiresAt, now));
+    this.lastSessionPrune = now.getTime();
+  }
+
+  private checkLoginRateLimit(email: string): void {
+    const attempt = this.loginAttempts.get(email);
+    if (attempt && attempt.lockedUntil > this.now().getTime()) throw new AuthRateLimitError();
+    if (attempt?.lockedUntil && attempt.lockedUntil <= this.now().getTime()) {
+      this.loginAttempts.delete(email);
+    }
+  }
+
+  private recordLoginFailure(email: string): void {
+    const current = this.loginAttempts.get(email) ?? { failures: 0, lockedUntil: 0 };
+    current.failures += 1;
+    if (current.failures >= LOGIN_FAILURE_LIMIT) {
+      current.lockedUntil = this.now().getTime() + LOGIN_LOCKOUT_MS;
+    }
+    this.loginAttempts.set(email, current);
+  }
+
   async login(email: string, password: string): Promise<AuthSession | null> {
+    const normalizedEmail = normalizeEmail(email);
+    this.checkLoginRateLimit(normalizedEmail);
     const database = this.getDatabase();
+    await this.pruneExpiredSessions(database);
     const [user] = await database
       .select({
         id: users.id,
@@ -97,22 +144,35 @@ export class DatabaseAuthService implements AuthService {
         passwordHash: users.passwordHash,
       })
       .from(users)
-      .where(eq(users.email, normalizeEmail(email)))
+      .where(eq(users.email, normalizedEmail))
       .limit(1);
 
-    if (!user || !(await Bun.password.verify(password, user.passwordHash))) return null;
+    const passwordHash = user?.passwordHash ?? (await DUMMY_PASSWORD_HASH);
+    let passwordValid = false;
+    try {
+      passwordValid = await Bun.password.verify(password, passwordHash);
+    } catch {
+      passwordValid = false;
+    }
+    if (!user || !passwordValid) {
+      this.recordLoginFailure(normalizedEmail);
+      return null;
+    }
+    this.loginAttempts.delete(normalizedEmail);
 
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(this.now().getTime() + SESSION_TTL_SECONDS * 1000);
-    await database.insert(sessions).values({
-      userId: user.id,
-      tokenHash: hashSessionToken(token),
-      expiresAt,
-    });
-    await database.insert(auditEvents).values({
-      actorUserId: user.id,
-      action: "auth.login",
-      metadata: { method: "password" },
+    await database.transaction(async (transaction) => {
+      await transaction.insert(sessions).values({
+        userId: user.id,
+        tokenHash: hashSessionToken(token),
+        expiresAt,
+      });
+      await transaction.insert(auditEvents).values({
+        actorUserId: user.id,
+        action: "auth.login",
+        metadata: { method: "password" },
+      });
     });
 
     return {
@@ -127,7 +187,9 @@ export class DatabaseAuthService implements AuthService {
   }
 
   async currentUser(token: string): Promise<AuthUser | null> {
-    const [row] = await this.getDatabase()
+    const database = this.getDatabase();
+    await this.pruneExpiredSessions(database);
+    const [row] = await database
       .select({
         id: users.id,
         email: users.email,

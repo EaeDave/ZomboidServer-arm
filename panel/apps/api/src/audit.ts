@@ -45,7 +45,7 @@ export class DatabaseAuditService implements AuditService {
         createdAt: auditEvents.createdAt,
       })
       .from(auditEvents)
-      .orderBy(desc(auditEvents.createdAt))
+      .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
       .limit(limit);
 
     return rows.map((row) => ({

@@ -12,7 +12,8 @@ Before opening the PR from `feat/control-plane-foundation`:
 - [ ] Mutating operations require the correct role and explicit world-reset confirmation.
 - [ ] The root-side `pz-agent-priv` allowlist has no arbitrary shell path.
 - [ ] The outbound agent unit is disabled until its VPS-only environment file is configured.
-- [ ] Staging agent tests cover status, start/stop/restart, logs, backup, mods, settings and reset.
+- [ ] Staging agent tests cover `status`, `start`, `stop`, `restart`, `logs`, `backup`,
+      `mods.list`, `mods.add`, `mods.remove`, `settings.update` and `world.reset`.
 - [ ] Production `zomboid-b42.service` and its saves were not changed during validation.
 - [ ] Coolify environment secrets, PostgreSQL backups, health checks and one-replica behavior are
       documented before deployment.

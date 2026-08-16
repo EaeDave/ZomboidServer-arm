@@ -313,9 +313,9 @@ install.sh                one-shot installer (arch-checked, interactive, branch 
 uninstall.sh              removes everything; asks before deleting worlds (rm -rf inside)
 pzctl                     control panel (start/stop, mods, updates, console, reset, backup)
 pzctl status --json       non-interactive versioned status for the future host agent
-pz-agent --stdio          local allowlisted agent boundary (typed operations)
+pz-agent --stdio          local versioned status boundary
 pz-agent --enroll          enroll this host with the private control plane
-pz-agent --poll            outbound heartbeat + allowlisted job worker (no VPS listener; staging first)
+pz-agent --poll            outbound heartbeat + typed job worker (no VPS listener; staging first)
 pz-agent-priv              root-owned allowlist for server/mod/settings/reset jobs
 templates/                JVM config, runtime launchers, systemd units (filled in at install)
 scripts/

@@ -61,10 +61,10 @@ mutating flows still require staging validation before production access is enab
    PZ_AGENT_INTERVAL=15
    ```
 
-   Then enable the outbound-only unit: `sudo systemctl enable --now zomboid-b42-agent.service`.
-   The installer also creates a root-owned `pz-agent-priv` allowlist and a narrow sudoers rule for
-   those first jobs. Prefer this outbound transport or a private Tailscale path; do not expose an
-   unauthenticated systemd, RCON or shell port.
+   Rerun the host installer with `PZ_AGENT_ENABLE=1` after configuring this file; that validated
+   path installs the narrow sudoers rule and enables the outbound-only unit. Prefer this outbound
+   transport or a private Tailscale path; do not expose an unauthenticated systemd, RCON or shell
+   port.
 10. Test `status` against a staging target before enabling any mutating operation for production.
 11. Enable production access only after the audit log, role checks and operation confirmations are
     passing.

@@ -174,91 +174,135 @@ const operationBaseSchema = {
   serverId: Type.String({ minLength: 1 }),
 };
 
-export const statusOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("status"),
-  payload: emptyPayloadSchema,
-});
+export const statusOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("status"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
 
-export const startOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("start"),
-  payload: emptyPayloadSchema,
-});
+export const startOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("start"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
 
-export const stopOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("stop"),
-  payload: emptyPayloadSchema,
-});
+export const stopOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("stop"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
 
-export const restartOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("restart"),
-  payload: emptyPayloadSchema,
-});
+export const restartOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("restart"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
 
-export const logsOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("logs"),
-  payload: Type.Object({
-    lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
-  }),
-});
+export const logsOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("logs"),
+    payload: Type.Object(
+      { lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
 
-export const backupOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("backup"),
-  payload: Type.Object({
-    keep: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-  }),
-});
+export const backupOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("backup"),
+    payload: Type.Object(
+      { keep: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
 
-export const modsListOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("mods.list"),
-  payload: emptyPayloadSchema,
-});
+export const modsListOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("mods.list"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
 
-export const modsAddOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("mods.add"),
-  payload: Type.Object({
-    workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }),
-  }),
-});
+export const modsAddOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("mods.add"),
+    payload: Type.Object(
+      { workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }) },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
 
-export const modsRemoveOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("mods.remove"),
-  payload: Type.Object({
-    modIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
-      minItems: 1,
-      maxItems: 100,
-    }),
-  }),
-});
+export const modsRemoveOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("mods.remove"),
+    payload: Type.Object(
+      {
+        modIds: Type.Array(Type.String({ pattern: "^[A-Za-z0-9_.-]+$", maxLength: 128 }), {
+          minItems: 1,
+          maxItems: 100,
+        }),
+      },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
 
-export const settingsUpdateOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("settings.update"),
-  payload: Type.Object({
-    public: Type.Optional(Type.Boolean()),
-    publicName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-    password: Type.Optional(Type.String({ maxLength: 128 })),
-    defaultPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
-    udpPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
-  }),
-});
+export const settingsUpdateOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("settings.update"),
+    payload: Type.Object(
+      {
+        public: Type.Optional(Type.Boolean()),
+        publicName: Type.Optional(
+          Type.String({ minLength: 1, maxLength: 128, pattern: "^[^\\r\\n]*$" }),
+        ),
+        password: Type.Optional(Type.String({ maxLength: 128, pattern: "^[^\\r\\n]*$" })),
+        defaultPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
+        udpPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
+      },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
 
-export const worldResetOperationRequestSchema = Type.Object({
-  ...operationBaseSchema,
-  kind: Type.Literal("world.reset"),
-  payload: Type.Object({
-    confirm: Type.Literal(true),
-    createBackup: Type.Optional(Type.Boolean()),
-  }),
-});
+export const worldResetOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("world.reset"),
+    payload: Type.Object(
+      { confirm: Type.Literal(true), createBackup: Type.Optional(Type.Boolean()) },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
 
 export const agentOperationRequestSchema = Type.Union([
   statusOperationRequestSchema,
@@ -276,29 +320,64 @@ export const agentOperationRequestSchema = Type.Union([
 
 export type AgentOperationRequest = Static<typeof agentOperationRequestSchema>;
 
-export const statusOperationResponseSchema = Type.Object({
-  protocolVersion: Type.Literal(1),
-  requestId: Type.String(),
-  serverId: Type.String(),
-  kind: Type.Literal("status"),
-  ok: Type.Literal(true),
-  data: agentStatusSchema,
-});
+export const statusOperationResponseSchema = Type.Object(
+  {
+    protocolVersion: Type.Literal(1),
+    requestId: Type.String(),
+    serverId: Type.String(),
+    kind: Type.Literal("status"),
+    ok: Type.Literal(true),
+    data: agentStatusSchema,
+  },
+  closedObjectOptions,
+);
 
-export const agentErrorResponseSchema = Type.Object({
-  protocolVersion: Type.Literal(1),
-  requestId: Type.String(),
-  serverId: Type.String(),
-  kind: Type.String(),
-  ok: Type.Literal(false),
-  error: Type.Object({
-    code: Type.String(),
-    message: Type.String(),
-  }),
-});
+export const agentErrorResponseSchema = Type.Object(
+  {
+    protocolVersion: Type.Literal(1),
+    requestId: Type.String(),
+    serverId: Type.String(),
+    kind: Type.String(),
+    ok: Type.Literal(false),
+    error: Type.Object(
+      {
+        code: Type.String(),
+        message: Type.String(),
+      },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
+
+const nonStatusOperationKindSchema = Type.Union([
+  Type.Literal("start"),
+  Type.Literal("stop"),
+  Type.Literal("restart"),
+  Type.Literal("logs"),
+  Type.Literal("backup"),
+  Type.Literal("mods.list"),
+  Type.Literal("mods.add"),
+  Type.Literal("mods.remove"),
+  Type.Literal("settings.update"),
+  Type.Literal("world.reset"),
+]);
+
+export const agentOperationSuccessResponseSchema = Type.Object(
+  {
+    protocolVersion: Type.Literal(1),
+    requestId: Type.String(),
+    serverId: Type.String(),
+    kind: nonStatusOperationKindSchema,
+    ok: Type.Literal(true),
+    data: Type.Unknown(),
+  },
+  closedObjectOptions,
+);
 
 export const agentOperationResponseSchema = Type.Union([
   statusOperationResponseSchema,
+  agentOperationSuccessResponseSchema,
   agentErrorResponseSchema,
 ]);
 
@@ -356,7 +435,7 @@ export const operationCreateRequestSchema = Type.Union([
       kind: Type.Literal("mods.remove"),
       payload: Type.Object(
         {
-          modIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+          modIds: Type.Array(Type.String({ pattern: "^[A-Za-z0-9_.-]+$", maxLength: 128 }), {
             minItems: 1,
             maxItems: 100,
           }),
@@ -372,8 +451,10 @@ export const operationCreateRequestSchema = Type.Union([
       payload: Type.Object(
         {
           public: Type.Optional(Type.Boolean()),
-          publicName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          password: Type.Optional(Type.String({ maxLength: 128 })),
+          publicName: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128, pattern: "^[^\\r\\n]*$" }),
+          ),
+          password: Type.Optional(Type.String({ maxLength: 128, pattern: "^[^\\r\\n]*$" })),
           defaultPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
           udpPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
         },
@@ -421,11 +502,26 @@ export const agentJobResponseSchema = Type.Object({
   job: Type.Union([Type.Null(), agentJobSchema]),
 });
 
-export const agentJobCompleteRequestSchema = Type.Object({
-  status: Type.Union([Type.Literal("succeeded"), Type.Literal("failed")]),
-  result: Type.Optional(Type.Unknown()),
-  error: Type.Optional(Type.String({ maxLength: 1000 })),
-});
+const succeededJobCompleteRequestSchema = Type.Object(
+  {
+    status: Type.Literal("succeeded"),
+    result: Type.Unknown(),
+  },
+  closedObjectOptions,
+);
+
+const failedJobCompleteRequestSchema = Type.Object(
+  {
+    status: Type.Literal("failed"),
+    error: Type.String({ minLength: 1, maxLength: 1000 }),
+  },
+  closedObjectOptions,
+);
+
+export const agentJobCompleteRequestSchema = Type.Union([
+  succeededJobCompleteRequestSchema,
+  failedJobCompleteRequestSchema,
+]);
 
 export type AgentJobCompleteRequest = Static<typeof agentJobCompleteRequestSchema>;
 

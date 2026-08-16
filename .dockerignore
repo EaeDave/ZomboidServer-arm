@@ -5,4 +5,17 @@ graphify-out
 **/.turbo
 **/.cache
 **/.env
+**/.env.*
+!panel/.env.example
 **/*.log
+Zomboid/
+**/Zomboid/
+server-console.txt
+**/server-console.txt
+RootFS/
+**/RootFS/
+**/*.sqsh
+**/ProjectZomboid64
+**/jre64/
+**/steamapps/
+**/saves/

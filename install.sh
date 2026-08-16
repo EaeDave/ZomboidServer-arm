@@ -57,6 +57,7 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 # ----------------------------------------------------------------- namespace / paths
 # Defaults give the classic single-server layout. Overrides namespace everything.
 SVC="${PZ_SVC:-zomboid-b42}"
+[[ "$SVC" =~ ^[A-Za-z0-9][A-Za-z0-9_.@-]*$ ]] || die "PZ_SVC contains unsupported characters"
 SFX=""; [ "$SVC" != "zomboid-b42" ] && SFX="-${SVC#zomboid-b42-}"
 INSTALL_DIR="${PZ_INSTALL_DIR:-/opt/zomboid-server}"
 CACHEDIR="${PZ_CACHEDIR:-$TARGET_HOME/Zomboid}"
@@ -91,7 +92,7 @@ FEX_COMMIT="${PZ_FEX_COMMIT:-a08a6ce5de51f5e625357ecaed46c463aa1e3c99}"
 FEX_PREFIX="${PZ_FEX_PREFIX:-/opt/fex-a08}"
 FEX_ROOTFS="${PZ_FEX_ROOTFS:-$TARGET_HOME/.local/share/fex-emu/RootFS/Ubuntu_24_04.sqsh}"
 FEX_DATA_HOME="${PZ_FEX_DATA_HOME:-$TARGET_HOME/.local/share/${SVC}-fex}"
-FEX_SOCKET="${PZ_FEX_SOCKET:-/tmp/${SVC}-fex.sock}"
+FEX_SOCKET="${PZ_FEX_SOCKET:-/run/${SVC}-fex/fex.sock}"
 ANNOUNCED_IP="${PZ_ANNOUNCED_IP:-}"
 say "Service: $(b "$SVC")   user: $(b "$TARGET_USER")   data: $(b "$CACHEDIR")   runtime: $(b "$RUNTIME")"
 
@@ -116,11 +117,13 @@ DEF_RAM=$(( DETECT_GB>16 ? 12 : (DETECT_GB>8 ? DETECT_GB-4 : DETECT_GB/2) )); [ 
 if [ -n "${PZ_ADMIN_PW-}" ]; then ADMIN_PW="$PZ_ADMIN_PW"; else
   ADMIN_PW="$(ask 'Admin password (for the in-game admin account):' 'admin')"
 fi
-# case-based on purpose: regex bracket expressions with escaped quotes/spaces are
-# fragile across shells and transports
-bad_pw() { case "$1" in *' '*|*'"'*|*"'"*|*'\'*) return 0 ;; *) return 1 ;; esac; }
+# Keep the password safe for both the protected systemd EnvironmentFile and the launcher.
+bad_pw() {
+  [ "${#1}" -ge 1 ] && [ "${#1}" -le 128 ] || return 0
+  case "$1" in *[!A-Za-z0-9._@%+=,:/-]*) return 0 ;; *) return 1 ;; esac
+}
 while bad_pw "$ADMIN_PW"; do
-  warn "The admin password can't contain spaces, quotes or backslashes (it goes on the server command line)."
+  warn "Use 1-128 characters from letters, numbers, . _ @ % + = , : / or - for the admin password."
   ADMIN_PW="$(ask 'Admin password:' 'admin')"
 done
 if [ -n "${PZ_JOIN_PW+x}" ]; then JOIN_PW="$PZ_JOIN_PW"; else
@@ -294,7 +297,7 @@ EXTRA_ARGS=""
 [ "$CACHEDIR" != "$TARGET_HOME/Zomboid" ] && EXTRA_ARGS="-cachedir=$CACHEDIR"
 [ "$PORT" != 16261 ] && EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }-port $PORT -udpport $((PORT+1))"
 render() { sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__INSTALL_DIR__|$(esc "$INSTALL_DIR")|g" \
-               -e "s|__HOME__|$(esc "$TARGET_HOME")|g"  -e "s|__ADMIN_PW__|$(esc "$ADMIN_PW")|g" \
+               -e "s|__HOME__|$(esc "$TARGET_HOME")|g" \
                -e "s|__SVC__|$(esc "$SVC")|g" -e "s|__PORT__|$PORT|g" \
                -e "s|__CONSOLE__|$(esc "$CACHEDIR/server-console.txt")|g" \
                -e "s|__SERVERNAME__|$SERVERNAME|g" -e "s|__EXTRA_ARGS__|$(esc "$EXTRA_ARGS")|g" \
@@ -331,7 +334,7 @@ install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
 # namespaced installs: point the installed copies at their own env file
 if [ -n "$SFX" ]; then
   sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE" "$BIN_AGENT"
-  sed -i "s|/usr/local/lib/zomboid-arm/common.sh|$LIBDIR/common.sh|g; s|/usr/local/bin/pzctl|$BIN_PZCTL|g" "$BIN_AGENT"
+  sed -i "s|/usr/local/lib/zomboid-arm/common.sh|$LIBDIR/common.sh|g; s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/usr/local/sbin/pz-agent-priv|$BIN_AGENT_PRIV|g" "$BIN_AGENT"
   sed -i "s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_AGENT_PRIV"
 fi
 # let pzctl & friends know the environment on this host
@@ -348,6 +351,7 @@ PZ_PORT=$PORT
 PZ_RCONPORT=$RCONPORT
 PZ_BRANCH=$BRANCH
 PZ_SERVERNAME=$SERVERNAME
+PZ_ADMIN_PW=$ADMIN_PW
 PZ_RUNTIME=$RUNTIME
 PZ_FEX_COMMIT=$FEX_COMMIT
 PZ_FEX_PREFIX=$FEX_PREFIX
@@ -369,16 +373,30 @@ PZ_CONF=$CACHEDIR/pzctl.conf
 PZ_UPDATELOG=$CACHEDIR/mod-updates.log
 PZ_BACKUPS=$BACKUPS
 EOF
-install -o "$TARGET_USER" -g "$TARGET_USER" -m600 /dev/null "$AGENT_ENVFILE" 2>/dev/null || {
-  touch "$AGENT_ENVFILE"
-  chown "$TARGET_USER":"$TARGET_USER" "$AGENT_ENVFILE" 2>/dev/null || true
-  chmod 600 "$AGENT_ENVFILE"
-}
+chown "$TARGET_USER":"$TARGET_USER" "$ENVFILE"
+chmod 600 "$ENVFILE"
+if [ ! -e "$AGENT_ENVFILE" ]; then
+  install -o root -g "$TARGET_USER" -m640 /dev/null "$AGENT_ENVFILE" 2>/dev/null || {
+    touch "$AGENT_ENVFILE"
+    chown root:"$TARGET_USER" "$AGENT_ENVFILE" 2>/dev/null || true
+    chmod 640 "$AGENT_ENVFILE"
+  }
+else
+  chown root:"$TARGET_USER" "$AGENT_ENVFILE" 2>/dev/null || true
+  chmod 640 "$AGENT_ENVFILE"
+fi
 AGENT_SUDOERS="/etc/sudoers.d/${SVC}-agent"
-printf '%s ALL=(root) NOPASSWD: %s\n' "$TARGET_USER" "$BIN_AGENT_PRIV" > "$AGENT_SUDOERS"
-chmod 440 "$AGENT_SUDOERS"
-if command -v visudo >/dev/null && ! visudo -cf "$AGENT_SUDOERS" >/dev/null 2>&1; then
-  warn "Invalid generated sudoers file; removing $AGENT_SUDOERS. Agent mutating jobs stay disabled."
+if [ "${PZ_AGENT_ENABLE:-0}" = 1 ]; then
+  command -v visudo >/dev/null 2>&1 || die "visudo is required before enabling the host agent"
+  AGENT_SUDOERS_TMP="$(mktemp "${TMPDIR:-/tmp}/${SVC}-agent-sudoers.XXXXXX")"
+  trap 'rm -f "$AGENT_SUDOERS_TMP"' EXIT
+  printf '%s ALL=(root) NOPASSWD: %s\n' "$TARGET_USER" "$BIN_AGENT_PRIV" > "$AGENT_SUDOERS_TMP"
+  chmod 440 "$AGENT_SUDOERS_TMP"
+  visudo -cf "$AGENT_SUDOERS_TMP" >/dev/null 2>&1 || die "Generated agent sudoers rule failed validation"
+  install -m440 "$AGENT_SUDOERS_TMP" "$AGENT_SUDOERS"
+  rm -f "$AGENT_SUDOERS_TMP"
+  trap - EXIT
+else
   rm -f "$AGENT_SUDOERS"
 fi
 systemctl daemon-reload
@@ -387,7 +405,7 @@ systemctl start  "$SVC-ciopfs.service"
 if [ "${PZ_AGENT_ENABLE:-0}" = 1 ]; then
   systemctl enable --now "$SVC-agent.service"
 else
-  say "Host agent unit installed but disabled. Configure $AGENT_ENVFILE, then enable $SVC-agent.service."
+  say "Host agent unit installed but disabled. Configure $AGENT_ENVFILE, then rerun with PZ_AGENT_ENABLE=1 to install its sudoers rule and enable $SVC-agent.service."
 fi
 
 # ----------------------------------------------------------------- 6b. local firewall (iptables)
@@ -448,8 +466,7 @@ cat <<EOF
   Server:   $(b "$PUBIP:$PORT")   (UDP)
   Branch:   $(b "$BRANCH")
   Runtime:  $(b "$RUNTIME")
-  Admin pw: $(b "$ADMIN_PW")
-  $( [ -n "$JOIN_PW" ] && echo "Join pw:  $(b "$JOIN_PW")" || echo "Join pw:  (none — open server)" )
+  Credentials: stored in the protected server environment/configuration; not printed here.
 
 ${FIREWALL_STATUS}
   1) $(b 'Oracle Cloud users:') also allow $(b "UDP $PORT-$((PORT+1))") in your VCN Security List

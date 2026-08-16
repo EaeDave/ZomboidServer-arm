@@ -13,6 +13,9 @@ secrets supplied out of band.
 cp .env.example .env
 bun install
 bun run check
+bun run db:migrate
+# Run once with BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD supplied out of band.
+bun run auth:bootstrap-admin
 bun run db:generate # only when the schema changes
 bun run dev:api
 # in another terminal
@@ -20,7 +23,8 @@ bun run dev:web
 ```
 
 - API: <http://127.0.0.1:3000/api/health>
-- Fake server status: <http://127.0.0.1:3000/api/servers/production/status>
+- Fake server status (set `PZ_FAKE_AGENT=1` and `PZ_DEV_AUTH_BYPASS=1` for local-only development):
+  <http://127.0.0.1:3000/api/servers/zomboid-b42/status>
 - Agent enrollment: `POST /api/agents/enroll` (master enrollment token)
 - OpenAPI: <http://127.0.0.1:3000/docs>
 - Frontend: <http://127.0.0.1:5173>

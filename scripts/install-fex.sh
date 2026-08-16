@@ -71,14 +71,15 @@ fi
 
 if [ ! -f "$FEX_ROOTFS" ]; then
   say "Downloading Ubuntu 24.04 x86-64 RootFS"
-  mkdir -p "$(dirname "$FEX_ROOTFS")"
+  install -d -o "$TARGET_USER" -g "$TARGET_USER" -m755 "$(dirname "$FEX_ROOTFS")"
   sudo -u "$TARGET_USER" env \
     HOME="$TARGET_HOME" \
     XDG_DATA_HOME="$TARGET_HOME/.local/share" \
+    FEX_ROOTFS="$FEX_ROOTFS" \
     "$FEX_PREFIX/bin/FEXRootFSFetcher" -y -a \
       --distro-name=Ubuntu --distro-version=24.04
 fi
 
 [ -f "$FEX_ROOTFS" ] || die "RootFS not found at $FEX_ROOTFS (set PZ_FEX_ROOTFS to an existing squashfs image)"
-chown -R "$TARGET_USER":"$TARGET_USER" "$(dirname "$FEX_ROOTFS")" 2>/dev/null || true
+chown "$TARGET_USER":"$TARGET_USER" "$FEX_ROOTFS" 2>/dev/null || true
 say "Ready: commit=$FEX_COMMIT rootfs=$FEX_ROOTFS"

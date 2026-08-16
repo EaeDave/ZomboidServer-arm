@@ -26,6 +26,7 @@ import {
 } from "@zomboid/contracts";
 import { checkDatabase } from "@zomboid/db/client";
 import {
+  AuthRateLimitError,
   AuthUnavailableError,
   createDatabaseAuthService,
   readSessionToken,
@@ -37,10 +38,13 @@ import {
 import { AuditUnavailableError, createDatabaseAuditService, type AuditService } from "./audit";
 import { FakeAgentAdapter, type AgentAdapter } from "./agent";
 import {
+  AgentAlreadyEnrolledError,
+  AgentStatusMismatchError,
   AgentUnauthorizedError,
   AgentUnavailableError,
   createDatabaseAgentService,
   OperationNotFoundError,
+  ServerNotFoundError,
   type AgentService,
 } from "./agent-service";
 
@@ -72,9 +76,8 @@ const corsOrigin =
     : false);
 
 function createDefaultAgentAdapter(): AgentAdapter {
-  return process.env.NODE_ENV === "production"
-    ? createDatabaseAgentService()
-    : new FakeAgentAdapter();
+  const useFakeAgent = process.env.NODE_ENV !== "production" && process.env.PZ_FAKE_AGENT === "1";
+  return useFakeAgent ? new FakeAgentAdapter() : createDatabaseAgentService();
 }
 
 function bearerToken(request: Request): string | null {
@@ -138,6 +141,10 @@ export function createApp(
             set.status = 401;
             return { error: { code: "invalid_enrollment", message: "Invalid enrollment token" } };
           }
+          if (error instanceof AgentAlreadyEnrolledError) {
+            set.status = 409;
+            return { error: { code: "already_enrolled", message: "Server is already enrolled" } };
+          }
           set.status = error instanceof AgentUnavailableError ? 503 : 500;
           return {
             error: {
@@ -152,6 +159,7 @@ export function createApp(
         response: {
           200: agentEnrollmentResponseSchema,
           401: agentOperationErrorResponseSchema,
+          409: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
@@ -175,6 +183,15 @@ export function createApp(
             set.status = 401;
             return { error: { code: "invalid_agent_token", message: "Invalid agent token" } };
           }
+          if (error instanceof AgentStatusMismatchError) {
+            set.status = 400;
+            return {
+              error: {
+                code: "invalid_status",
+                message: "Status identity does not match the agent",
+              },
+            };
+          }
           set.status = error instanceof AgentUnavailableError ? 503 : 500;
           return {
             error: {
@@ -189,6 +206,7 @@ export function createApp(
         body: agentHeartbeatRequestSchema,
         response: {
           200: agentHeartbeatResponseSchema,
+          400: agentOperationErrorResponseSchema,
           401: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
@@ -210,6 +228,10 @@ export function createApp(
           set.headers["set-cookie"] = serializeSessionCookie(session.token);
           return { user: session.user, expiresAt: session.expiresAt };
         } catch (error) {
+          if (error instanceof AuthRateLimitError) {
+            set.status = 429;
+            return { error: { code: "rate_limited", message: "Too many login attempts" } };
+          }
           set.status = error instanceof AuthUnavailableError ? 503 : 500;
           return {
             error: {
@@ -224,6 +246,7 @@ export function createApp(
         response: {
           200: authSessionResponseSchema,
           401: authErrorResponseSchema,
+          429: authErrorResponseSchema,
           500: authErrorResponseSchema,
           503: authErrorResponseSchema,
         },
@@ -383,9 +406,9 @@ export function createApp(
           set.status = 202;
           return operation;
         } catch (error) {
-          if (error instanceof OperationNotFoundError) {
+          if (error instanceof ServerNotFoundError) {
             set.status = 404;
-            return { error: { code: "operation_not_found", message: "Server was not found" } };
+            return { error: { code: "server_not_found", message: "Server was not found" } };
           }
           set.status = error instanceof AgentUnavailableError ? 503 : 500;
           return {
@@ -535,7 +558,9 @@ export function createApp(
       "/api/servers/:serverId/status",
       async ({ params, request, set }) => {
         let actorUserId: string | undefined;
-        if (process.env.NODE_ENV === "production") {
+        const devAuthBypass =
+          process.env.NODE_ENV !== "production" && process.env.PZ_DEV_AUTH_BYPASS === "1";
+        if (!devAuthBypass) {
           const token = readSessionToken(request.headers.get("cookie"));
           if (!token) {
             set.status = 401;
@@ -560,26 +585,32 @@ export function createApp(
           }
         }
 
+        let status: Awaited<ReturnType<AgentAdapter["getStatus"]>>;
         try {
-          const status = await agent.getStatus(params.serverId);
-          if (actorUserId) {
+          status = await agent.getStatus(params.serverId);
+        } catch (error) {
+          if (error instanceof ServerNotFoundError) {
+            set.status = 404;
+            return { error: { code: "server_not_found", message: "Server was not found" } };
+          }
+          set.status = 503;
+          return {
+            error: { code: "agent_unavailable", message: "Host agent status is unavailable" },
+          };
+        }
+
+        if (actorUserId) {
+          try {
             await audit.record({
               action: "server.status",
               actorUserId,
               metadata: { serverId: params.serverId },
             });
+          } catch (error) {
+            console.error("failed to record server.status audit event", error);
           }
-          return status;
-        } catch (error) {
-          set.status = 503;
-          return {
-            error: {
-              code:
-                error instanceof AuditUnavailableError ? "audit_unavailable" : "agent_unavailable",
-              message: "Host agent status is unavailable",
-            },
-          };
         }
+        return status;
       },
       {
         params: Type.Object({
@@ -588,6 +619,7 @@ export function createApp(
         response: {
           200: agentStatusSchema,
           401: agentOperationErrorResponseSchema,
+          404: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
       },

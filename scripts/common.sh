@@ -60,17 +60,33 @@ as_user() {
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 "$@"
   fi
 }
-fix_owner()    { [ "$(id -u)" -eq 0 ] && chown -R "$PZ_USER":"$PZ_USER" "$@" 2>/dev/null || true; }
-is_listening() { sudo ss -uln 2>/dev/null | grep -qE ":$PZ_PORT\b"; }
-svc_active()   { [ "$(sudo systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = active ]; }
+fix_owner() { [ "$(id -u)" -eq 0 ] && chown -R "$PZ_USER":"$PZ_USER" "$@" 2>/dev/null || true; }
+read_systemctl() {
+  local output
+  if output="$(systemctl "$@" 2>/dev/null)"; then
+    printf '%s\n' "$output"
+  else
+    sudo -n systemctl "$@"
+  fi
+}
+read_ss() {
+  local output
+  if output="$(ss "$@" 2>/dev/null)"; then
+    printf '%s\n' "$output"
+  else
+    sudo -n ss "$@"
+  fi
+}
+is_listening() { read_ss -uln 2>/dev/null | grep -qE ":$PZ_PORT\b"; }
+svc_active() { [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = active ]; }
 
 # Machine-readable status for pzctl, the host agent and tests. The default path avoids RCON
 # so a status probe cannot block while the server is booting; set PZ_STATUS_RCON=1 when a
 # caller explicitly wants the player count as well.
 status_json() {
   local active sub state listening version active_enter uptime_seconds players runtime checked_at
-  active="$(sudo -n systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
-  sub="$(sudo -n systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
+  active="$(read_systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
+  sub="$(read_systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
   case "$active" in
     active) state=active ;;
     inactive) state=inactive ;;
@@ -79,12 +95,12 @@ status_json() {
   esac
 
   listening=false
-  if sudo -n ss -H -uln 2>/dev/null | grep -qE ":${PZ_PORT}([[:space:]]|$)"; then
+  if read_ss -H -uln 2>/dev/null | grep -qE ":${PZ_PORT}([[:space:]]|$)"; then
     listening=true
   fi
 
   version="$(grep -am1 -oE 'version=[0-9][0-9.]*' "$PZ_CONSOLE" 2>/dev/null | cut -d= -f2 || true)"
-  active_enter="$(sudo -n systemctl show "$PZ_SERVICE" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  active_enter="$(read_systemctl show "$PZ_SERVICE" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
   uptime_seconds=null
   if [ "$active" = active ] && [ -n "$active_enter" ]; then
     local entered now
@@ -371,11 +387,17 @@ player_count() {
 # ------------------------------------------------------------ backups + update log
 backup_world() {  # backup_world DESTDIR PREFIX  -> echoes archive path
   local dir="$1" prefix="$2" ts out srv="${PZ_INI%/*}" sav="$PZ_CACHEDIR/Saves"
+  local -a paths=()
+  [ -e "$srv" ] && paths+=("${srv#/}")
+  [ -e "$sav" ] && paths+=("${sav#/}")
+  [ "${#paths[@]}" -gt 0 ] || return 1
   ts="$(date +%Y%m%d_%H%M%S)"; mkdir -p "$dir"
   out="$dir/${prefix}_$ts.tar.gz"
-  # tar from / so this works no matter where the cachedir lives; a missing Saves/
-  # (fresh server, no world yet) still archives the Server/ config half.
-  as_user tar czf "$out" -C / "${srv#/}" "${sav#/}" 2>/dev/null
+  # tar from / so this works no matter where the cachedir lives.
+  as_user tar czf "$out" -C / "${paths[@]}" 2>/dev/null || {
+    rm -f "$out"
+    return 1
+  }
   fix_owner "$dir"
   echo "$out"
 }
