@@ -307,6 +307,50 @@ retry_dead_letters() {
   done
 }
 
+active_job_file() {
+  local state_dir
+  state_dir="$(agent_state_dir)" || return $?
+  printf '%s/active-job\n' "$state_dir"
+}
+
+post_progress() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" message="$5"
+  local body
+  body="$(MESSAGE="$message" python3 -c 'import json, os; print(json.dumps({"message": os.environ["MESSAGE"]}, separators=(",", ":")))')"
+  curl -fsS --max-time 10 -H "authorization: Bearer $token" -H 'content-type: application/json' \
+    --data "$body" "$url/api/agents/$agent_id/jobs/$operation_id/progress" >/dev/null 2>&1
+}
+
+run_long_job() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" kind="$5" active_file="$6"
+  (
+    local result completion
+    if result="$(sudo -n "$PZ_AGENT_PRIV" "$kind" 2>/dev/null)"; then
+      completion="$(RESULT="$result" python3 - <<'PY'
+import json
+import os
+try:
+    result = json.loads(os.environ["RESULT"])
+except json.JSONDecodeError:
+    raise SystemExit(1)
+print(json.dumps({"status": "succeeded", "result": result}, separators=(",", ":")))
+PY
+      )" || completion='{"status":"failed","error":"agent returned invalid JSON result"}'
+    else
+      completion="$(KIND="$kind" python3 - <<'PY'
+import json
+import os
+print(json.dumps({"status": "failed", "error": f"unsupported or failed operation: {os.environ['KIND']}"}, separators=(",", ":")))
+PY
+      )"
+    fi
+    post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" || \
+      dead_letter_completion "$operation_id" "$completion" || true
+    rm -f "$active_file"
+  ) &
+  printf '%s %s\n' "$operation_id" "$!" >"$active_file"
+}
+
 poll_agent() {
   local url="${PZ_AGENT_URL:-}" agent_id="${PZ_AGENT_ID:-}" access_token="${PZ_AGENT_ACCESS_TOKEN:-}"
   local interval="${PZ_AGENT_INTERVAL:-15}" status payload completion_rc fallback_completion dead_letter_rc
@@ -322,7 +366,10 @@ poll_agent() {
     printf 'pz-agent: PZ_AGENT_PENDING_COMPLETION_RETRIES must be at least 1\n' >&2
     return 64
   }
+  local active_file active_id active_pid
   agent_state_dir >/dev/null || return $?
+  active_file="$(active_job_file)" || return $?
+  mkdir -p "$(dirname "$active_file")" || return 1
   url="${url%/}"
   require_secure_url "$url" || return $?
 
@@ -372,6 +419,15 @@ poll_agent() {
       fi
     fi
 
+    if [ -f "$active_file" ]; then
+      read -r active_id active_pid <"$active_file" || { rm -f "$active_file"; active_id=""; active_pid=""; }
+      if [ -n "${active_id:-}" ] && [ -n "${active_pid:-}" ] && kill -0 "$active_pid" 2>/dev/null; then
+        post_progress "$url" "$agent_id" "$access_token" "$active_id" "Host operation is still running." || true
+      elif [ -n "${active_pid:-}" ]; then
+        rm -f "$active_file"
+      fi
+    fi
+
     if status="$(agent_status_json 2>/dev/null)"; then
       payload="$(STATUS="$status" python3 - <<'PY'
 import json
@@ -390,7 +446,7 @@ PY
 
       local job_response job_id job_kind job_payload completion result_status lines workshop_id keep
       local -a job_fields=()
-      if [ -z "$pending_job_id" ] && job_response="$(curl -fsS --max-time 20 -X POST \
+      if [ -z "$pending_job_id" ] && [ ! -f "$active_file" ] && job_response="$(curl -fsS --max-time 20 -X POST \
         -H "authorization: Bearer $access_token" \
         "$url/api/agents/$agent_id/jobs/claim" 2>/dev/null)"; then
         mapfile -t job_fields < <(JOB="$job_response" python3 - <<'PY'
@@ -414,7 +470,10 @@ PY
               if result_status="$(agent_status_json 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             start|stop|restart)
-              if result_status="$(sudo -n "$PZ_AGENT_PRIV" "$job_kind" 2>/dev/null)"; then :; else result_status=""; fi
+              printf '%s 0\n' "$job_id" >"$active_file"
+              run_long_job "$url" "$agent_id" "$access_token" "$job_id" "$job_kind" "$active_file"
+              sleep "$interval"
+              continue
               ;;
             backup)
               keep="$(PAYLOAD="$job_payload" python3 - <<'PY'
