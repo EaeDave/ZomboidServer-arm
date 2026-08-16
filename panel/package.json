@@ -12,7 +12,7 @@
     "dev:web": "bun --cwd apps/web dev",
     "build": "bun run build:web",
     "build:web": "bun --cwd apps/web build",
-    "start": "bun run start:api",
+    "start": "bun run db:migrate && bun run start:api",
     "start:api": "bun --cwd apps/api start",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",

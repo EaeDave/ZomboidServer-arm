@@ -6,7 +6,7 @@ Project Zomboid, FEX, the RootFS, worlds or saves into a container.
 ## Current image configuration
 
 - **Repository:** `EaeDave/ZomboidServer-arm`
-- **Branch:** `fex-arm64` (or the release branch selected for the panel)
+- **Branch:** `main`
 - **Build context:** repository root
 - **Dockerfile:** `panel/Dockerfile`
 - **Container port:** `3000`
@@ -49,8 +49,9 @@ log events. The browser never opens a host-log or agent connection.
 3. Provision PostgreSQL separately and attach its persistent volume/backups.
 4. Add the environment secrets above; do not upload server passwords, saves, FEX RootFS files or
    SSH private keys to the image.
-5. Run the migration as a one-off/release task with `bun run db:migrate`; do not run schema
-   generation against production. If Coolify's reverse proxy is in front of the API, set
+5. The production start command runs `bun run db:migrate` before the API starts; a failed
+   migration must fail the deployment. Do not run schema generation against production. If
+   Coolify's reverse proxy is in front of the API, set
    `TRUSTED_PROXY_IPS` to its exact source IP(s) only after confirming it overwrites
    `X-Forwarded-For`; otherwise leave it empty and use the proxy socket address for throttling.
 6. Configure the health check as `GET /api/health` on port `3000` and use
