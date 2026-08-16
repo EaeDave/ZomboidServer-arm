@@ -86,6 +86,15 @@ async function getOperation(operationId: string): Promise<OperationRecord> {
   return response.json() as Promise<OperationRecord>;
 }
 
+async function getOperations(serverId: string): Promise<OperationRecord[]> {
+  const response = await fetch(`/api/servers/${serverId}/operations`, {
+    credentials: "same-origin",
+  });
+  if (!response.ok) throwApiError(response, `Operations request failed: ${response.status}`);
+  const body = (await response.json()) as { operations: OperationRecord[] };
+  return body.operations;
+}
+
 async function getAudit(): Promise<AuditEvent[]> {
   const response = await fetch("/api/audit", { credentials: "same-origin" });
   if (!response.ok) throwApiError(response, `Audit request failed: ${response.status}`);
@@ -203,6 +212,12 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     enabled: user?.role === "admin",
     refetchInterval: 15_000,
   });
+  const operations = useQuery({
+    queryKey: ["operations", SERVER_ID],
+    queryFn: () => getOperations(SERVER_ID),
+    enabled: Boolean(user),
+    refetchInterval: 10_000,
+  });
   const canOperate = user?.role === "admin" || user?.role === "operator";
   const canAdmin = user?.role === "admin";
   useEffect(() => {
@@ -210,6 +225,17 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     window.addEventListener("zomboid-auth-expired", handleAuthExpired);
     return () => window.removeEventListener("zomboid-auth-expired", handleAuthExpired);
   }, [queryClient]);
+  useEffect(() => {
+    if (!user) return;
+    const stream = new EventSource(`/api/servers/${SERVER_ID}/events/stream`);
+    stream.addEventListener("status", (event) => {
+      queryClient.setQueryData(["server-status", SERVER_ID], JSON.parse(event.data));
+    });
+    stream.addEventListener("operation", () => {
+      void queryClient.invalidateQueries({ queryKey: ["operations", SERVER_ID] });
+    });
+    return () => stream.close();
+  }, [queryClient, user]);
   const [workshopId, setWorkshopId] = useState("");
   const [publicName, setPublicName] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
@@ -377,6 +403,19 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               <span className="font-medium text-zinc-200">{lastOperation.data.kind}</span>{" "}
               <span className="text-emerald-300">{lastOperation.data.status}</span>
             </p>
+          ) : null}
+          {operations.isSuccess ? (
+            <ul className="mt-5 space-y-2 text-sm text-zinc-400">
+              {operations.data.slice(0, 5).map((operation) => (
+                <li className="flex items-center justify-between gap-3" key={operation.operationId}>
+                  <span>{operation.kind}</span>
+                  <span className="font-medium text-zinc-200">{operation.status}</span>
+                  <time className="text-xs text-zinc-500" dateTime={operation.createdAt}>
+                    {new Date(operation.createdAt).toLocaleTimeString()}
+                  </time>
+                </li>
+              ))}
+            </ul>
           ) : null}
         </section>
 
