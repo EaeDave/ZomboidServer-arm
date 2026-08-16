@@ -619,7 +619,7 @@ export function createApp(
               }
               const status = await agent.getStatus(params.serverId);
               write(controller, "status", status);
-            } catch (error) {
+            } catch {
               if (!closed)
                 write(controller, "warning", {
                   message: "Realtime update temporarily unavailable",
