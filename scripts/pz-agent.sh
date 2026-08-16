@@ -246,12 +246,13 @@ PY
 post_completion() {
   local url="$1" token="$2" body="$3" code attempt
   for attempt in 1 2 3; do
-    code="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
+    code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
       -H "authorization: Bearer $token" \
       -H 'content-type: application/json' \
       --data "$body" "$url" 2>/dev/null || true)"
     case "$code" in
       2??|404) return 0 ;;
+      401|403) return 2 ;;
     esac
     [ "$attempt" -lt 3 ] && sleep 2
   done
@@ -276,9 +277,22 @@ poll_agent() {
         pending_job_id=""
         pending_completion=""
       else
-        printf 'pz-agent: pending job completion failed; retrying\n' >&2
-        sleep "$interval"
-        continue
+        completion_rc=$?
+        [ "$completion_rc" -eq 2 ] && {
+          printf 'pz-agent: agent authorization failed; stopping for re-enrollment\n' >&2
+          return 1
+        }
+        fallback_completion='{"status":"failed","error":"control plane rejected the operation result"}'
+        if post_completion "$url/api/agents/$agent_id/jobs/$pending_job_id/complete" "$access_token" "$fallback_completion"; then
+          pending_job_id=""
+          pending_completion=""
+        else
+          completion_rc=$?
+          [ "$completion_rc" -eq 2 ] && return 1
+          printf 'pz-agent: pending completion rejected; dropping local retry\n' >&2
+          pending_job_id=""
+          pending_completion=""
+        fi
       fi
     fi
 
@@ -298,9 +312,10 @@ PY
         printf 'pz-agent: heartbeat failed; retrying\n' >&2
       fi
 
-      local job_response job_id job_kind job_payload completion result_status lines workshop_id keep
+      local job_response job_id job_kind job_payload completion result_status lines workshop_id keep completion_rc
+      local fallback_completion
       local -a job_fields=()
-      if job_response="$(curl -fsS --max-time 20 -X POST \
+      if [ -z "$pending_job_id" ] && job_response="$(curl -fsS --max-time 20 -X POST \
         -H "authorization: Bearer $access_token" \
         "$url/api/agents/$agent_id/jobs/claim" 2>/dev/null)"; then
         mapfile -t job_fields < <(JOB="$job_response" python3 - <<'PY'
@@ -397,14 +412,21 @@ print(json.dumps({"status": "failed", "error": f"unsupported or failed operation
 PY
             )"
           fi
-          if ! post_completion "$url/api/agents/$agent_id/jobs/$job_id/complete" "$access_token" "$completion"; then
+          if post_completion "$url/api/agents/$agent_id/jobs/$job_id/complete" "$access_token" "$completion"; then
+            :
+          else
+            completion_rc=$?
+            [ "$completion_rc" -eq 2 ] && {
+              printf 'pz-agent: agent authorization failed; stopping for re-enrollment\n' >&2
+              return 1
+            }
             pending_job_id="$job_id"
             pending_completion="$completion"
             printf 'pz-agent: job completion failed; retaining for retry\n' >&2
           fi
         fi
       else
-        printf 'pz-agent: job claim failed; retrying\n' >&2
+        [ -n "$pending_job_id" ] || printf 'pz-agent: job claim failed; retrying\n' >&2
       fi
     else
       printf 'pz-agent: local status failed; retrying\n' >&2

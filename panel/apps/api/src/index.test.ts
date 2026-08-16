@@ -446,10 +446,21 @@ describe("control-plane API", () => {
   });
 
   it("requires auth for status outside an explicit development bypass", async () => {
-    const unauthorized = await app.handle(
-      new Request("http://localhost/api/servers/production/status"),
-    );
-    expect(unauthorized.status).toBe(401);
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousBypass = process.env.PZ_DEV_AUTH_BYPASS;
+    process.env.NODE_ENV = "production";
+    delete process.env.PZ_DEV_AUTH_BYPASS;
+    try {
+      const unauthorized = await app.handle(
+        new Request("http://localhost/api/servers/production/status"),
+      );
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousBypass === undefined) delete process.env.PZ_DEV_AUTH_BYPASS;
+      else process.env.PZ_DEV_AUTH_BYPASS = previousBypass;
+    }
   });
 
   it("returns typed status from the agent adapter", async () => {

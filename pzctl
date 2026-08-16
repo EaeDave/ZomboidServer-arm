@@ -227,7 +227,7 @@ PY
 
 cli_start_json() {
   local rc=0
-  if [ "$(sudo -n systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)" != active ]; then
+  if [ "$(sudo -n systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)" != active ] || ! is_listening; then
     PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY" >/dev/null 2>&1 || rc=$?
   fi
   status_json
@@ -246,9 +246,10 @@ cli_restart_json() {
   if [ "$(conf_get MODUPDATE_ON_RESTART 0)" = 1 ]; then
     "$PZ_MODUPDATE" check >/dev/null 2>&1 || update_rc=$?
     if [ "${update_rc:-0}" -eq 10 ]; then
-      "$PZ_MODUPDATE" apply --no-restart >/dev/null 2>&1 || rc=$?
+      "$PZ_MODUPDATE" apply --no-restart >/dev/null 2>&1 ||
+        printf 'pzctl: workshop update failed; continuing restart\n' >&2
     elif [ "${update_rc:-0}" -ne 0 ]; then
-      rc="$update_rc"
+      printf 'pzctl: workshop update check failed; continuing restart\n' >&2
     fi
   fi
   PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY" >/dev/null 2>&1 || rc=$?

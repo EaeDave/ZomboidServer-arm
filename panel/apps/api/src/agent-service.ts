@@ -89,6 +89,15 @@ function secretsMatch(left: string, right: string): boolean {
   return timingSafeEqual(leftHash, rightHash);
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
+}
+
 function dateString(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
@@ -173,38 +182,43 @@ export class DatabaseAgentService implements AgentService {
     if (existingServer) throw new AgentAlreadyEnrolledError();
 
     const accessToken = randomBytes(32).toString("base64url");
-    return database.transaction(async (transaction) => {
-      const [agent] = await transaction
-        .insert(agents)
-        .values({
-          name: input.name.trim(),
-          enrollmentSecretHash: hashSecret(enrollmentToken).toString("hex"),
-          accessTokenHash: hashSecret(accessToken).toString("hex"),
-          status: "offline",
-        })
-        .returning({ id: agents.id });
+    try {
+      return await database.transaction(async (transaction) => {
+        const [agent] = await transaction
+          .insert(agents)
+          .values({
+            name: input.name.trim(),
+            enrollmentSecretHash: hashSecret(enrollmentToken).toString("hex"),
+            accessTokenHash: hashSecret(accessToken).toString("hex"),
+            status: "offline",
+          })
+          .returning({ id: agents.id });
 
-      if (!agent) throw new Error("agent enrollment did not return an id");
+        if (!agent) throw new Error("agent enrollment did not return an id");
 
-      await transaction.insert(serverInstances).values({
-        agentId: agent.id,
-        displayName: input.server.displayName,
-        serviceName: input.server.serviceName,
-        port: input.server.port,
-        runtime: input.server.runtime,
-        dataDir: input.server.dataDir,
-      });
-      await transaction.insert(auditEvents).values({
-        agentId: agent.id,
-        action: "agent.enroll",
-        metadata: {
-          name: input.name,
+        await transaction.insert(serverInstances).values({
+          agentId: agent.id,
+          displayName: input.server.displayName,
           serviceName: input.server.serviceName,
-        },
-      });
+          port: input.server.port,
+          runtime: input.server.runtime,
+          dataDir: input.server.dataDir,
+        });
+        await transaction.insert(auditEvents).values({
+          agentId: agent.id,
+          action: "agent.enroll",
+          metadata: {
+            name: input.name,
+            serviceName: input.server.serviceName,
+          },
+        });
 
-      return { agentId: agent.id, accessToken };
-    });
+        return { agentId: agent.id, accessToken };
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new AgentAlreadyEnrolledError();
+      throw error;
+    }
   }
 
   async heartbeat(agentId: string, accessToken: string, status: AgentStatus): Promise<void> {

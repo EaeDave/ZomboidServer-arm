@@ -215,9 +215,13 @@ export function createApp(
     )
     .post(
       "/api/auth/login",
-      async ({ body, set }) => {
+      async ({ body, request, set }) => {
         try {
-          const session = await auth.login(body.email, body.password);
+          const clientIp =
+            request.headers.get("cf-connecting-ip") ??
+            request.headers.get("x-real-ip") ??
+            request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
+          const session = await auth.login(body.email, body.password, { clientIp });
           if (!session) {
             set.status = 401;
             return {

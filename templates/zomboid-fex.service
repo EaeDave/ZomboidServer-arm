@@ -10,7 +10,7 @@ User=__USER__
 WorkingDirectory=__INSTALL_DIR__
 RuntimeDirectory=__SVC__-fex
 RuntimeDirectoryMode=0750
-EnvironmentFile=-__ENVFILE__
+EnvironmentFile=__ENVFILE__
 Environment=HOME=__HOME__
 Environment=XDG_DATA_HOME=__FEX_DATA_HOME__
 Environment=FEX_ROOTFS=__FEX_ROOTFS__

@@ -27,7 +27,11 @@ export interface AuthSession {
 }
 
 export interface AuthService {
-  login(email: string, password: string): Promise<AuthSession | null>;
+  login(
+    email: string,
+    password: string,
+    context?: { clientIp?: string },
+  ): Promise<AuthSession | null>;
   currentUser(token: string): Promise<AuthUser | null>;
   logout(token: string): Promise<void>;
 }
@@ -96,7 +100,7 @@ const DUMMY_PASSWORD_HASH = Bun.password.hash("zomboid-control-plane-dummy-passw
 const LOGIN_FAILURE_LIMIT = 5;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
 
-type LoginAttempt = { failures: number; lockedUntil: number };
+type LoginAttempt = { failures: number; lockedUntil: number; lastFailureAt: number };
 
 export class DatabaseAuthService implements AuthService {
   private readonly loginAttempts = new Map<string, LoginAttempt>();
@@ -114,26 +118,45 @@ export class DatabaseAuthService implements AuthService {
     this.lastSessionPrune = now.getTime();
   }
 
-  private checkLoginRateLimit(email: string): void {
-    const attempt = this.loginAttempts.get(email);
-    if (attempt && attempt.lockedUntil > this.now().getTime()) throw new AuthRateLimitError();
-    if (attempt?.lockedUntil && attempt.lockedUntil <= this.now().getTime()) {
-      this.loginAttempts.delete(email);
+  private pruneLoginAttempts(now: number): void {
+    for (const [email, attempt] of this.loginAttempts) {
+      if (now - attempt.lastFailureAt > LOGIN_LOCKOUT_MS) this.loginAttempts.delete(email);
     }
+    if (this.loginAttempts.size <= 10_000) return;
+    const oldest = [...this.loginAttempts.entries()]
+      .sort(([, left], [, right]) => left.lastFailureAt - right.lastFailureAt)
+      .slice(0, this.loginAttempts.size - 10_000);
+    for (const [email] of oldest) this.loginAttempts.delete(email);
+  }
+
+  private checkLoginRateLimit(email: string): void {
+    const now = this.now().getTime();
+    this.pruneLoginAttempts(now);
+    const attempt = this.loginAttempts.get(email);
+    if (attempt && attempt.lockedUntil > now) throw new AuthRateLimitError();
   }
 
   private recordLoginFailure(email: string): void {
-    const current = this.loginAttempts.get(email) ?? { failures: 0, lockedUntil: 0 };
+    const now = this.now().getTime();
+    const current = this.loginAttempts.get(email) ?? {
+      failures: 0,
+      lockedUntil: 0,
+      lastFailureAt: now,
+    };
     current.failures += 1;
-    if (current.failures >= LOGIN_FAILURE_LIMIT) {
-      current.lockedUntil = this.now().getTime() + LOGIN_LOCKOUT_MS;
-    }
+    current.lastFailureAt = now;
+    if (current.failures >= LOGIN_FAILURE_LIMIT) current.lockedUntil = now + LOGIN_LOCKOUT_MS;
     this.loginAttempts.set(email, current);
   }
 
-  async login(email: string, password: string): Promise<AuthSession | null> {
+  async login(
+    email: string,
+    password: string,
+    context?: { clientIp?: string },
+  ): Promise<AuthSession | null> {
     const normalizedEmail = normalizeEmail(email);
-    this.checkLoginRateLimit(normalizedEmail);
+    const rateKey = `${normalizedEmail}:${context?.clientIp ?? "unknown"}`;
+    this.checkLoginRateLimit(rateKey);
     const database = this.getDatabase();
     await this.pruneExpiredSessions(database);
     const [user] = await database
@@ -155,10 +178,10 @@ export class DatabaseAuthService implements AuthService {
       passwordValid = false;
     }
     if (!user || !passwordValid) {
-      this.recordLoginFailure(normalizedEmail);
+      this.recordLoginFailure(rateKey);
       return null;
     }
-    this.loginAttempts.delete(normalizedEmail);
+    this.loginAttempts.delete(rateKey);
 
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(this.now().getTime() + SESSION_TTL_SECONDS * 1000);

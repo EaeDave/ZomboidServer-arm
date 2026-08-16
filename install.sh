@@ -57,7 +57,7 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 # ----------------------------------------------------------------- namespace / paths
 # Defaults give the classic single-server layout. Overrides namespace everything.
 SVC="${PZ_SVC:-zomboid-b42}"
-[[ "$SVC" =~ ^[A-Za-z0-9][A-Za-z0-9_.@-]*$ ]] || die "PZ_SVC contains unsupported characters"
+[[ "$SVC" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "PZ_SVC contains unsupported characters"
 SFX=""; [ "$SVC" != "zomboid-b42" ] && SFX="-${SVC#zomboid-b42-}"
 INSTALL_DIR="${PZ_INSTALL_DIR:-/opt/zomboid-server}"
 CACHEDIR="${PZ_CACHEDIR:-$TARGET_HOME/Zomboid}"

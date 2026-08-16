@@ -14,6 +14,8 @@ export LD_LIBRARY_PATH="__INSTALL_DIR__/linux64:__INSTALL_DIR__:__INSTALL_DIR__/
 # ARM64 process. FEX loads the x86 JVM and its libraries from the guest path.
 unset LD_PRELOAD
 [ -n "${PZ_ADMIN_PW:-}" ] || { echo "PZ_ADMIN_PW is required" >&2; exit 1; }
+socket_dir="$(dirname "$FEX_SERVERSOCKETPATH")"
+mkdir -p "$socket_dir"
 rm -f "$FEX_SERVERSOCKETPATH"
 mkdir -p "$XDG_DATA_HOME"
 

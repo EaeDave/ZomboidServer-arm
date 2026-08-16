@@ -8,7 +8,7 @@ Requires=__SVC__-ciopfs.service
 Type=simple
 User=__USER__
 WorkingDirectory=__INSTALL_DIR__
-EnvironmentFile=-__ENVFILE__
+EnvironmentFile=__ENVFILE__
 # box64 tuning for the JVM. These are inherited by the java CHILD process (where the JVM/JIT
 # actually runs and crashes happen) — box64 matches config by process name, so the launcher's
 # rcfile section does NOT reach java; the environment does.
