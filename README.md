@@ -56,6 +56,14 @@ For a custom `PZ_PORT`, open `PZ_PORT` and `PZ_PORT+1` in both layers. Steam Rel
 recommended behind Oracle cloud NAT, but it does not replace the two firewall rules in the
 tested setup.
 
+Manual local recovery, if the installer firewall step was skipped:
+
+```bash
+sudo iptables -I INPUT -p udp --dport 16261 -j ACCEPT
+sudo iptables -I INPUT -p udp --dport 16262 -j ACCEPT
+sudo netfilter-persistent save
+```
+
 ### Steam Relay readiness telemetry
 
 Steam Relay is a client-side connection requirement for the tested Oracle/cloud-NAT deployment;
@@ -71,14 +79,6 @@ separate: it is host-side diagnostic telemetry after Project Zomboid is already 
 The old `PZ_REQUIRE_STEAM=1` maps to `required`, `0` maps to `disabled`, and its former `auto`
 default maps to `observe` during an installer upgrade. Packet capture is supporting evidence, not
 an end-to-end Relay test; only a real Steam client connection proves Relay reachability.
-
-Manual local recovery, if the installer firewall step was skipped:
-
-```bash
-sudo iptables -I INPUT -p udp --dport 16261 -j ACCEPT
-sudo iptables -I INPUT -p udp --dport 16262 -j ACCEPT
-sudo netfilter-persistent save
-```
 
 ### Picking a branch
 

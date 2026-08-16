@@ -142,6 +142,7 @@ status_json() {
   STATUS_CHECKED_AT="$checked_at" \
   STATUS_STEAM_CHECK="$PZ_STEAM_SESSION_CHECK" \
   STATUS_STEAM_FILE="$PZ_STEAM_SESSION_STATUS" \
+  STATUS_ACTIVE_ENTER="$active_enter" \
   python3 - <<'PY'
 import json
 import os
@@ -172,13 +173,20 @@ def steam_session():
     evidence = value.get("evidence")
     checked_at = value.get("checkedAt")
     message = value.get("message")
+    service_active_since = value.get("serviceActiveSince")
     if mode not in {"observe", "required", "disabled"}:
         return default
     if evidence not in {"observed", "not_observed", "not_checked"}:
         return default
-    if checked_at is not None and not isinstance(checked_at, str):
+    if checked_at is not None and (not isinstance(checked_at, str) or not checked_at):
         return default
-    if message is not None and not isinstance(message, str):
+    if message is not None and (not isinstance(message, str) or not message):
+        return default
+    # Telemetry belongs to a particular systemd service activation. Do not present a prior
+    # boot's packet sample after a manual/systemd restart that bypassed pz-boot-retry.
+    if not isinstance(service_active_since, str) or not service_active_since:
+        return default
+    if service_active_since != os.environ["STATUS_ACTIVE_ENTER"]:
         return default
     return {"mode": mode, "evidence": evidence, "checkedAt": checked_at, "message": message}
 

@@ -29,10 +29,12 @@ case "$STEAM_SAMPLE_SECONDS" in ''|*[!0-9]*) STEAM_SAMPLE_SECONDS=25 ;; esac
 [ "$STEAM_SAMPLE_SECONDS" -ge 1 ] && [ "$STEAM_SAMPLE_SECONDS" -le 60 ] || STEAM_SAMPLE_SECONDS=25
 
 steam_status() {
-  local evidence="$1" message="$2" tmp
+  local evidence="$1" message="$2" active_since tmp
   mkdir -p "$(dirname "$STEAM_STATUS")"
   tmp="$(mktemp "${STEAM_STATUS}.tmp.XXXXXX")" || return 1
-  STEAM_MODE="$STEAM_CHECK" STEAM_EVIDENCE="$evidence" STEAM_MESSAGE="$message" python3 - >"$tmp" <<'PY'
+  active_since="$(sudo systemctl show "$SVC" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  STEAM_MODE="$STEAM_CHECK" STEAM_EVIDENCE="$evidence" STEAM_MESSAGE="$message" \
+    STEAM_ACTIVE_SINCE="$active_since" python3 - >"$tmp" <<'PY'
 import json
 import os
 from datetime import datetime, timezone
@@ -42,9 +44,11 @@ print(json.dumps({
     "evidence": os.environ["STEAM_EVIDENCE"],
     "checkedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "message": os.environ["STEAM_MESSAGE"],
+    "serviceActiveSince": os.environ["STEAM_ACTIVE_SINCE"],
 }, separators=(",", ":")))
 PY
-  chmod 600 "$tmp"
+  # This contains no credentials and must be readable by the unprivileged status probe.
+  chmod 644 "$tmp"
   mv "$tmp" "$STEAM_STATUS"
 }
 

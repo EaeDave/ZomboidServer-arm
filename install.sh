@@ -454,7 +454,8 @@ fi
 
 # ----------------------------------------------------------------- 7. first boot -> generate ini
 step "First boot (generates server config; the emulated ARM boot may take a few minutes)"
-PZ_SERVICE="$SVC" PZ_PORT="$PORT" PZ_CONSOLE="$CACHEDIR/server-console.txt" "$BIN_BOOTRETRY" || \
+PZ_SERVICE="$SVC" PZ_PORT="$PORT" PZ_CONSOLE="$CACHEDIR/server-console.txt" \
+  PZ_STEAM_SESSION_CHECK="$PZ_STEAM_SESSION_CHECK" "$BIN_BOOTRETRY" || \
   warn "Server didn't reach 'listening' automatically. You can retry later with:  ${BIN_PZCTL##*/}  (menu: Start)"
 
 INI="$CACHEDIR/Server/$SERVERNAME.ini"
