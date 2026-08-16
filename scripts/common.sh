@@ -42,9 +42,10 @@ pz_load_env() {
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
   PZ_BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
+  PZ_REQUIRE_STEAM="${PZ_REQUIRE_STEAM:-auto}"
   # keys that identify THIS host/world; import must never take these from a foreign ini
   PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
-  export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME
+  export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME PZ_REQUIRE_STEAM
 }
 
 # ------------------------------------------------------------ small utils
