@@ -1,4 +1,4 @@
-LOCK TABLE operations IN ACCESS EXCLUSIVE MODE;--> statement-breakpoint
+LOCK TABLE operations IN SHARE ROW EXCLUSIVE MODE;--> statement-breakpoint
 WITH ranked AS (
   SELECT
     id,
