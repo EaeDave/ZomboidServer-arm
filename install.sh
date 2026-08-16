@@ -68,6 +68,7 @@ ENVFILE="/etc/${SVC}.env"
 LIBDIR="/usr/local/lib/zomboid-arm${SFX}"
 BIN_PZCTL="/usr/local/bin/pzctl${SFX}"
 BIN_AGENT="/usr/local/sbin/pz-agent${SFX}"
+BIN_AGENT_PRIV="/usr/local/sbin/pz-agent-priv${SFX}"
 AGENT_ENVFILE="/etc/${SVC}-agent.env"
 BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
 BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
@@ -315,13 +316,15 @@ render "$REPO_DIR/templates/zomboid-watchdog.timer"    > "/etc/systemd/system/$S
 render "$REPO_DIR/templates/zomboid-modupdate.service" > "/etc/systemd/system/$SVC-modupdate.service"
 render "$REPO_DIR/templates/zomboid-modupdate.timer"   > "/etc/systemd/system/$SVC-modupdate.timer"
 sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" \
-    -e "s|__AGENT_ENVFILE__|$(esc "$AGENT_ENVFILE")|g" -e "s|__AGENT__|$(esc "$BIN_AGENT")|g" \
+    -e "s|__AGENT_ENVFILE__|$(esc "$AGENT_ENVFILE")|g" -e "s|__CACHEDIR__|$(esc "$CACHEDIR")|g" \
+    -e "s|__BACKUPS__|$(esc "$BACKUPS")|g" -e "s|__AGENT__|$(esc "$BIN_AGENT")|g" \
     "$REPO_DIR/templates/zomboid-agent.service" > "/etc/systemd/system/$SVC-agent.service"
 install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" "$BIN_WATCHDOG"
 install -m755 "$REPO_DIR/scripts/boot-retry.sh"       "$BIN_BOOTRETRY"
 install -m755 "$REPO_DIR/scripts/pz-modupdate.sh"     "$BIN_MODUPDATE"
 install -m755 "$REPO_DIR/pzctl"                       "$BIN_PZCTL"
 install -m755 "$REPO_DIR/scripts/pz-agent.sh"          "$BIN_AGENT"
+install -m755 "$REPO_DIR/scripts/pz-agent-priv.sh"      "$BIN_AGENT_PRIV"
 mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
 install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
@@ -329,6 +332,7 @@ install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
 if [ -n "$SFX" ]; then
   sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE" "$BIN_AGENT"
   sed -i "s|/usr/local/lib/zomboid-arm/common.sh|$LIBDIR/common.sh|g; s|/usr/local/bin/pzctl|$BIN_PZCTL|g" "$BIN_AGENT"
+  sed -i "s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_AGENT_PRIV"
 fi
 # let pzctl & friends know the environment on this host
 cat > "$ENVFILE" <<EOF
@@ -359,6 +363,7 @@ PZ_WATCHDOG=$BIN_WATCHDOG
 PZ_MODUPDATE=$BIN_MODUPDATE
 PZ_PZCTL=$BIN_PZCTL
 PZ_AGENT=$BIN_AGENT
+PZ_AGENT_PRIV=$BIN_AGENT_PRIV
 PZ_AGENT_ENVFILE=$AGENT_ENVFILE
 PZ_CONF=$CACHEDIR/pzctl.conf
 PZ_UPDATELOG=$CACHEDIR/mod-updates.log
@@ -369,6 +374,13 @@ install -o "$TARGET_USER" -g "$TARGET_USER" -m600 /dev/null "$AGENT_ENVFILE" 2>/
   chown "$TARGET_USER":"$TARGET_USER" "$AGENT_ENVFILE" 2>/dev/null || true
   chmod 600 "$AGENT_ENVFILE"
 }
+AGENT_SUDOERS="/etc/sudoers.d/${SVC}-agent"
+printf '%s ALL=(root) NOPASSWD: %s\n' "$TARGET_USER" "$BIN_AGENT_PRIV" > "$AGENT_SUDOERS"
+chmod 440 "$AGENT_SUDOERS"
+if command -v visudo >/dev/null && ! visudo -cf "$AGENT_SUDOERS" >/dev/null 2>&1; then
+  warn "Invalid generated sudoers file; removing $AGENT_SUDOERS. Agent mutating jobs stay disabled."
+  rm -f "$AGENT_SUDOERS"
+fi
 systemctl daemon-reload
 systemctl enable "$SVC-ciopfs.service" "$SVC.service" "$SVC-watchdog.timer" "$SVC-modupdate.timer" >/dev/null 2>&1
 systemctl start  "$SVC-ciopfs.service"

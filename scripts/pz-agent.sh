@@ -8,6 +8,7 @@
 set -uo pipefail
 
 PZCTL_BIN="${PZCTL_BIN:-/usr/local/bin/pzctl}"
+PZ_AGENT_PRIV="${PZ_AGENT_PRIV:-/usr/local/sbin/pz-agent-priv}"
 PZ_COMMON="${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
 
 [ -r "$PZ_COMMON" ] || {
@@ -272,8 +273,11 @@ PY
         )"
         if [ -n "$job_id" ]; then
           case "$job_kind" in
-            status|start|stop|restart)
-              if result_status="$("$PZCTL_BIN" "$job_kind" --json 2>/dev/null)"; then :; else result_status=""; fi
+            status)
+              if result_status="$("$PZCTL_BIN" status --json 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            start|stop|restart|backup)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" "$job_kind" 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             logs)
               lines="$(PAYLOAD="$job_payload" python3 - <<'PY'
@@ -283,7 +287,7 @@ import os
 print(json.loads(os.environ["PAYLOAD"]).get("lines", 50))
 PY
               )"
-              if result_status="$("$PZCTL_BIN" logs --json "$lines" 2>/dev/null)"; then :; else result_status=""; fi
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" logs "$lines" 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             backup)
               if result_status="$("$PZCTL_BIN" backup --json 2>/dev/null)"; then :; else result_status=""; fi

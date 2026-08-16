@@ -12,10 +12,10 @@ EnvironmentFile=-__AGENT_ENVFILE__
 ExecStart=__AGENT__ --poll
 Restart=always
 RestartSec=10
-NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
+ReadWritePaths=__CACHEDIR__ __BACKUPS__
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]

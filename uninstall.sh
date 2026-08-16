@@ -43,6 +43,7 @@ WATCHDOG="${PZ_WATCHDOG:-/usr/local/sbin/zomboid-watchdog.sh}"
 MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 PZCTL_BIN="${PZ_PZCTL:-/usr/local/bin/pzctl}"
 AGENT_BIN="${PZ_AGENT:-/usr/local/sbin/pz-agent}"
+AGENT_PRIV="${PZ_AGENT_PRIV:-/usr/local/sbin/pz-agent-priv}"
 AGENT_ENVFILE="${PZ_AGENT_ENVFILE:-/etc/${SVC}-agent.env}"
 RUNTIME="${PZ_RUNTIME:-box64}"
 FEXSTART="${PZ_FEX_START:-/usr/local/sbin/zomboid-fex-start.sh}"
@@ -76,12 +77,13 @@ say "unmounted (if it was mounted)."
 step "Removing systemd units, scripts and pzctl"
 rm -f "/etc/systemd/system/$SVC.service" \
       "/etc/systemd/system/$SVC-agent.service" \
+      "/etc/sudoers.d/$SVC-agent" \
       "/etc/systemd/system/$SVC-ciopfs.service" \
       "/etc/systemd/system/$SVC-watchdog.service" \
       "/etc/systemd/system/$SVC-watchdog.timer" \
       "/etc/systemd/system/$SVC-modupdate.service" \
       "/etc/systemd/system/$SVC-modupdate.timer"
-rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$AGENT_PRIV" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART"
 case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
 systemctl reset-failed "$SVC.service" 2>/dev/null

@@ -49,7 +49,8 @@ become a general-purpose shell or Docker host controller.
 - [x] Add cookie sessions, admin bootstrap and role-bearing authenticated API access.
 - [x] Add agent enrollment, hashed access tokens and outbound heartbeat transport.
 - [x] Add the first queued `status` operation, agent claim/complete endpoints and audit events.
-- [ ] Add role-checked start/stop/restart jobs and complete the remaining pzctl operations.
+- [x] Add role checks and the root-side allowlist for start/stop/restart/logs/backup jobs.
+- [ ] Add dedicated mods/settings/world-reset adapters and their staging tests.
 
 ## Guardrails
 
@@ -63,7 +64,6 @@ become a general-purpose shell or Docker host controller.
 
 ## Next checkpoint
 
-The first typed status slice is now covered by the contract package, Elysia endpoint, React status card, non-interactive `pzctl status --json`, PostgreSQL migrations/health
-check, cookie sessions, agent enrollment, outbound heartbeats and the first queued status job.
-Next, add role-checked start/stop/restart jobs and complete the remaining pzctl operations. No
-mutating operation is enabled until it is tested against a real staging agent.
+The first typed status slice is now covered by the contract package, Elysia endpoint, React status card, non-interactive pzctl JSON commands, PostgreSQL migrations/health
+check, cookie sessions, agent enrollment, outbound heartbeats and the first role-checked jobs.
+Next, add dedicated mods/settings/world-reset adapters and test the full flow against staging.

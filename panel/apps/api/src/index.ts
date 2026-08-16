@@ -46,9 +46,9 @@ import {
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
 const version = process.env.npm_package_version ?? "0.1.0";
-// Mutating operations stay disabled until the host service unit has a dedicated privileged
-// helper and the corresponding pzctl tests. Status is the only queued operation in this slice.
-const supportedOperationKinds = new Set(["status"]);
+// These operations are routed through the root-owned pz-agent-priv allowlist on the VPS. Mods,
+// settings and world reset remain disabled until their dedicated pzctl adapters are tested.
+const supportedOperationKinds = new Set(["status", "start", "stop", "restart", "logs", "backup"]);
 type DatabaseCheck = () => Promise<void>;
 type AppOptions = { serveFrontend?: boolean };
 

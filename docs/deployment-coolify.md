@@ -29,9 +29,10 @@ AGENT_ENROLLMENT_TOKEN=<one-time-or-rotated-enrollment-value>
 PORT=3000
 ```
 
-`HOST` is set to `0.0.0.0` by the image. The API's default status adapter is still fake, while the host-side `pz-agent --stdio` boundary
-now supports status only. The production deployment must wait for authenticated transport,
-agent enrollment and the remaining operation/audit layers to be implemented and tested.
+`HOST` is set to `0.0.0.0` by the image. The API's default status adapter is still fake in development; production reads the latest
+heartbeat stored by PostgreSQL. The host-side `pz-agent --stdio` and outbound `--poll` boundary
+supports status plus the first allowlisted start/stop/restart/logs/backup jobs. Mods, settings and
+world reset remain disabled until their dedicated adapters are tested.
 
 ## Safe rollout sequence
 
@@ -59,8 +60,9 @@ agent enrollment and the remaining operation/audit layers to be implemented and 
    ```
 
    Then enable the outbound-only unit: `sudo systemctl enable --now zomboid-b42-agent.service`.
-   Prefer this outbound transport or a private Tailscale path; do not expose an unauthenticated
-   systemd, RCON or shell port.
+   The installer also creates a root-owned `pz-agent-priv` allowlist and a narrow sudoers rule for
+   those first jobs. Prefer this outbound transport or a private Tailscale path; do not expose an
+   unauthenticated systemd, RCON or shell port.
 10. Test `status` against a staging target before enabling any mutating operation for production.
 11. Enable production access only after the audit log, role checks and operation confirmations are
     passing.

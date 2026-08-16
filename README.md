@@ -315,11 +315,13 @@ pzctl                     control panel (start/stop, mods, updates, console, res
 pzctl status --json       non-interactive versioned status for the future host agent
 pz-agent --stdio          local allowlisted agent boundary (status only)
 pz-agent --enroll          enroll this host with the private control plane
-pz-agent --poll            outbound status heartbeat (no VPS listener)
+pz-agent --poll            outbound heartbeat + allowlisted job worker (no VPS listener)
+pz-agent-priv              root-owned allowlist for start/stop/restart/logs/backup
 templates/                JVM config, runtime launchers, systemd units (filled in at install)
 scripts/
   common.sh               shared library (env, status JSON, ini editing, workshop installs, manifest)
   pz-agent.sh              stdio/enrollment/outbound host-agent boundary
+  pz-agent-priv.sh         root-side command allowlist used by the agent service
   pz-modupdate.sh         mod update checker/applier (manual + systemd timer)
   pz-rcon.py              tiny stdlib-only RCON client (console + player count)
   zomboid-watchdog.sh     hybrid boot-hang watchdog
