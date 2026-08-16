@@ -28,6 +28,11 @@ COPY --from=build /app/panel/apps ./apps
 COPY --from=build /app/panel/packages ./packages
 RUN bun install --frozen-lockfile --production
 
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
+
 USER bun
 EXPOSE 3000
 CMD ["bun", "run", "start"]
