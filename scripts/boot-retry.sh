@@ -8,31 +8,91 @@
 #   an emulation/JIT crash is treated as recoverable, so `Restart=always` reboots it.
 #   Only a failed Workshop download (onItemNotDownloaded) is deterministic -> STOP (recrashes).
 #
-# PZ_REQUIRE_STEAM=1 (default when tcpdump is available): an emulated boot can reach
-# "listening" with a DEAD Steam game-server session — the Steam networking thread
-# wedges the same way boots hang. Players who join through Steam Relay can never
-# reach such a server ("Getting Server Info" forever). With the gate on, after
-# LISTENING we sample for traffic to Valve's ranges and count the boot as failed
-# if none shows up, so it gets restarted like any other hung boot.
+# Steam Relay remains required for clients on this Oracle/cloud-NAT deployment.  A passive
+# packet sample is only supporting evidence, however: an idle server can have a healthy Steam
+# session without sending packets during an arbitrary window.  PZ_STEAM_SESSION_CHECK defaults
+# to observe, records that evidence, and never turns a listening server into a restart loop.
+#
+# Modes: observe (default, non-blocking telemetry), required (legacy strict behavior; opt-in),
+# disabled (do not sample). PZ_REQUIRE_STEAM is mapped for backwards compatibility by common.sh.
 #
 # Installed as /usr/local/sbin/pz-boot-retry ; also invoked by `pzctl` (menu: Start / Bring up).
 SVC="${PZ_SERVICE:-zomboid-b42}"
 PORT="${PZ_PORT:-16261}"
 C="${PZ_CONSOLE:-/home/ubuntu/Zomboid/server-console.txt}"
 CG=/sys/fs/cgroup/system.slice/$SVC.service/cpu.stat
-REQ_STEAM="${PZ_REQUIRE_STEAM:-auto}"
-if [ "$REQ_STEAM" = auto ]; then
-  command -v tcpdump >/dev/null && REQ_STEAM=1 || REQ_STEAM=0
-fi
+STEAM_CHECK="${PZ_STEAM_SESSION_CHECK:-observe}"
+STEAM_STATUS="${PZ_STEAM_SESSION_STATUS:-$(dirname "$C")/pz-steam-session.json}"
+STEAM_SAMPLE_SECONDS="${PZ_STEAM_SESSION_SAMPLE_SECONDS:-25}"
+case "$STEAM_CHECK" in observe|required|disabled) ;; *) STEAM_CHECK=observe ;; esac
+case "$STEAM_SAMPLE_SECONDS" in ''|*[!0-9]*) STEAM_SAMPLE_SECONDS=25 ;; esac
+[ "$STEAM_SAMPLE_SECONDS" -ge 1 ] && [ "$STEAM_SAMPLE_SECONDS" -le 60 ] || STEAM_SAMPLE_SECONDS=25
 
-# any packets to/from Valve ranges in a 25s window? (steam heartbeats are chatty)
-steam_alive() {
-  [ "$(sudo timeout 25 tcpdump -ni any 'net 162.254.0.0/16 or net 155.133.0.0/16 or net 205.196.0.0/16' -c 2 2>/dev/null | wc -l)" -gt 0 ]
+steam_status() {
+  local evidence="$1" message="$2" active_since tmp
+  mkdir -p "$(dirname "$STEAM_STATUS")"
+  tmp="$(mktemp "${STEAM_STATUS}.tmp.XXXXXX")" || return 1
+  active_since="$(sudo systemctl show "$SVC" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  # Without an activation timestamp this record cannot be safely tied to a boot. Do not retain
+  # an older record and accidentally show its evidence as current.
+  if [ -z "$active_since" ]; then
+    rm -f "$tmp" "$STEAM_STATUS"
+    return 1
+  fi
+  STEAM_MODE="$STEAM_CHECK" STEAM_EVIDENCE="$evidence" STEAM_MESSAGE="$message" \
+    STEAM_ACTIVE_SINCE="$active_since" python3 - >"$tmp" <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+
+print(json.dumps({
+    "mode": os.environ["STEAM_MODE"],
+    "evidence": os.environ["STEAM_EVIDENCE"],
+    "checkedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "message": os.environ["STEAM_MESSAGE"],
+    "serviceActiveSince": os.environ["STEAM_ACTIVE_SINCE"],
+}, separators=(",", ":")))
+PY
+  # This contains no credentials and must be readable by the unprivileged status probe.
+  chmod 644 "$tmp"
+  mv "$tmp" "$STEAM_STATUS"
 }
+
+# Passive traffic is evidence only. It cannot prove a Steam/Relay session is unavailable.
+steam_evidence() {
+  local capture packets rc
+  if ! command -v tcpdump >/dev/null; then
+    steam_status not_checked "tcpdump is unavailable; Relay telemetry was not sampled."
+    return 2
+  fi
+  capture="$(mktemp)" || return 2
+  if sudo timeout "$STEAM_SAMPLE_SECONDS" tcpdump -ni any \
+    'net 162.254.0.0/16 or net 155.133.0.0/16 or net 205.196.0.0/16' -c 2 >"$capture" 2>/dev/null; then
+    rc=0
+  else
+    rc=$?
+  fi
+  packets="$(wc -l < "$capture")"
+  rm -f "$capture"
+  if [ "$packets" -gt 0 ]; then
+    steam_status observed "Valve-range traffic was observed after the server became ready."
+    return 0
+  fi
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+    steam_status not_checked "Passive Relay telemetry capture failed; no conclusion was recorded."
+    return 2
+  fi
+  steam_status not_observed "No Valve-range traffic was observed during the passive sample; this does not prove Relay is unavailable."
+  return 1
+}
+
+# A previous service activation's Relay sample is never valid for this boot.
+rm -f "$STEAM_STATUS"
 
 for attempt in $(seq 1 6); do
   echo "=== ATTEMPT $attempt $(date -u +%H:%M:%S) ==="
   sudo systemctl restart "$SVC"
+  steam_status not_checked "Waiting for this boot to become ready before collecting Relay telemetry."
   for poll in $(seq 1 40); do
     sleep 15
     listen=$(sudo ss -uln 2>/dev/null | grep -cE ":$PORT\b")
@@ -41,15 +101,30 @@ for attempt in $(seq 1 6); do
     last=$(tail -1 "$C" 2>/dev/null)
     echo "  [a$attempt p$poll] listen=$listen crash=$crash idle=${idle}s | ${last:0:40}"
     if [ "$listen" = "1" ]; then
-      if [ "$REQ_STEAM" != 1 ]; then echo ">>> LISTENING OK (attempt $attempt) <<<"; exit 0; fi
-      echo "  listening; verifying the Steam session (relay players need it)..."
-      for s in $(seq 1 10); do
-        if steam_alive; then echo ">>> LISTENING + STEAM OK (attempt $attempt) <<<"; exit 0; fi
-        echo "  [a$attempt steam-check $s/10] no Valve traffic yet"
-        sleep 5
-      done
-      echo "  >> listening but the Steam session is dead -> restart"
-      break
+      case "$STEAM_CHECK" in
+        disabled)
+          steam_status not_checked "Relay telemetry is disabled by configuration."
+          echo ">>> LISTENING OK (attempt $attempt; Relay telemetry disabled) <<<"
+          exit 0
+          ;;
+        observe)
+          if steam_evidence; then
+            echo ">>> LISTENING OK (attempt $attempt; Relay telemetry observed) <<<"
+          else
+            echo ">>> LISTENING OK (attempt $attempt; Relay telemetry not observed, not blocking) <<<"
+          fi
+          exit 0
+          ;;
+        required)
+          echo "  listening; strict Relay telemetry check enabled..."
+          if steam_evidence; then
+            echo ">>> LISTENING + RELAY TELEMETRY OK (attempt $attempt) <<<"
+            exit 0
+          fi
+          echo "  >> Relay telemetry was not observed; strict mode will retry"
+          break
+          ;;
+      esac
     fi
     [ "$crash" -ge 1 ] 2>/dev/null && { echo ">>> Workshop download failed — not retrying (deterministic). Check the mod. <<<"; exit 2; }
     if [ "$idle" -ge 120 ] 2>/dev/null; then

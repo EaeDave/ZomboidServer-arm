@@ -4,7 +4,12 @@ on:
   pull_request:
     paths:
       - "panel/**"
+      - "scripts/boot-retry.sh"
+      - "scripts/boot-retry.test.sh"
+      - "scripts/common.sh"
       - "scripts/pz-agent*.sh"
+      - "install.sh"
+      - "pzctl"
       - "templates/zomboid-agent.service"
       - ".github/workflows/panel.yml"
       - ".dockerignore"
@@ -15,7 +20,12 @@ on:
       - "feat/**"
     paths:
       - "panel/**"
+      - "scripts/boot-retry.sh"
+      - "scripts/boot-retry.test.sh"
+      - "scripts/common.sh"
       - "scripts/pz-agent*.sh"
+      - "install.sh"
+      - "pzctl"
       - "templates/zomboid-agent.service"
       - ".github/workflows/panel.yml"
       - ".dockerignore"
@@ -30,6 +40,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Verify host boot telemetry scripts
+        run: |
+          bash -n scripts/common.sh scripts/boot-retry.sh scripts/boot-retry.test.sh install.sh pzctl
+          bash scripts/boot-retry.test.sh
       - uses: docker/setup-buildx-action@v3
       - name: Build and test control-plane image
         run: docker build --file panel/Dockerfile --tag zomboid-control-plane:ci .

@@ -291,6 +291,27 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                     {server.data.listening ? "listening" : "not listening"}
                   </dd>
                 </div>
+                <div className="col-span-2">
+                  <dt className="text-zinc-500">Steam Relay telemetry</dt>
+                  <dd className="mt-1 font-medium">
+                    {server.data.steamSession
+                      ? `${server.data.steamSession.evidence.replace("_", " ")} (${server.data.steamSession.mode})`
+                      : "not reported by this agent"}
+                  </dd>
+                  {server.data.steamSession?.message ? (
+                    <p className="mt-1 text-xs font-normal text-zinc-500">
+                      {server.data.steamSession.message}
+                    </p>
+                  ) : null}
+                  {server.data.steamSession?.checkedAt ? (
+                    <time
+                      className="mt-1 block text-xs font-normal text-zinc-500"
+                      dateTime={server.data.steamSession.checkedAt}
+                    >
+                      Last sampled: {new Date(server.data.steamSession.checkedAt).toLocaleString()}
+                    </time>
+                  ) : null}
+                </div>
               </dl>
             ) : (
               <p className="mt-6 text-sm text-zinc-400">

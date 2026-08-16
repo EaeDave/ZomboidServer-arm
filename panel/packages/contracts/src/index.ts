@@ -110,6 +110,25 @@ export const agentServiceStateSchema = Type.Union([
   Type.Literal("unknown"),
 ]);
 
+export const steamSessionCheckModeSchema = Type.Union([
+  Type.Literal("observe"),
+  Type.Literal("required"),
+  Type.Literal("disabled"),
+]);
+
+export const steamSessionEvidenceSchema = Type.Union([
+  Type.Literal("observed"),
+  Type.Literal("not_observed"),
+  Type.Literal("not_checked"),
+]);
+
+export const steamSessionStatusSchema = Type.Object({
+  mode: steamSessionCheckModeSchema,
+  evidence: steamSessionEvidenceSchema,
+  checkedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  message: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+});
+
 export const agentStatusSchema = Type.Object({
   protocolVersion: Type.Literal(1),
   serverId: Type.String({ minLength: 1 }),
@@ -122,6 +141,7 @@ export const agentStatusSchema = Type.Object({
   uptimeSeconds: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
   playerCount: Type.Integer({ minimum: -1 }),
   checkedAt: Type.String({ minLength: 1 }),
+  steamSession: Type.Optional(steamSessionStatusSchema),
 });
 
 export type AgentStatus = Static<typeof agentStatusSchema>;
