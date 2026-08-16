@@ -9,6 +9,7 @@ User=__USER__
 Group=__USER__
 EnvironmentFile=__ENVFILE__
 EnvironmentFile=-__AGENT_ENVFILE__
+Environment=PZCTL_ENV=__ENVFILE__
 ExecStart=__AGENT__ --poll
 Restart=always
 RestartSec=10

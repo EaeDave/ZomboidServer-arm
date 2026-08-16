@@ -17,7 +17,9 @@
 #  Point PZCTL_ENV at an alternate env file to drive a non-default install.
 #
 set -uo pipefail
-ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
+ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"
+export PZCTL_ENV="$ENVF"
+[ -f "$ENVF" ] && . "$ENVF"
 . "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
 pz_load_env
 
