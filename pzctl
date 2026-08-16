@@ -16,6 +16,212 @@ ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
 pz_load_env
 PZ_MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 
+cli_mods_list_json() {
+  local active disabled disk tracked
+  active="$(mods_get)"
+  disabled="$(cat "$PZ_DISABLED" 2>/dev/null || true)"
+  disk="$(disk_mod_ids)"
+  tracked="$(manifest_ids)"
+  MODS_ACTIVE="$active" MODS_DISABLED="$disabled" MODS_DISK="$disk" MODS_TRACKED="$tracked" python3 - <<'PY'
+import json
+import os
+
+
+def lines(value):
+    return [item for item in value.splitlines() if item]
+
+
+def semicolon(value):
+    return [item for item in value.split(";") if item]
+
+print(
+    json.dumps(
+        {
+            "active": semicolon(os.environ["MODS_ACTIVE"]),
+            "disabled": lines(os.environ["MODS_DISABLED"]),
+            "installed": lines(os.environ["MODS_DISK"]),
+            "trackedWorkshopItems": lines(os.environ["MODS_TRACKED"]),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
+
+cli_mods_add_json() {
+  local raw="${1:-}" id wid out installed="" failed="" tmp
+  id="$(extract_ws_id "$raw")"
+  [[ "$id" =~ ^[0-9]{6,20}$ ]] || return 64
+  local -a workshop_ids=()
+  mapfile -t workshop_ids < <(resolve_ws_ids "$id")
+  [ "${#workshop_ids[@]}" -gt 0 ] || return 1
+  for wid in "${workshop_ids[@]}"; do
+    if out="$(install_workshop_item "$wid")"; then
+      while IFS= read -r mod_id; do
+        [ -n "$mod_id" ] && installed+="${mod_id}"$'\n'
+      done <<< "$out"
+    else
+      failed+="${wid}"$'\n'
+    fi
+  done
+  maps_append_missing >/dev/null 2>&1 || true
+  fix_owner "$PZ_MODS" "$PZ_INI"
+  MODS_WORKSHOP_IDS="$(printf '%s\n' "${workshop_ids[@]}")" \
+  MODS_INSTALLED="$installed" \
+  MODS_FAILED="$failed" \
+  python3 - <<'PY'
+import json
+import os
+
+
+def lines(value):
+    return [item for item in value.splitlines() if item]
+
+print(
+    json.dumps(
+        {
+            "workshopIds": lines(os.environ["MODS_WORKSHOP_IDS"]),
+            "installedModIds": lines(os.environ["MODS_INSTALLED"]),
+            "failedWorkshopIds": lines(os.environ["MODS_FAILED"]),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+  [ -n "$installed" ]
+}
+
+cli_mods_remove_json() {
+  local payload tmp id active removed="" missing="" found new_disabled
+  payload="$(cat)"
+  tmp="$(mktemp)"
+  if ! MODS_PAYLOAD="$payload" python3 - >"$tmp" <<'PY'
+import json
+import os
+import re
+
+try:
+    value = json.loads(os.environ["MODS_PAYLOAD"])
+    ids = value["modIds"]
+    if not isinstance(ids, list) or not ids or any(
+        not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", item) for item in ids
+    ):
+        raise ValueError
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(64)
+
+print("\n".join(dict.fromkeys(ids)))
+PY
+  then
+    rm -f "$tmp"
+    return 64
+  fi
+  mapfile -t mod_ids < "$tmp"
+  rm -f "$tmp"
+  active="$(mods_get)"
+  for id in "${mod_ids[@]}"; do
+    found=0
+    case ";$active;" in *";$id;"*)
+      found=1
+      active="$(printf '%s' "$active" | tr ';' '\n' | awk -v id="$id" '$0 != id' | paste -sd';' -)"
+      ;; esac
+    if [ -f "$PZ_DISABLED" ] && grep -qxF "$id" "$PZ_DISABLED"; then
+      found=1
+      new_disabled="$(awk -v id="$id" '$0 != id' "$PZ_DISABLED")"
+      printf '%s\n' "$new_disabled" > "$PZ_DISABLED.pztmp"
+      mv "$PZ_DISABLED.pztmp" "$PZ_DISABLED"
+    fi
+    if [ "$found" = 1 ]; then removed+="${id}"$'\n'; else missing+="${id}"$'\n'; fi
+  done
+  mods_set "$active"
+  manifest_prune
+  fix_owner "$PZ_MODS" "$PZ_INI" "$PZ_DISABLED"
+  MODS_REMOVED="$removed" MODS_MISSING="$missing" python3 - <<'PY'
+import json
+import os
+
+
+def lines(value):
+    return [item for item in value.splitlines() if item]
+
+print(json.dumps({"removed": lines(os.environ["MODS_REMOVED"]), "missing": lines(os.environ["MODS_MISSING"])}, separators=(",", ":")))
+PY
+}
+
+cli_settings_json() {
+  local payload tmp key encoded value updated=""
+  payload="$(cat)"
+  tmp="$(mktemp)"
+  if ! SETTINGS_PAYLOAD="$payload" python3 - >"$tmp" <<'PY'
+import base64
+import json
+import os
+
+value = json.loads(os.environ["SETTINGS_PAYLOAD"])
+if not isinstance(value, dict): raise SystemExit(64)
+allowed = {"public", "publicName", "password", "defaultPort", "udpPort"}
+if any(key not in allowed for key in value): raise SystemExit(64)
+for key, item in value.items():
+    if key == "public" and not isinstance(item, bool): raise SystemExit(64)
+    if key in {"publicName", "password"} and (not isinstance(item, str) or len(item) > 128): raise SystemExit(64)
+    if key in {"defaultPort", "udpPort"} and (not isinstance(item, int) or not 1024 <= item <= 65535): raise SystemExit(64)
+    if key == "public": item = "true" if item else "false"
+    encoded = base64.b64encode(str(item).encode()).decode()
+    print(f"{key}\t{encoded}")
+PY
+  then
+    rm -f "$tmp"
+    return 64
+  fi
+  while IFS=$'\t' read -r key encoded; do
+    [ -n "$key" ] || continue
+    value="$(printf '%s' "$encoded" | base64 -d)"
+    case "$key" in
+      public) ini_set Public "$value" ;;
+      publicName) ini_set PublicName "$value" ;;
+      password) ini_set Password "$value" ;;
+      defaultPort) ini_set DefaultPort "$value" ;;
+      udpPort) ini_set UDPPort "$value" ;;
+    esac
+    updated+="${key}"$'\n'
+  done < "$tmp"
+  rm -f "$tmp"
+  fix_owner "$PZ_INI"
+  SETTINGS_UPDATED="$updated" python3 - <<'PY'
+import json
+import os
+print(json.dumps({"updated": [item for item in os.environ["SETTINGS_UPDATED"].splitlines() if item]}, separators=(",", ":")))
+PY
+}
+
+cli_world_reset_json() {
+  local payload backup backup_path=""
+  payload="$(cat)"
+  backup="$(PAYLOAD="$payload" python3 - <<'PY'
+import json
+import os
+
+value = json.loads(os.environ["PAYLOAD"])
+if value.get("confirm") is not True: raise SystemExit(64)
+create_backup = value.get("createBackup", True)
+if not isinstance(create_backup, bool): raise SystemExit(64)
+print("1" if create_backup else "0")
+PY
+  )" || return 64
+  if [ "$backup" = 1 ]; then backup_path="$(backup_world "$PZ_BACKUPS" prereset)" || return 1; fi
+  sudo -n systemctl stop "$PZ_SERVICE" >/dev/null 2>&1 || return 1
+  rm -rf "$PZ_CACHEDIR/Saves/Multiplayer/${PZ_SERVERNAME}"* 2>/dev/null
+  rm -f "$PZ_CACHEDIR/db/${PZ_SERVERNAME}.db" 2>/dev/null
+  ini_set ResetID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
+  [ -n "$(ini_get ServerPlayerID)" ] || ini_set ServerPlayerID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
+  fix_owner "$PZ_INI"
+  RESET_BACKUP="$backup_path" python3 - <<'PY'
+import json
+import os
+print(json.dumps({"reset": True, "backupPath": os.environ["RESET_BACKUP"] or None}, separators=(",", ":")))
+PY
+}
+
 cli_start_json() {
   local rc=0
   PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY" >/dev/null 2>&1 || rc=$?
@@ -60,6 +266,7 @@ cli_logs_json() {
 cli_help() {
   cat <<'EOF'
 Usage: pzctl [status|start|stop|restart|backup|logs] [--json] [lines]
+       pzctl [mods-list|mods-add|mods-remove|settings|world-reset] --json [args]
        pzctl --version | --help
 
 The no-argument form opens the interactive control panel. The listed commands are
@@ -92,6 +299,26 @@ if [ "$#" -gt 0 ]; then
       fi
       exit $?
       ;;
+    mods-list)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_mods_list_json; exit $?
+      ;;
+    mods-add)
+      [ "$#" -eq 3 ] && [ "$2" = --json ] || exit 64
+      cli_mods_add_json "$3"; exit $?
+      ;;
+    mods-remove)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_mods_remove_json; exit $?
+      ;;
+    settings)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_settings_json; exit $?
+      ;;
+    world-reset)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_world_reset_json; exit $?
+      ;;
     --json)
       [ "$#" -ge 2 ] || {
         printf 'pzctl: --json requires an operation\n' >&2
@@ -101,6 +328,11 @@ if [ "$#" -gt 0 ]; then
         status) [ "$#" -eq 2 ] && status_json || exit 64 ;;
         start|stop|restart|backup) [ "$#" -eq 2 ] && "cli_${2}_json" || exit 64 ;;
         logs) [ "$#" -le 3 ] && cli_logs_json "${3:-50}" || exit 64 ;;
+        mods-list) [ "$#" -eq 2 ] && cli_mods_list_json || exit 64 ;;
+        mods-add) [ "$#" -eq 3 ] && cli_mods_add_json "$3" || exit 64 ;;
+        mods-remove) [ "$#" -eq 2 ] && cli_mods_remove_json || exit 64 ;;
+        settings) [ "$#" -eq 2 ] && cli_settings_json || exit 64 ;;
+        world-reset) [ "$#" -eq 2 ] && cli_world_reset_json || exit 64 ;;
         *) printf 'pzctl: unsupported JSON operation: %s\n' "$2" >&2; exit 64 ;;
       esac
       exit $?

@@ -316,7 +316,7 @@ pzctl status --json       non-interactive versioned status for the future host a
 pz-agent --stdio          local allowlisted agent boundary (status only)
 pz-agent --enroll          enroll this host with the private control plane
 pz-agent --poll            outbound heartbeat + allowlisted job worker (no VPS listener)
-pz-agent-priv              root-owned allowlist for start/stop/restart/logs/backup
+pz-agent-priv              root-owned allowlist for server/mod/settings/reset jobs
 templates/                JVM config, runtime launchers, systemd units (filled in at install)
 scripts/
   common.sh               shared library (env, status JSON, ini editing, workshop installs, manifest)

@@ -31,8 +31,8 @@ PORT=3000
 
 `HOST` is set to `0.0.0.0` by the image. The API's default status adapter is still fake in development; production reads the latest
 heartbeat stored by PostgreSQL. The host-side `pz-agent --stdio` and outbound `--poll` boundary
-supports status plus the first allowlisted start/stop/restart/logs/backup jobs. Mods, settings and
-world reset remain disabled until their dedicated adapters are tested.
+supports status plus allowlisted start/stop/restart/logs/backup/mods/settings/world-reset jobs.
+The mutating flows still require staging validation before production access is enabled.
 
 ## Safe rollout sequence
 

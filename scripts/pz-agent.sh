@@ -243,7 +243,7 @@ PY
         printf 'pz-agent: heartbeat failed; retrying\n' >&2
       fi
 
-      local job_response job_id job_kind job_payload completion result_status lines
+      local job_response job_id job_kind job_payload completion result_status lines workshop_id
       if job_response="$(curl -fsS --max-time 20 -X POST \
         -H "authorization: Bearer $access_token" \
         "$url/api/agents/$agent_id/jobs/claim" 2>/dev/null)"; then
@@ -289,8 +289,26 @@ PY
               )"
               if result_status="$(sudo -n "$PZ_AGENT_PRIV" logs "$lines" 2>/dev/null)"; then :; else result_status=""; fi
               ;;
-            backup)
-              if result_status="$("$PZCTL_BIN" backup --json 2>/dev/null)"; then :; else result_status=""; fi
+            mods.list)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" mods-list 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            mods.add)
+              workshop_id="$(PAYLOAD="$job_payload" python3 - <<'PY'
+import json
+import os
+print(json.loads(os.environ["PAYLOAD"]).get("workshopId", ""))
+PY
+              )"
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" mods-add "$workshop_id" 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            mods.remove)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-remove 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            settings.update)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" settings 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            world.reset)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" world-reset 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             *)
               result_status=""

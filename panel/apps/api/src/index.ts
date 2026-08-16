@@ -46,9 +46,20 @@ import {
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
 const version = process.env.npm_package_version ?? "0.1.0";
-// These operations are routed through the root-owned pz-agent-priv allowlist on the VPS. Mods,
-// settings and world reset remain disabled until their dedicated pzctl adapters are tested.
-const supportedOperationKinds = new Set(["status", "start", "stop", "restart", "logs", "backup"]);
+// These operations are routed through the root-owned pz-agent-priv allowlist on the VPS.
+const supportedOperationKinds = new Set([
+  "status",
+  "start",
+  "stop",
+  "restart",
+  "logs",
+  "backup",
+  "mods.list",
+  "mods.add",
+  "mods.remove",
+  "settings.update",
+  "world.reset",
+]);
 type DatabaseCheck = () => Promise<void>;
 type AppOptions = { serveFrontend?: boolean };
 
@@ -302,7 +313,12 @@ export function createApp(
             error: { code: "operation_disabled", message: "This operation is not enabled yet" },
           };
         }
-        const requiredRole = body.kind === "status" || body.kind === "logs" ? "viewer" : "operator";
+        const requiredRole =
+          body.kind === "status" || body.kind === "logs" || body.kind === "mods.list"
+            ? "viewer"
+            : body.kind === "world.reset"
+              ? "admin"
+              : "operator";
         if (!roleAtLeast(user.role, requiredRole)) {
           set.status = 403;
           return { error: { code: "forbidden", message: "Insufficient role for this operation" } };

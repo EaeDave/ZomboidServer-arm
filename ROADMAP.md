@@ -50,7 +50,8 @@ become a general-purpose shell or Docker host controller.
 - [x] Add agent enrollment, hashed access tokens and outbound heartbeat transport.
 - [x] Add the first queued `status` operation, agent claim/complete endpoints and audit events.
 - [x] Add role checks and the root-side allowlist for start/stop/restart/logs/backup jobs.
-- [ ] Add dedicated mods/settings/world-reset adapters and their staging tests.
+- [x] Add non-interactive mods/settings/world-reset adapters and payload validation.
+- [ ] Run the complete mutating-operation matrix against a real staging agent.
 
 ## Guardrails
 
@@ -66,4 +67,5 @@ become a general-purpose shell or Docker host controller.
 
 The first typed status slice is now covered by the contract package, Elysia endpoint, React status card, non-interactive pzctl JSON commands, PostgreSQL migrations/health
 check, cookie sessions, agent enrollment, outbound heartbeats and the first role-checked jobs.
-Next, add dedicated mods/settings/world-reset adapters and test the full flow against staging.
+Next, run the complete mutating-operation matrix against a real staging agent, then finish the
+Coolify release configuration and PR review checklist.
