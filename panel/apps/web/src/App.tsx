@@ -181,6 +181,12 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     refetchInterval: 15_000,
   });
   const canOperate = user?.role === "admin" || user?.role === "operator";
+  const canAdmin = user?.role === "admin";
+  const [workshopId, setWorkshopId] = useState("");
+  const [publicName, setPublicName] = useState("");
+  const [joinPassword, setJoinPassword] = useState("");
+  const [serverPublic, setServerPublic] = useState(true);
+  const [resetBackup, setResetBackup] = useState(true);
 
   return (
     <main className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
@@ -286,6 +292,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               ["stop", "Stop"],
               ["restart", "Restart"],
               ["backup", "Backup"],
+              ["logs", "Fetch logs"],
             ].map(([kind, label]) => {
               const isStatus = kind === "status";
               const disabled = operationMutation.isPending || (!isStatus && !canOperate);
@@ -321,6 +328,132 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               <span className="font-medium text-zinc-200">{lastOperation.data.kind}</span>{" "}
               <span className="text-emerald-300">{lastOperation.data.status}</span>
             </p>
+          ) : null}
+        </section>
+
+        <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+          <h2 className="text-lg font-medium">Server tools</h2>
+          <div className="mt-5 grid gap-5 md:grid-cols-3">
+            <form
+              className="space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                operationMutation.mutate({
+                  kind: "mods.add",
+                  payload: { workshopId },
+                } as OperationCreateRequest);
+              }}
+            >
+              <label className="block text-sm text-zinc-400" htmlFor="workshop-id">
+                Add Workshop mod
+              </label>
+              <input
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+                id="workshop-id"
+                inputMode="numeric"
+                pattern="[0-9]{6,20}"
+                placeholder="Workshop ID"
+                value={workshopId}
+                onChange={(event) => setWorkshopId(event.target.value)}
+              />
+              <button
+                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={
+                  !canOperate || !/^[0-9]{6,20}$/.test(workshopId) || operationMutation.isPending
+                }
+                type="submit"
+              >
+                Add mod
+              </button>
+            </form>
+
+            <div className="space-y-3">
+              <p className="text-sm text-zinc-400">Mods</p>
+              <button
+                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!user || operationMutation.isPending}
+                onClick={() => operationMutation.mutate({ kind: "mods.list", payload: {} })}
+                type="button"
+              >
+                Refresh mod list
+              </button>
+            </div>
+
+            <form
+              className="space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const payload = {
+                  public: serverPublic,
+                  ...(publicName ? { publicName } : {}),
+                  ...(joinPassword ? { password: joinPassword } : {}),
+                };
+                operationMutation.mutate({
+                  kind: "settings.update",
+                  payload,
+                } as OperationCreateRequest);
+              }}
+            >
+              <p className="text-sm text-zinc-400">Settings</p>
+              <input
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+                placeholder="Public name (optional)"
+                value={publicName}
+                onChange={(event) => setPublicName(event.target.value)}
+              />
+              <input
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+                placeholder="New join password (optional)"
+                type="password"
+                value={joinPassword}
+                onChange={(event) => setJoinPassword(event.target.value)}
+              />
+              <label className="flex items-center gap-2 text-sm text-zinc-400">
+                <input
+                  checked={serverPublic}
+                  onChange={(event) => setServerPublic(event.target.checked)}
+                  type="checkbox"
+                />
+                Public server
+              </label>
+              <button
+                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!canOperate || operationMutation.isPending}
+                type="submit"
+              >
+                Queue settings
+              </button>
+            </form>
+          </div>
+          <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-zinc-800 pt-5">
+            <label className="flex items-center gap-2 text-sm text-zinc-400">
+              <input
+                checked={resetBackup}
+                onChange={(event) => setResetBackup(event.target.checked)}
+                type="checkbox"
+              />
+              Backup before reset
+            </label>
+            <button
+              className="rounded-xl border border-rose-500/50 px-3 py-2 text-sm text-rose-300 hover:border-rose-400 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!canAdmin || operationMutation.isPending}
+              onClick={() => {
+                if (!window.confirm("This deletes the production world and player data. Continue?"))
+                  return;
+                operationMutation.mutate({
+                  kind: "world.reset",
+                  payload: { confirm: true, createBackup: resetBackup },
+                } as OperationCreateRequest);
+              }}
+              type="button"
+            >
+              Queue world reset
+            </button>
+          </div>
+          {lastOperation.isSuccess && lastOperation.data.result !== undefined ? (
+            <pre className="mt-5 overflow-x-auto rounded-xl bg-black/30 p-4 text-xs text-zinc-400">
+              {JSON.stringify(lastOperation.data.result, null, 2)}
+            </pre>
           ) : null}
         </section>
 

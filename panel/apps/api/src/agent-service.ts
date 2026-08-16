@@ -81,8 +81,9 @@ function operationRecord(row: {
   startedAt: Date | null;
   finishedAt: Date | null;
   error: string | null;
+  result?: unknown;
 }): OperationRecord {
-  return {
+  const record: OperationRecord = {
     operationId: row.operationId,
     serverId: row.serverId,
     kind: row.kind as OperationRecord["kind"],
@@ -92,6 +93,8 @@ function operationRecord(row: {
     finishedAt: dateString(row.finishedAt),
     error: row.error,
   };
+  if ("result" in row) record.result = row.result;
+  return record;
 }
 
 function operationRequest(
@@ -259,6 +262,7 @@ export class DatabaseAgentService implements AgentService {
         startedAt: operations.startedAt,
         finishedAt: operations.finishedAt,
         error: operations.error,
+        result: operations.result,
       })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))

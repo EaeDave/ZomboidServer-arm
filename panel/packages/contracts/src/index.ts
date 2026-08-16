@@ -405,6 +405,7 @@ export const operationRecordSchema = Type.Object({
   startedAt: Type.Union([Type.String(), Type.Null()]),
   finishedAt: Type.Union([Type.String(), Type.Null()]),
   error: Type.Union([Type.String(), Type.Null()]),
+  result: Type.Optional(Type.Unknown()),
 });
 
 export type OperationRecord = Static<typeof operationRecordSchema>;

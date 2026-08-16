@@ -267,6 +267,28 @@ describe("control-plane API", () => {
     );
     expect(finished.status).toBe(200);
     expect(completed).toBe(true);
+
+    const viewerAuth: AuthService = {
+      async login() {
+        return null;
+      },
+      async currentUser() {
+        return { id: "viewer-1", email: "viewer@example.com", role: "viewer" };
+      },
+      async logout() {},
+    };
+    const viewerApp = createApp(undefined, undefined, viewerAuth, agentService);
+    const forbidden = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "backup", payload: {} }),
+      }),
+    );
+    expect(forbidden.status).toBe(403);
   });
 
   it("protects sessions with an HttpOnly cookie", async () => {

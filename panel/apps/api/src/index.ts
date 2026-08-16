@@ -47,6 +47,7 @@ import {
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
 const version = process.env.npm_package_version ?? "0.1.0";
+const webDist = `${import.meta.dir}/../../web/dist`;
 // These operations are routed through the root-owned pz-agent-priv allowlist on the VPS.
 const supportedOperationKinds = new Set([
   "status",
@@ -63,6 +64,12 @@ const supportedOperationKinds = new Set([
 ]);
 type DatabaseCheck = () => Promise<void>;
 type AppOptions = { serveFrontend?: boolean };
+
+const corsOrigin =
+  process.env.PUBLIC_URL ??
+  (process.env.NODE_ENV === "development"
+    ? ["http://127.0.0.1:5173", "http://localhost:5173"]
+    : false);
 
 function createDefaultAgentAdapter(): AgentAdapter {
   return process.env.NODE_ENV === "production"
@@ -84,7 +91,7 @@ export function createApp(
   options: AppOptions = {},
 ) {
   const app = new Elysia({ name: "zomboid-control-plane" })
-    .use(cors())
+    .use(cors({ origin: corsOrigin, credentials: true }))
     .use(
       swagger({
         path: "/docs",
@@ -587,8 +594,8 @@ export function createApp(
     );
 
   if (options.serveFrontend ?? process.env.NODE_ENV === "production") {
-    app.get("/", () => Bun.file("apps/web/dist/index.html"));
-    app.use(staticPlugin({ assets: "apps/web/dist", prefix: "/", indexHTML: true }));
+    app.get("/", () => Bun.file(`${webDist}/index.html`));
+    app.use(staticPlugin({ assets: webDist, prefix: "/", indexHTML: true }));
   }
 
   return app;
