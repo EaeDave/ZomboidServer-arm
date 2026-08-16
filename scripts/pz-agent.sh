@@ -262,7 +262,7 @@ post_completion() {
 agent_state_dir() {
   local relative="${PZ_AGENT_STATE_DIR:-agent-state}"
   case "$relative" in
-    ''|/*|*..*|*[!A-Za-z0-9._/-]*)
+    ''|.|./|./[./]*|/*|*..*|*[!A-Za-z0-9._/-]*)
       printf 'pz-agent: PZ_AGENT_STATE_DIR must be a safe relative path under PZ_CACHEDIR\n' >&2
       return 64
       ;;
