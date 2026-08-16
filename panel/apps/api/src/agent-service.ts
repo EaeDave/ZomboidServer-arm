@@ -184,13 +184,17 @@ export class DatabaseAgentService implements AgentService {
 
   async getStatus(serverId: string): Promise<AgentStatus> {
     const [row] = await this.getDatabase()
-      .select({ lastStatus: agents.lastStatus })
+      .select({ lastStatus: agents.lastStatus, lastSeenAt: agents.lastSeenAt })
       .from(serverInstances)
       .innerJoin(agents, eq(serverInstances.agentId, agents.id))
       .where(eq(serverInstances.serviceName, serverId))
       .limit(1);
 
-    if (!row?.lastStatus) throw new AgentUnavailableError();
+    const staleSeconds = Number(process.env.AGENT_STALE_SECONDS ?? 60);
+    const lastSeen = row?.lastSeenAt?.getTime() ?? 0;
+    if (!row?.lastStatus || !lastSeen || Date.now() - lastSeen > staleSeconds * 1000) {
+      throw new AgentUnavailableError();
+    }
     return row.lastStatus as AgentStatus;
   }
 

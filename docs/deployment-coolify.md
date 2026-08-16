@@ -26,6 +26,7 @@ DATABASE_URL=postgresql://...
 SESSION_SECRET=<long-random-value>
 PUBLIC_URL=https://panel.example.com
 AGENT_ENROLLMENT_TOKEN=<one-time-or-rotated-enrollment-value>
+AGENT_STALE_SECONDS=60
 PORT=3000
 ```
 
