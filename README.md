@@ -56,6 +56,22 @@ For a custom `PZ_PORT`, open `PZ_PORT` and `PZ_PORT+1` in both layers. Steam Rel
 recommended behind Oracle cloud NAT, but it does not replace the two firewall rules in the
 tested setup.
 
+### Steam Relay readiness telemetry
+
+Steam Relay is a client-side connection requirement for the tested Oracle/cloud-NAT deployment;
+players should still enable **Use Steam Relay** as described below. `PZ_STEAM_SESSION_CHECK` is
+separate: it is host-side diagnostic telemetry after Project Zomboid is already listening.
+
+| Value | Behaviour |
+|---|---|
+| `observe` (default) | Takes one passive `tcpdump` sample for Valve-range traffic and records the result. Absence of traffic is shown as inconclusive and **never restarts** an otherwise ready server. |
+| `required` | Opt-in legacy-strict behaviour. A missing passive sample makes the boot helper retry. Use only when that signal has been proven reliable for the specific network. |
+| `disabled` | Does not take a packet sample. Steam remains enabled in Project Zomboid. |
+
+The old `PZ_REQUIRE_STEAM=1` maps to `required`, `0` maps to `disabled`, and its former `auto`
+default maps to `observe` during an installer upgrade. Packet capture is supporting evidence, not
+an end-to-end Relay test; only a real Steam client connection proves Relay reachability.
+
 Manual local recovery, if the installer firewall step was skipped:
 
 ```bash

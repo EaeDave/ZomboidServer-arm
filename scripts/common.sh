@@ -42,10 +42,23 @@ pz_load_env() {
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
   PZ_BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
-  PZ_REQUIRE_STEAM="${PZ_REQUIRE_STEAM:-auto}"
+  # Steam Relay is a client connectivity requirement on Oracle/cloud NAT.  This setting only
+  # controls *local telemetry* collected after the game is ready; it never changes Steam in PZ.
+  # Map the old, undocumented PZ_REQUIRE_STEAM setting once so existing explicit strict installs
+  # retain their intent, while the old auto default becomes the safe non-blocking observe mode.
+  if [ -z "${PZ_STEAM_SESSION_CHECK:-}" ]; then
+    case "${PZ_REQUIRE_STEAM:-auto}" in
+      1|required) PZ_STEAM_SESSION_CHECK=required ;;
+      0|disabled) PZ_STEAM_SESSION_CHECK=disabled ;;
+      *) PZ_STEAM_SESSION_CHECK=observe ;;
+    esac
+  fi
+  case "$PZ_STEAM_SESSION_CHECK" in observe|required|disabled) ;; *) PZ_STEAM_SESSION_CHECK=observe ;; esac
+  PZ_STEAM_SESSION_STATUS="${PZ_STEAM_SESSION_STATUS:-$PZ_CACHEDIR/pz-steam-session.json}"
   # keys that identify THIS host/world; import must never take these from a foreign ini
   PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
-  export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME PZ_REQUIRE_STEAM
+  export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME PZ_STEAM_SESSION_CHECK \
+    PZ_STEAM_SESSION_STATUS
 }
 
 # ------------------------------------------------------------ small utils
@@ -127,6 +140,8 @@ status_json() {
   STATUS_UPTIME="$uptime_seconds" \
   STATUS_PLAYERS="$players" \
   STATUS_CHECKED_AT="$checked_at" \
+  STATUS_STEAM_CHECK="$PZ_STEAM_SESSION_CHECK" \
+  STATUS_STEAM_FILE="$PZ_STEAM_SESSION_STATUS" \
   python3 - <<'PY'
 import json
 import os
@@ -137,6 +152,37 @@ def nullable(value):
 
 
 uptime = nullable(os.environ["STATUS_UPTIME"])
+
+
+def steam_session():
+    default = {
+        "mode": os.environ["STATUS_STEAM_CHECK"],
+        "evidence": "not_checked",
+        "checkedAt": None,
+        "message": "Relay telemetry has not run since this boot.",
+    }
+    try:
+        with open(os.environ["STATUS_STEAM_FILE"], encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return default
+    if not isinstance(value, dict):
+        return default
+    mode = value.get("mode")
+    evidence = value.get("evidence")
+    checked_at = value.get("checkedAt")
+    message = value.get("message")
+    if mode not in {"observe", "required", "disabled"}:
+        return default
+    if evidence not in {"observed", "not_observed", "not_checked"}:
+        return default
+    if checked_at is not None and not isinstance(checked_at, str):
+        return default
+    if message is not None and not isinstance(message, str):
+        return default
+    return {"mode": mode, "evidence": evidence, "checkedAt": checked_at, "message": message}
+
+
 print(
     json.dumps(
         {
@@ -151,6 +197,7 @@ print(
             "uptimeSeconds": int(uptime) if uptime is not None else None,
             "playerCount": int(os.environ["STATUS_PLAYERS"]),
             "checkedAt": os.environ["STATUS_CHECKED_AT"],
+            "steamSession": steam_session(),
         },
         separators=(",", ":"),
     )

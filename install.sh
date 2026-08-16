@@ -181,7 +181,8 @@ say "Branch: $(b "$BRANCH")"
 step "Installing dependencies"
 # No system Java needed (the server bundles its own x86 jre64, run via the selected runtime).
 # No box86 / armhf libs needed (we use DepotDownloader, not 32-bit steamcmd).
-# tcpdump powers pz-boot-retry's Steam-session health gate (relay players need a live session)
+# tcpdump provides optional Steam Relay telemetry after a successful boot. It is never a
+# prerequisite for a listening server unless an operator explicitly selects strict mode.
 apt-get install -y -qq ciopfs fuse3 wget curl unzip jq gnupg ca-certificates python3 tcpdump >/dev/null || \
   apt-get install -y -qq ciopfs fuse wget curl unzip jq gnupg ca-certificates python3 tcpdump >/dev/null
 # allow_other for the ciopfs FUSE mount
@@ -344,11 +345,23 @@ if [ -n "$SFX" ]; then
   sed -i "s|/usr/local/lib/zomboid-arm/common.sh|$LIBDIR/common.sh|g; s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/usr/local/sbin/pz-agent-priv|$BIN_AGENT_PRIV|g" "$BIN_AGENT"
   sed -i "s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_AGENT_PRIV"
 fi
-# let pzctl & friends know the environment on this host
-if [ -z "${PZ_REQUIRE_STEAM+x}" ] && [ -f "$ENVFILE" ]; then
-  PZ_REQUIRE_STEAM="$(grep -m1 '^PZ_REQUIRE_STEAM=' "$ENVFILE" | cut -d= -f2- || true)"
+# Preserve the explicit Relay telemetry mode on upgrades. Older installations used the
+# undocumented PZ_REQUIRE_STEAM setting; migrate explicit 1/0 values once and map old auto to
+# the safe, non-blocking observe default.
+if [ -z "${PZ_STEAM_SESSION_CHECK+x}" ] && [ -f "$ENVFILE" ]; then
+  PZ_STEAM_SESSION_CHECK="$(grep -m1 '^PZ_STEAM_SESSION_CHECK=' "$ENVFILE" | cut -d= -f2- || true)"
 fi
-PZ_REQUIRE_STEAM="${PZ_REQUIRE_STEAM:-auto}"
+if [ -z "${PZ_STEAM_SESSION_CHECK:-}" ]; then
+  if [ -z "${PZ_REQUIRE_STEAM+x}" ] && [ -f "$ENVFILE" ]; then
+    PZ_REQUIRE_STEAM="$(grep -m1 '^PZ_REQUIRE_STEAM=' "$ENVFILE" | cut -d= -f2- || true)"
+  fi
+  case "${PZ_REQUIRE_STEAM:-auto}" in
+    1|required) PZ_STEAM_SESSION_CHECK=required ;;
+    0|disabled) PZ_STEAM_SESSION_CHECK=disabled ;;
+    *) PZ_STEAM_SESSION_CHECK=observe ;;
+  esac
+fi
+case "$PZ_STEAM_SESSION_CHECK" in observe|required|disabled) ;; *) PZ_STEAM_SESSION_CHECK=observe ;; esac
 cat > "$ENVFILE" <<EOF
 PZ_SERVICE=$SVC
 PZ_USER=$TARGET_USER
@@ -384,7 +397,7 @@ PZ_AGENT_ENVFILE=$AGENT_ENVFILE
 PZ_CONF=$CACHEDIR/pzctl.conf
 PZ_UPDATELOG=$CACHEDIR/mod-updates.log
 PZ_BACKUPS=$BACKUPS
-PZ_REQUIRE_STEAM=${PZ_REQUIRE_STEAM:-auto}
+PZ_STEAM_SESSION_CHECK=$PZ_STEAM_SESSION_CHECK
 EOF
 chown "$TARGET_USER":"$TARGET_USER" "$ENVFILE"
 chmod 600 "$ENVFILE"
