@@ -386,6 +386,38 @@ describe("control-plane API", () => {
     expect(logoutResponse.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
+  it("does not trust forwarded login IP headers", async () => {
+    let observedClientIp: string | undefined = "unset";
+    const auth: AuthService = {
+      async login(_email, _password, context) {
+        observedClientIp = context?.clientIp;
+        return {
+          token: "session-token",
+          expiresAt: "2026-08-22T00:00:00.000Z",
+          user: { id: "user-1", email: "admin@example.com", role: "admin" },
+        };
+      },
+      async currentUser() {
+        return null;
+      },
+      async logout() {},
+    };
+    const loginApp = createApp(undefined, undefined, auth);
+    const response = await loginApp.handle(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "198.51.100.10",
+        },
+        body: JSON.stringify({ email: "admin@example.com", password: "password" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(observedClientIp).toBeUndefined();
+  });
+
   it("requires a session and audits production status reads", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";

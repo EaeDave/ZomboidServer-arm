@@ -544,7 +544,7 @@ export default function App() {
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: () => {
-      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "auth" });
+      queryClient.clear();
       queryClient.setQueryData(["auth", "me"], null);
     },
   });

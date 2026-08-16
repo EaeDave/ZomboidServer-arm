@@ -261,7 +261,7 @@ post_completion() {
 
 poll_agent() {
   local url="${PZ_AGENT_URL:-}" agent_id="${PZ_AGENT_ID:-}" access_token="${PZ_AGENT_ACCESS_TOKEN:-}"
-  local interval="${PZ_AGENT_INTERVAL:-15}" status payload
+  local interval="${PZ_AGENT_INTERVAL:-15}" status payload completion_rc fallback_completion
   local pending_job_id="" pending_completion=""
   [ -n "$url" ] || { printf 'pz-agent: PZ_AGENT_URL is required\n' >&2; return 64; }
   [ -n "$agent_id" ] || { printf 'pz-agent: PZ_AGENT_ID is required\n' >&2; return 64; }
@@ -289,9 +289,7 @@ poll_agent() {
         else
           completion_rc=$?
           [ "$completion_rc" -eq 2 ] && return 1
-          printf 'pz-agent: pending completion rejected; dropping local retry\n' >&2
-          pending_job_id=""
-          pending_completion=""
+          printf 'pz-agent: pending completion rejected; retaining retry\n' >&2
         fi
       fi
     fi
@@ -312,8 +310,7 @@ PY
         printf 'pz-agent: heartbeat failed; retrying\n' >&2
       fi
 
-      local job_response job_id job_kind job_payload completion result_status lines workshop_id keep completion_rc
-      local fallback_completion
+      local job_response job_id job_kind job_payload completion result_status lines workshop_id keep
       local -a job_fields=()
       if [ -z "$pending_job_id" ] && job_response="$(curl -fsS --max-time 20 -X POST \
         -H "authorization: Bearer $access_token" \

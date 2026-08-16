@@ -90,6 +90,12 @@ PZ_BRANCH       preseed branch (skips the prompt)
 PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB    preseed the other prompts (non-interactive installs)
 ```
 
+The PZ launcher only accepts the initial admin password through `-adminpassword`. The generated
+launcher uses the protected env file for the first bootstrap, watches for PZ's successful password
+change log line, and writes `$PZ_ADMIN_MARKER`; later starts omit the password argument. World reset
+removes the marker. Remove the marker manually after restoring an account database so the next boot
+re-applies the configured bootstrap password.
+
 Non-default `PZ_SVC` suffixes every installed artifact (units, env file, pzctl, sbin scripts,
 lib dir) so a test install coexists with production without overwriting production's scripts.
 Unit names derive from `PZ_SVC`: `<svc>.service`, `<svc>-ciopfs.service`, `<svc>-watchdog.*`,

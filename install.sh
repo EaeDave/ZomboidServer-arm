@@ -302,6 +302,7 @@ render() { sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__INSTALL_DIR__|$(e
                -e "s|__SVC__|$(esc "$SVC")|g" -e "s|__PORT__|$PORT|g" \
                -e "s|__CONSOLE__|$(esc "$CACHEDIR/server-console.txt")|g" \
                -e "s|__CACHEDIR__|$(esc "$CACHEDIR")|g" \
+               -e "s|__ADMIN_MARKER__|$(esc "$CACHEDIR/.admin-bootstrap-complete")|g" \
                -e "s|__SERVERNAME__|$SERVERNAME|g" -e "s|__EXTRA_ARGS__|$(esc "$EXTRA_ARGS")|g" \
                -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" -e "s|__MODUPDATE__|$(esc "$BIN_MODUPDATE")|g" \
                -e "s|__WATCHDOG__|$(esc "$BIN_WATCHDOG")|g" -e "s|__LIBDIR__|$(esc "$LIBDIR")|g" \
@@ -347,6 +348,7 @@ PZ_SERVICE=$SVC
 PZ_USER=$TARGET_USER
 PZ_INSTALL=$INSTALL_DIR
 PZ_CACHEDIR=$CACHEDIR
+PZ_ADMIN_MARKER=$CACHEDIR/.admin-bootstrap-complete
 PZ_CONSOLE=$CACHEDIR/server-console.txt
 PZ_INI=$CACHEDIR/Server/$SERVERNAME.ini
 PZ_MODS=$CACHEDIR/mods

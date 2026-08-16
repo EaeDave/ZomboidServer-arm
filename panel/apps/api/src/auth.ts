@@ -97,13 +97,16 @@ export function serializeClearedSessionCookie(): string {
 }
 
 const DUMMY_PASSWORD_HASH = Bun.password.hash("zomboid-control-plane-dummy-password");
-const LOGIN_FAILURE_LIMIT = 5;
+const LOGIN_IP_FAILURE_LIMIT = 5;
+const LOGIN_ACCOUNT_FAILURE_LIMIT = 20;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const LOGIN_ATTEMPT_MAX_ENTRIES = 10_000;
 
 type LoginAttempt = { failures: number; lockedUntil: number; lastFailureAt: number };
 
 export class DatabaseAuthService implements AuthService {
-  private readonly loginAttempts = new Map<string, LoginAttempt>();
+  private readonly accountAttempts = new Map<string, LoginAttempt>();
+  private readonly clientAttempts = new Map<string, LoginAttempt>();
   private lastSessionPrune = 0;
 
   constructor(
@@ -118,35 +121,46 @@ export class DatabaseAuthService implements AuthService {
     this.lastSessionPrune = now.getTime();
   }
 
-  private pruneLoginAttempts(now: number): void {
-    for (const [email, attempt] of this.loginAttempts) {
-      if (now - attempt.lastFailureAt > LOGIN_LOCKOUT_MS) this.loginAttempts.delete(email);
+  private pruneLoginAttempts(attempts: Map<string, LoginAttempt>, now: number): void {
+    for (const [key, attempt] of attempts) {
+      if (now - attempt.lastFailureAt > LOGIN_LOCKOUT_MS) attempts.delete(key);
     }
-    if (this.loginAttempts.size <= 10_000) return;
-    const oldest = [...this.loginAttempts.entries()]
+    if (attempts.size <= LOGIN_ATTEMPT_MAX_ENTRIES) return;
+    const oldest = [...attempts.entries()]
       .sort(([, left], [, right]) => left.lastFailureAt - right.lastFailureAt)
-      .slice(0, this.loginAttempts.size - 10_000);
-    for (const [email] of oldest) this.loginAttempts.delete(email);
+      .slice(0, attempts.size - LOGIN_ATTEMPT_MAX_ENTRIES);
+    for (const [key] of oldest) attempts.delete(key);
   }
 
-  private checkLoginRateLimit(email: string): void {
+  private checkLoginRateLimit(email: string, clientIp?: string): void {
     const now = this.now().getTime();
-    this.pruneLoginAttempts(now);
-    const attempt = this.loginAttempts.get(email);
-    if (attempt && attempt.lockedUntil > now) throw new AuthRateLimitError();
+    this.pruneLoginAttempts(this.accountAttempts, now);
+    this.pruneLoginAttempts(this.clientAttempts, now);
+    const accountAttempt = this.accountAttempts.get(email);
+    const clientAttempt = clientIp ? this.clientAttempts.get(clientIp) : undefined;
+    if (
+      (accountAttempt && accountAttempt.lockedUntil > now) ||
+      (clientAttempt && clientAttempt.lockedUntil > now)
+    ) {
+      throw new AuthRateLimitError();
+    }
   }
 
-  private recordLoginFailure(email: string): void {
+  private recordLoginFailure(email: string, clientIp?: string): void {
     const now = this.now().getTime();
-    const current = this.loginAttempts.get(email) ?? {
-      failures: 0,
-      lockedUntil: 0,
-      lastFailureAt: now,
+    const record = (attempts: Map<string, LoginAttempt>, key: string, limit: number): void => {
+      const current = attempts.get(key) ?? {
+        failures: 0,
+        lockedUntil: 0,
+        lastFailureAt: now,
+      };
+      current.failures += 1;
+      current.lastFailureAt = now;
+      if (current.failures >= limit) current.lockedUntil = now + LOGIN_LOCKOUT_MS;
+      attempts.set(key, current);
     };
-    current.failures += 1;
-    current.lastFailureAt = now;
-    if (current.failures >= LOGIN_FAILURE_LIMIT) current.lockedUntil = now + LOGIN_LOCKOUT_MS;
-    this.loginAttempts.set(email, current);
+    record(this.accountAttempts, email, LOGIN_ACCOUNT_FAILURE_LIMIT);
+    if (clientIp) record(this.clientAttempts, clientIp, LOGIN_IP_FAILURE_LIMIT);
   }
 
   async login(
@@ -155,8 +169,8 @@ export class DatabaseAuthService implements AuthService {
     context?: { clientIp?: string },
   ): Promise<AuthSession | null> {
     const normalizedEmail = normalizeEmail(email);
-    const rateKey = `${normalizedEmail}:${context?.clientIp ?? "unknown"}`;
-    this.checkLoginRateLimit(rateKey);
+    const clientIp = context?.clientIp;
+    this.checkLoginRateLimit(normalizedEmail, clientIp);
     const database = this.getDatabase();
     await this.pruneExpiredSessions(database);
     const [user] = await database
@@ -178,10 +192,10 @@ export class DatabaseAuthService implements AuthService {
       passwordValid = false;
     }
     if (!user || !passwordValid) {
-      this.recordLoginFailure(rateKey);
+      this.recordLoginFailure(normalizedEmail, clientIp);
       return null;
     }
-    this.loginAttempts.delete(rateKey);
+    this.accountAttempts.delete(normalizedEmail);
 
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(this.now().getTime() + SESSION_TTL_SECONDS * 1000);
