@@ -9,7 +9,7 @@ import type {
 } from "@zomboid/contracts";
 import { useEffect, useState } from "react";
 
-const SERVER_ID = "zomboid-b42";
+const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
 
 class ApiError extends Error {
   constructor(

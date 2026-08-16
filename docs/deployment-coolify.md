@@ -42,7 +42,8 @@ mutating flows still require staging validation before production access is enab
 
 1. Push the tested commit to the selected GitHub branch.
 2. In Coolify, create/configure the application with the repository root as the build context and
-   `panel/Dockerfile` as the Dockerfile.
+   `panel/Dockerfile` as the Dockerfile. Set the Docker build arg `VITE_SERVER_ID` to the
+   matching host service name (`zomboid-b42-staging` for staging, `zomboid-b42` for production).
 3. Provision PostgreSQL separately and attach its persistent volume/backups.
 4. Add the environment secrets above; do not upload server passwords, saves, FEX RootFS files or
    SSH private keys to the image.

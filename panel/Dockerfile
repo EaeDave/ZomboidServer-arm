@@ -10,6 +10,8 @@ COPY panel/packages ./packages
 RUN bun install --frozen-lockfile
 RUN bun run check
 RUN bun test
+ARG VITE_SERVER_ID=zomboid-b42
+ENV VITE_SERVER_ID=$VITE_SERVER_ID
 RUN bun run build
 
 FROM oven/bun:canary@sha256:c5a71eb0366bcc940e0542afe613e63badab21d000c31dda58f5ce52aeddf0ad
