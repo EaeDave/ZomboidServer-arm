@@ -33,6 +33,12 @@ steam_status() {
   mkdir -p "$(dirname "$STEAM_STATUS")"
   tmp="$(mktemp "${STEAM_STATUS}.tmp.XXXXXX")" || return 1
   active_since="$(sudo systemctl show "$SVC" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  # Without an activation timestamp this record cannot be safely tied to a boot. Do not retain
+  # an older record and accidentally show its evidence as current.
+  if [ -z "$active_since" ]; then
+    rm -f "$tmp" "$STEAM_STATUS"
+    return 1
+  fi
   STEAM_MODE="$STEAM_CHECK" STEAM_EVIDENCE="$evidence" STEAM_MESSAGE="$message" \
     STEAM_ACTIVE_SINCE="$active_since" python3 - >"$tmp" <<'PY'
 import json
@@ -79,6 +85,9 @@ steam_evidence() {
   steam_status not_observed "No Valve-range traffic was observed during the passive sample; this does not prove Relay is unavailable."
   return 1
 }
+
+# A previous service activation's Relay sample is never valid for this boot.
+rm -f "$STEAM_STATUS"
 
 for attempt in $(seq 1 6); do
   echo "=== ATTEMPT $attempt $(date -u +%H:%M:%S) ==="
