@@ -259,10 +259,21 @@ post_completion() {
   return 1
 }
 
+agent_state_dir() {
+  local relative="${PZ_AGENT_STATE_DIR:-agent-state}"
+  case "$relative" in
+    ''|/*|*..*|*[!A-Za-z0-9._/-]*)
+      printf 'pz-agent: PZ_AGENT_STATE_DIR must be a safe relative path under PZ_CACHEDIR\n' >&2
+      return 64
+      ;;
+  esac
+  printf '%s/%s\n' "$PZ_CACHEDIR" "$relative"
+}
+
 dead_letter_completion() {
   local operation_id="$1" body="$2"
-  local state_dir="${PZ_AGENT_STATE_DIR:-${PZ_CACHEDIR:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/zomboid-agent}/agent-state}"
-  local tmp
+  local state_dir tmp
+  state_dir="$(agent_state_dir)" || return $?
   case "$operation_id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   mkdir -p "$state_dir" || return 1
   chmod 700 "$state_dir" || return 1
@@ -277,8 +288,8 @@ dead_letter_completion() {
 
 retry_dead_letters() {
   local url="$1" agent_id="$2" token="$3"
-  local state_dir="${PZ_AGENT_STATE_DIR:-${PZ_CACHEDIR:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/zomboid-agent}/agent-state}"
-  local file operation_id body rc
+  local state_dir file operation_id body rc
+  state_dir="$(agent_state_dir)" || return $?
   [ -d "$state_dir" ] || return 0
   shopt -s nullglob
   local -a files=("$state_dir"/*.json)
@@ -311,6 +322,7 @@ poll_agent() {
     printf 'pz-agent: PZ_AGENT_PENDING_COMPLETION_RETRIES must be at least 1\n' >&2
     return 64
   }
+  agent_state_dir >/dev/null || return $?
   url="${url%/}"
   require_secure_url "$url" || return $?
 

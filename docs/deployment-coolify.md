@@ -64,8 +64,8 @@ mutating flows still require staging validation before production access is enab
    PZ_AGENT_ACCESS_TOKEN=<returned-access-token>
    PZ_AGENT_INTERVAL=15
    PZ_AGENT_PENDING_COMPLETION_RETRIES=3
-   # Optional durable dead-letter location; default is the agent user's state directory.
-   PZ_AGENT_STATE_DIR=/home/ubuntu/.local/state/zomboid-agent
+   # Optional durable dead-letter subdirectory under PZ_CACHEDIR (systemd permits this path).
+   PZ_AGENT_STATE_DIR=agent-state
    ```
 
    Rerun the host installer with `PZ_AGENT_ENABLE=1` after configuring this file; that validated
