@@ -313,6 +313,40 @@ active_job_file() {
   printf '%s/active-job\n' "$state_dir"
 }
 
+proc_start_time() {
+  local pid="$1"
+  [ -r "/proc/$pid/stat" ] || return 1
+  awk '{print $22}' "/proc/$pid/stat" 2>/dev/null
+}
+
+worker_alive() {
+  local pid="$1" expected_start state current_start
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$pid" -gt 0 ] 2>/dev/null || return 1
+  expected_start="$2"
+  [ -n "$expected_start" ] || return 1
+  current_start="$(proc_start_time "$pid")" || return 1
+  [ "$current_start" = "$expected_start" ] || return 1
+  state="$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)"
+  [ "$state" != Z ]
+}
+
+reconcile_dead_worker() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" active_file="$5" body rc
+  body='{"status":"failed","error":"host agent worker exited before reporting completion"}'
+  if post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$body"; then
+    rm -f "$active_file"
+    return 0
+  fi
+  rc=$?
+  if dead_letter_completion "$operation_id" "$body"; then
+    rm -f "$active_file"
+    [ "$rc" -eq 2 ] && return 2
+    return 0
+  fi
+  return 1
+}
+
 post_progress() {
   local url="$1" agent_id="$2" token="$3" operation_id="$4" message="$5"
   local body
@@ -467,10 +501,26 @@ run_long_job() {
   mkdir -p "$state_dir" || return 1
   result_file="$state_dir/.${operation_id}.result.$$"
   (
-    local result completion command_pid command_rc position log_inode log_file_cursor log_event_cursor
-    local log_flush=0
-    log_event_cursor=0
+    local result completion command_pid command_rc worker_pid worker_start
+    local log_inode log_file_cursor log_event_cursor log_flush=0 final_attempts
+    worker_pid="$BASHPID"
+    worker_start="$(proc_start_time "$worker_pid")"
+    if [ -z "$worker_start" ]; then
+      completion='{"status":"failed","error":"host agent worker could not be identified"}'
+      post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" ||
+        dead_letter_completion "$operation_id" "$completion" || true
+      exit 1
+    fi
+    if ! printf '%s %s %s\n' "$operation_id" "$worker_pid" "$worker_start" >"$active_file.tmp.$$" ||
+      ! mv -f "$active_file.tmp.$$" "$active_file"; then
+      rm -f "$active_file.tmp.$$"
+      completion='{"status":"failed","error":"host agent could not persist its worker lease"}'
+      post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" ||
+        dead_letter_completion "$operation_id" "$completion" || true
+      exit 1
+    fi
     read -r log_inode log_file_cursor < <(read_console_position)
+    log_event_cursor=0
     : >"$result_file" || exit 1
 
     sudo -n "$PZ_AGENT_PRIV" "$kind" >"$result_file" 2>&1 &
@@ -487,13 +537,19 @@ run_long_job() {
     wait "$command_pid"
     command_rc="$?"
 
-    # Flush a final unterminated line after the command exits.
+    # Retry the final flush so a transient API/network failure does not drop the tail.
     log_flush=1
-    if send_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
-      log_file_cursor="$LOG_NEXT_CURSOR"
-      log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
-      log_inode="$LOG_NEXT_INODE"
-    fi
+    final_attempts=0
+    while [ "$final_attempts" -lt 5 ]; do
+      if send_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
+        log_file_cursor="$LOG_NEXT_CURSOR"
+        log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
+        log_inode="$LOG_NEXT_INODE"
+        break
+      fi
+      final_attempts=$((final_attempts + 1))
+      [ "$final_attempts" -ge 5 ] || sleep 1
+    done
 
     result="$(cat "$result_file" 2>/dev/null || true)"
     if [ "$command_rc" -eq 0 ] && completion="$(RESULT="$result" python3 - <<'PY'
@@ -514,11 +570,10 @@ print(json.dumps({"status": "failed", "error": f"host operation {os.environ['KIN
 PY
       )"
     fi
-    post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" || \
+    post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" ||
       dead_letter_completion "$operation_id" "$completion" || true
-    rm -f "$result_file" "$active_file"
+    rm -f "$result_file" "$active_file" "$active_file.tmp.$$"
   ) &
-  printf '%s %s\n' "$operation_id" "$!" >"$active_file"
 }
 
 poll_agent() {
@@ -536,7 +591,7 @@ poll_agent() {
     printf 'pz-agent: PZ_AGENT_PENDING_COMPLETION_RETRIES must be at least 1\n' >&2
     return 64
   }
-  local active_file active_id active_pid
+  local active_file active_id active_pid active_start dead_worker_rc
   agent_state_dir >/dev/null || return $?
   active_file="$(active_job_file)" || return $?
   mkdir -p "$(dirname "$active_file")" || return 1
@@ -590,11 +645,28 @@ poll_agent() {
     fi
 
     if [ -f "$active_file" ]; then
-      read -r active_id active_pid <"$active_file" || { rm -f "$active_file"; active_id=""; active_pid=""; }
-      if [ -n "${active_id:-}" ] && [ -n "${active_pid:-}" ] && kill -0 "$active_pid" 2>/dev/null; then
-        post_progress "$url" "$agent_id" "$access_token" "$active_id" "Host operation is still running." || true
-      elif [ -n "${active_pid:-}" ]; then
+      read -r active_id active_pid active_start <"$active_file" || {
         rm -f "$active_file"
+        active_id=""
+        active_pid=""
+        active_start=""
+      }
+      case "${active_id:-}" in
+        ''|*[!A-Za-z0-9._-]*)
+          rm -f "$active_file"
+          active_id=""
+          ;;
+      esac
+      if [ -n "${active_id:-}" ] && worker_alive "${active_pid:-}" "${active_start:-}"; then
+        post_progress "$url" "$agent_id" "$access_token" "$active_id" "Host operation is still running." || true
+      elif [ -n "${active_id:-}" ]; then
+        if reconcile_dead_worker "$url" "$agent_id" "$access_token" "$active_id" "$active_file"; then
+          :
+        else
+          dead_worker_rc=$?
+          [ "$dead_worker_rc" -eq 2 ] && return 1
+          printf 'pz-agent: could not reconcile dead worker %s; retrying\n' "$active_id" >&2
+        fi
       fi
     fi
 
@@ -640,8 +712,14 @@ PY
               if result_status="$(agent_status_json 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             start|stop|restart)
-              printf '%s 0\n' "$job_id" >"$active_file"
-              run_long_job "$url" "$agent_id" "$access_token" "$job_id" "$job_kind" "$active_file"
+              if ! run_long_job "$url" "$agent_id" "$access_token" "$job_id" "$job_kind" "$active_file"; then
+                completion='{"status":"failed","error":"host agent could not start the background worker"}'
+                if post_completion "$url/api/agents/$agent_id/jobs/$job_id/complete" "$access_token" "$completion"; then
+                  :
+                else
+                  dead_letter_completion "$job_id" "$completion" || true
+                fi
+              fi
               sleep "$interval"
               continue
               ;;

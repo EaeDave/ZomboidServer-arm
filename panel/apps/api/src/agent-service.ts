@@ -225,11 +225,20 @@ export class DatabaseAgentService implements AgentService {
     }
   }
 
-  private async recoverExpiredOperations(database: Database) {
+  private async recoverExpiredOperations(database: Database, agentId: string) {
     const expired = await database
       .select({ id: operations.id, serverId: operations.serverId })
       .from(operations)
-      .where(and(eq(operations.status, "running"), lt(operations.leaseExpiresAt, this.now())));
+      .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
+      .where(
+        and(
+          eq(serverInstances.agentId, agentId),
+          eq(operations.status, "running"),
+          lt(operations.leaseExpiresAt, this.now()),
+        ),
+      )
+      .orderBy(asc(operations.leaseExpiresAt))
+      .limit(100);
     if (expired.length === 0) return;
     await database.transaction(async (transaction) => {
       for (const operation of expired) {
@@ -243,7 +252,13 @@ export class DatabaseAgentService implements AgentService {
             progressMessage: "Recovered as failed after the host agent lease expired.",
             progressUpdatedAt: this.now(),
           })
-          .where(and(eq(operations.id, operation.id), eq(operations.status, "running")))
+          .where(
+            and(
+              eq(operations.id, operation.id),
+              eq(operations.status, "running"),
+              lt(operations.leaseExpiresAt, this.now()),
+            ),
+          )
           .returning({ id: operations.id });
         if (recovered) {
           await transaction.insert(operationEvents).values({
@@ -376,12 +391,17 @@ export class DatabaseAgentService implements AgentService {
   ): Promise<OperationRecord> {
     const database = this.getDatabase();
     const [server] = await database
-      .select({ id: serverInstances.id, serviceName: serverInstances.serviceName })
+      .select({
+        id: serverInstances.id,
+        agentId: serverInstances.agentId,
+        serviceName: serverInstances.serviceName,
+      })
       .from(serverInstances)
       .where(eq(serverInstances.serviceName, serverId))
       .limit(1);
 
     if (!server) throw new ServerNotFoundError();
+    await this.recoverExpiredOperations(database, server.agentId);
 
     let record: OperationRecord;
     try {
@@ -529,7 +549,7 @@ export class DatabaseAgentService implements AgentService {
   async claimNext(agentId: string, accessToken: string): Promise<AgentJob | null> {
     const database = this.getDatabase();
     const agent = await this.authorizeAgent(agentId, accessToken);
-    await this.recoverExpiredOperations(database);
+    await this.recoverExpiredOperations(database, agent.id);
     const [running] = await database
       .select({ id: operations.id })
       .from(operations)
@@ -606,14 +626,16 @@ export class DatabaseAgentService implements AgentService {
     const operation = await this.activeOperation(agentId, accessToken, operationId);
     const database = this.getDatabase();
     await database.transaction(async (transaction) => {
-      await transaction
+      const [renewed] = await transaction
         .update(operations)
         .set({
           leaseExpiresAt: this.leaseExpiry(),
           progressMessage: message,
           progressUpdatedAt: this.now(),
         })
-        .where(eq(operations.id, operation.id));
+        .where(and(eq(operations.id, operation.id), eq(operations.status, "running")))
+        .returning({ id: operations.id });
+      if (!renewed) throw new OperationNotFoundError();
       await transaction.insert(operationEvents).values({
         serverId: operation.serverId,
         operationId: operation.id,
@@ -643,10 +665,12 @@ export class DatabaseAgentService implements AgentService {
     const operation = await this.activeOperation(agentId, accessToken, operationId);
     const database = this.getDatabase();
     await database.transaction(async (transaction) => {
-      await transaction
+      const [renewed] = await transaction
         .update(operations)
         .set({ leaseExpiresAt: this.leaseExpiry() })
-        .where(eq(operations.id, operation.id));
+        .where(and(eq(operations.id, operation.id), eq(operations.status, "running")))
+        .returning({ id: operations.id });
+      if (!renewed) throw new OperationNotFoundError();
       const [advanced] = await transaction
         .update(operations)
         .set({ logCursor: cursor })

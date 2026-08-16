@@ -110,6 +110,9 @@ export const operations = pgTable(
   (table) => ({
     queueIdx: index("operations_queue_idx").on(table.serverId, table.status, table.createdAt),
     actorIdx: index("operations_actor_user_id_idx").on(table.actorUserId),
+    leaseIdx: index("operations_running_lease_idx")
+      .on(table.leaseExpiresAt)
+      .where(sql`status = 'running'`),
     activeServerIdx: uniqueIndex("operations_active_server_idx")
       .on(table.serverId)
       .where(sql`status in ('queued', 'running')`),

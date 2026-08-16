@@ -10,6 +10,7 @@ CREATE TABLE "operation_events" (
 --> statement-breakpoint
 ALTER TABLE "operations" ADD COLUMN "lease_expires_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "operations" ADD COLUMN "log_cursor" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+UPDATE "operations" SET "lease_expires_at" = now() - interval '1 second' WHERE "status" = 'running' AND "lease_expires_at" IS NULL;--> statement-breakpoint
 ALTER TABLE "operation_events" ADD CONSTRAINT "operation_events_server_id_server_instances_id_fk" FOREIGN KEY ("server_id") REFERENCES "public"."server_instances"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "operation_events" ADD CONSTRAINT "operation_events_operation_id_operations_id_fk" FOREIGN KEY ("operation_id") REFERENCES "public"."operations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "operation_events_operation_idx" ON "operation_events" USING btree ("operation_id","id");--> statement-breakpoint

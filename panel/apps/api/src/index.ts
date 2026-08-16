@@ -774,6 +774,12 @@ export function createApp(
             set.status = 404;
             return { error: { code: "operation_not_found", message: "Operation was not found" } };
           }
+          if (error instanceof AgentUnavailableError) {
+            set.status = 503;
+            return {
+              error: { code: "agent_unavailable", message: "Operation progress was not accepted" },
+            };
+          }
           set.status = 500;
           return { error: { code: "agent_error", message: "Operation progress was not accepted" } };
         }
@@ -789,6 +795,7 @@ export function createApp(
           401: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
         },
       },
     )
@@ -822,6 +829,12 @@ export function createApp(
             set.status = 400;
             return { error: { code: "invalid_agent_payload", message: error.message } };
           }
+          if (error instanceof AgentUnavailableError) {
+            set.status = 503;
+            return {
+              error: { code: "agent_unavailable", message: "Operation logs were not accepted" },
+            };
+          }
           set.status = 500;
           return { error: { code: "agent_error", message: "Operation logs were not accepted" } };
         }
@@ -838,6 +851,7 @@ export function createApp(
           401: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
         },
       },
     )

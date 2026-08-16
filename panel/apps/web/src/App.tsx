@@ -226,6 +226,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
       setLastOperationId(operation.operationId);
       setSelectedOperationId(operation.operationId);
       setLogLines([]);
+      setLogClearBoundary(null);
       setOperationMessage("Queued for the host agent.");
       void queryClient.invalidateQueries({ queryKey: ["server-status", SERVER_ID] });
       void queryClient.invalidateQueries({ queryKey: ["operations", SERVER_ID] });
@@ -263,6 +264,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   });
   const [selectedOperationId, setSelectedOperationId] = useState<string>();
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [logClearBoundary, setLogClearBoundary] = useState<number | null>(null);
   const [logSearch, setLogSearch] = useState("");
   const [logsPaused, setLogsPaused] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string>();
@@ -271,6 +273,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   );
   const logEndRef = useRef<HTMLDivElement>(null);
   const selectedOperationRef = useRef<string | undefined>(undefined);
+  const logClearBoundaryRef = useRef<number | null>(null);
   const canOperate = user?.role === "admin" || user?.role === "operator";
   const canAdmin = user?.role === "admin";
   const activeOperation = operations.data?.find(
@@ -284,6 +287,9 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   useEffect(() => {
     selectedOperationRef.current = selectedOperationId;
   }, [selectedOperationId]);
+  useEffect(() => {
+    logClearBoundaryRef.current = logClearBoundary;
+  }, [logClearBoundary]);
   useEffect(() => {
     const handleAuthExpired = () => queryClient.setQueryData(["auth", "me"], null);
     window.addEventListener("zomboid-auth-expired", handleAuthExpired);
@@ -300,13 +306,17 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   useEffect(() => {
     if (!selectedOperationId || !events.data) return;
     const lines = events.data
-      .filter((event) => event.operationId === selectedOperationId)
+      .filter(
+        (event) =>
+          event.operationId === selectedOperationId &&
+          (logClearBoundary === null || event.id > logClearBoundary),
+      )
       .flatMap(eventLines)
       .slice(-2_000);
     setLogLines(lines);
-  }, [events.data, selectedOperationId]);
+  }, [events.data, logClearBoundary, selectedOperationId]);
   useEffect(() => {
-    if (!user) return;
+    if (!user || !events.isFetched) return;
     setStreamState("connecting");
     const stream = new EventSource(`/api/servers/${SERVER_ID}/events/stream?after=0`);
     const setLive = () => setStreamState("live");
@@ -326,11 +336,18 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     stream.addEventListener("operation", (event) => {
       try {
         const operationEvent = JSON.parse((event as MessageEvent<string>).data) as OperationEvent;
-        queryClient.setQueryData<OperationEvent[]>(["operation-events", SERVER_ID], (previous) =>
-          [...(previous ?? []), operationEvent].slice(-500),
-        );
-        void queryClient.invalidateQueries({ queryKey: ["operations", SERVER_ID] });
-        if (operationEvent.operationId === selectedOperationRef.current) {
+        queryClient.setQueryData<OperationEvent[]>(["operation-events", SERVER_ID], (previous) => {
+          const byId = new Map((previous ?? []).map((item) => [item.id, item]));
+          byId.set(operationEvent.id, operationEvent);
+          return [...byId.values()].sort((left, right) => left.id - right.id).slice(-500);
+        });
+        if (operationEvent.type !== "log") {
+          void queryClient.invalidateQueries({ queryKey: ["operations", SERVER_ID] });
+        }
+        if (
+          operationEvent.operationId === selectedOperationRef.current &&
+          (logClearBoundaryRef.current === null || operationEvent.id > logClearBoundaryRef.current)
+        ) {
           const lines = eventLines(operationEvent);
           if (lines.length) setLogLines((previous) => [...previous, ...lines].slice(-2_000));
           if (operationEvent.type === "progress" && typeof operationEvent.data === "object") {
@@ -350,7 +367,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
       }
     });
     return () => stream.close();
-  }, [queryClient, user]);
+  }, [events.isFetched, queryClient, user]);
   useEffect(() => {
     if (!logsPaused) logEndRef.current?.scrollIntoView({ block: "nearest" });
   }, [logLines.length, logsPaused]);
@@ -559,6 +576,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                     onClick={() => {
                       setSelectedOperationId(operation.operationId);
                       setLastOperationId(operation.operationId);
+                      setLogClearBoundary(null);
                       setOperationMessage(undefined);
                     }}
                     type="button"
@@ -604,6 +622,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               value={selectedOperationId ?? ""}
               onChange={(event) => {
                 setSelectedOperationId(event.target.value || undefined);
+                setLogClearBoundary(null);
                 setOperationMessage(undefined);
               }}
             >
@@ -631,7 +650,10 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
             </button>
             <button
               className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
-              onClick={() => setLogLines([])}
+              onClick={() => {
+                setLogClearBoundary(events.data?.at(-1)?.id ?? 0);
+                setLogLines([]);
+              }}
               type="button"
             >
               Clear view

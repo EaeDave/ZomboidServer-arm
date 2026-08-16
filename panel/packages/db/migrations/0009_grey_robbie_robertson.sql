@@ -1,0 +1,1 @@
+CREATE INDEX "operations_running_lease_idx" ON "operations" USING btree ("lease_expires_at") WHERE status = 'running';
