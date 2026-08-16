@@ -415,7 +415,7 @@ PY
 
 read_console_state() {
   local file="$1" inode cursor event_cursor
-  if read -r inode cursor event_cursor <"$file" 2>/dev/null; then
+  if [ -r "$file" ] && read -r inode cursor event_cursor <"$file"; then
     case "$inode:$cursor:$event_cursor" in
       ''|*:*:*:*) ;;
       *[!0-9:]*|*::*) ;;
