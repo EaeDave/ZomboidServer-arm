@@ -13,6 +13,7 @@ import {
   agentJobResponseSchema,
   agentOperationErrorResponseSchema,
   agentStatusSchema,
+  auditListResponseSchema,
   authErrorResponseSchema,
   authLoginRequestSchema,
   authLogoutResponseSchema,
@@ -279,6 +280,52 @@ export function createApp(
           200: authLogoutResponseSchema,
           500: authErrorResponseSchema,
           503: authErrorResponseSchema,
+        },
+      },
+    )
+    .get(
+      "/api/audit",
+      async ({ request, set }) => {
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+
+        try {
+          const user = await auth.currentUser(token);
+          if (!user) {
+            set.status = 401;
+            return { error: { code: "unauthenticated", message: "Login required" } };
+          }
+          if (!roleAtLeast(user.role, "admin")) {
+            set.status = 403;
+            return { error: { code: "forbidden", message: "Administrator role required" } };
+          }
+          return { events: await audit.list(100) };
+        } catch (error) {
+          set.status =
+            error instanceof AuthUnavailableError || error instanceof AuditUnavailableError
+              ? 503
+              : 500;
+          return {
+            error: {
+              code:
+                error instanceof AuditUnavailableError || error instanceof AuthUnavailableError
+                  ? "audit_unavailable"
+                  : "audit_error",
+              message: "Audit history is temporarily unavailable",
+            },
+          };
+        }
+      },
+      {
+        response: {
+          200: auditListResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          403: agentOperationErrorResponseSchema,
+          500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
         },
       },
     )

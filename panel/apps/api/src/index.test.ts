@@ -354,6 +354,9 @@ describe("control-plane API", () => {
       async record(event) {
         auditEvents.push(event.action);
       },
+      async list() {
+        return [];
+      },
     };
 
     try {
@@ -377,6 +380,14 @@ describe("control-plane API", () => {
       );
       expect(authorized.status).toBe(200);
       expect(auditEvents).toEqual(["server.status"]);
+
+      const auditResponse = await productionApp.handle(
+        new Request("http://localhost/api/audit", {
+          headers: { cookie: "zomboid_session=session-token" },
+        }),
+      );
+      expect(auditResponse.status).toBe(200);
+      expect(await auditResponse.json()).toEqual({ events: [] });
     } finally {
       if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = previousNodeEnv;

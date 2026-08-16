@@ -50,6 +50,21 @@ export const authErrorResponseSchema = Type.Object({
   }),
 });
 
+export const auditEventSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  action: Type.String({ minLength: 1 }),
+  actorUserId: Type.Union([Type.String(), Type.Null()]),
+  agentId: Type.Union([Type.String(), Type.Null()]),
+  metadata: Type.Union([Type.Unknown(), Type.Null()]),
+  createdAt: Type.String({ minLength: 1 }),
+});
+
+export const auditListResponseSchema = Type.Object({
+  events: Type.Array(auditEventSchema),
+});
+
+export type AuditEvent = Static<typeof auditEventSchema>;
+
 export type AuthErrorResponse = Static<typeof authErrorResponseSchema>;
 
 export const operationKinds = [

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AgentStatus,
+  AuditEvent,
   AuthUser,
   HealthResponse,
   OperationCreateRequest,
@@ -66,6 +67,13 @@ async function getOperation(operationId: string): Promise<OperationRecord> {
   const response = await fetch(`/api/operations/${operationId}`, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`Operation request failed: ${response.status}`);
   return response.json() as Promise<OperationRecord>;
+}
+
+async function getAudit(): Promise<AuditEvent[]> {
+  const response = await fetch("/api/audit", { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Audit request failed: ${response.status}`);
+  const body = (await response.json()) as { events: AuditEvent[] };
+  return body.events;
 }
 
 function StatusPill({ online }: { online: boolean }) {
@@ -165,6 +173,12 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     queryFn: () => getOperation(lastOperationId!),
     enabled: Boolean(lastOperationId),
     refetchInterval: lastOperationId ? 2_000 : false,
+  });
+  const audit = useQuery({
+    queryKey: ["audit"],
+    queryFn: getAudit,
+    enabled: user?.role === "admin",
+    refetchInterval: 15_000,
   });
   const canOperate = user?.role === "admin" || user?.role === "operator";
 
@@ -309,6 +323,35 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
             </p>
           ) : null}
         </section>
+
+        {user?.role === "admin" ? (
+          <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-lg font-medium">Recent audit events</h2>
+              <span className="text-xs uppercase tracking-[0.2em] text-zinc-500">admin</span>
+            </div>
+            {audit.isSuccess ? (
+              <ul className="mt-5 space-y-3 text-sm">
+                {audit.data.slice(0, 5).map((event) => (
+                  <li
+                    className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-3"
+                    key={event.id}
+                  >
+                    <span className="font-medium text-zinc-200">{event.action}</span>
+                    <time className="text-zinc-500" dateTime={event.createdAt}>
+                      {new Date(event.createdAt).toLocaleString()}
+                    </time>
+                  </li>
+                ))}
+                {audit.data.length === 0 ? <li className="text-zinc-500">No events yet.</li> : null}
+              </ul>
+            ) : (
+              <p className="mt-5 text-sm text-zinc-400">
+                {audit.error instanceof Error ? audit.error.message : "Loading audit history..."}
+              </p>
+            )}
+          </section>
+        ) : null}
       </section>
     </main>
   );
