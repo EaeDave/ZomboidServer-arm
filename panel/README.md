@@ -29,6 +29,14 @@ bun run dev:web
 - OpenAPI: <http://127.0.0.1:3000/docs>
 - Frontend: <http://127.0.0.1:5173>
 
+## Realtime operations
+
+Operation state is durable in PostgreSQL. The host agent renews a lease while a long-running
+start/stop/restart is active, publishes bounded progress and log deltas, and heartbeats continue
+independently of the host command. The browser consumes authenticated SSE events with
+`Last-Event-ID` reconnection; it never reads the host log directly. Event retention is bounded per
+server, log cursors are idempotent, and a second queued/running operation is rejected with `409`.
+
 ## Deployment model
 
 Coolify builds the control-plane image from the repository. The image must not contain the PZ

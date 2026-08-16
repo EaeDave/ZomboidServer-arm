@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "operations_active_server_idx" ON "operations" USING btree ("server_id") WHERE status in ('queued', 'running');

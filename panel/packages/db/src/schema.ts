@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -98,6 +99,10 @@ export const operations = pgTable(
     result: jsonb("result"),
     error: text("error"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    logCursor: integer("log_cursor").default(0).notNull(),
+    targetState: text("target_state"),
+    progressMessage: text("progress_message"),
+    progressUpdatedAt: timestamp("progress_updated_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
@@ -105,6 +110,9 @@ export const operations = pgTable(
   (table) => ({
     queueIdx: index("operations_queue_idx").on(table.serverId, table.status, table.createdAt),
     actorIdx: index("operations_actor_user_id_idx").on(table.actorUserId),
+    activeServerIdx: uniqueIndex("operations_active_server_idx")
+      .on(table.serverId)
+      .where(sql`status in ('queued', 'running')`),
   }),
 );
 

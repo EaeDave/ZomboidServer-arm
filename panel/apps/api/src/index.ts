@@ -44,10 +44,12 @@ import { AuditUnavailableError, createDatabaseAuditService, type AuditService } 
 import { FakeAgentAdapter, type AgentAdapter } from "./agent";
 import {
   AgentAlreadyEnrolledError,
+  AgentPayloadError,
   AgentStatusMismatchError,
   AgentUnauthorizedError,
   AgentUnavailableError,
   createDatabaseAgentService,
+  OperationConflictError,
   OperationNotFoundError,
   ServerNotFoundError,
   type AgentService,
@@ -428,6 +430,15 @@ export function createApp(
             set.status = 404;
             return { error: { code: "server_not_found", message: "Server was not found" } };
           }
+          if (error instanceof OperationConflictError) {
+            set.status = 409;
+            return {
+              error: {
+                code: "operation_conflict",
+                message: "Another operation is already queued or running for this server",
+              },
+            };
+          }
           set.status = error instanceof AgentUnavailableError ? 503 : 500;
           return {
             error: {
@@ -447,6 +458,7 @@ export function createApp(
           401: agentOperationErrorResponseSchema,
           403: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
+          409: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
@@ -589,7 +601,11 @@ export function createApp(
       }
 
       const encoder = new TextEncoder();
-      let cursor = Number(request.headers.get("last-event-id") ?? 0);
+      const streamUrl = new URL(request.url);
+      const lastEventId = request.headers.get("last-event-id");
+      const headerCursor = lastEventId === null ? Number.NaN : Number(lastEventId);
+      const queryCursor = Number(streamUrl.searchParams.get("after") ?? "");
+      let cursor = Number.isInteger(headerCursor) && headerCursor >= 0 ? headerCursor : queryCursor;
       if (!Number.isInteger(cursor) || cursor < 0) cursor = 0;
       const write = (
         controller: ReadableStreamDefaultController<Uint8Array>,
@@ -598,32 +614,52 @@ export function createApp(
         id?: number,
       ) => {
         const prefix = id === undefined ? "" : `id: ${id}\n`;
-        controller.enqueue(
-          encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        try {
+          controller.enqueue(
+            encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+          return true;
+        } catch {
+          return false;
+        }
       };
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           let closed = false;
-          request.signal.addEventListener("abort", () => {
+          let lastStatusAt = 0;
+          const close = () => {
+            if (closed) return;
             closed = true;
-            controller.close();
-          });
-          write(controller, "ready", { cursor });
+            try {
+              controller.close();
+            } catch {
+              // The client may have already closed the response.
+            }
+          };
+          request.signal.addEventListener("abort", close, { once: true });
+          if (!write(controller, "ready", { cursor })) return close();
           while (!closed) {
             try {
               const events = await agentService.listEvents(params.serverId, cursor);
               for (const event of events) {
-                write(controller, "operation", event, event.id);
+                if (!write(controller, "operation", event, event.id)) return close();
                 cursor = event.id;
               }
-              const status = await agent.getStatus(params.serverId);
-              write(controller, "status", status);
+              if (Date.now() - lastStatusAt >= 5_000) {
+                const status = await agent.getStatus(params.serverId);
+                if (!write(controller, "status", status)) return close();
+                lastStatusAt = Date.now();
+              } else if (!write(controller, "heartbeat", { cursor })) {
+                return close();
+              }
             } catch {
-              if (!closed)
-                write(controller, "warning", {
+              if (
+                !closed &&
+                !write(controller, "warning", {
                   message: "Realtime update temporarily unavailable",
-                });
+                })
+              )
+                return close();
             }
             await new Promise((resolve) => setTimeout(resolve, 1_000));
           }
@@ -782,6 +818,10 @@ export function createApp(
             set.status = 404;
             return { error: { code: "operation_not_found", message: "Operation was not found" } };
           }
+          if (error instanceof AgentPayloadError) {
+            set.status = 400;
+            return { error: { code: "invalid_agent_payload", message: error.message } };
+          }
           set.status = 500;
           return { error: { code: "agent_error", message: "Operation logs were not accepted" } };
         }
@@ -794,6 +834,7 @@ export function createApp(
         body: agentJobLogRequestSchema,
         response: {
           200: agentJobCompleteResponseSchema,
+          400: agentOperationErrorResponseSchema,
           401: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,

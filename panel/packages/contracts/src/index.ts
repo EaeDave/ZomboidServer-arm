@@ -411,6 +411,13 @@ export const operationStatusSchema = Type.Union([
   Type.Literal("cancelled"),
 ]);
 
+export const operationTargetStateSchema = Type.Union([
+  Type.Literal("online"),
+  Type.Literal("offline"),
+  Type.Literal("ready"),
+  Type.Literal("unknown"),
+]);
+
 export const operationCreateRequestSchema = Type.Union([
   Type.Object({ kind: Type.Literal("status"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("start"), payload: emptyPayloadSchema }, closedObjectOptions),
@@ -506,6 +513,9 @@ export const operationRecordSchema = Type.Object({
   startedAt: Type.Union([Type.String(), Type.Null()]),
   finishedAt: Type.Union([Type.String(), Type.Null()]),
   error: Type.Union([Type.String(), Type.Null()]),
+  targetState: Type.Optional(Type.Union([operationTargetStateSchema, Type.Null()])),
+  progressMessage: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  progressUpdatedAt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   result: Type.Optional(Type.Unknown()),
 });
 

@@ -42,8 +42,10 @@ jobs:
           persist-credentials: false
       - name: Verify host boot telemetry scripts
         run: |
-          bash -n scripts/common.sh scripts/boot-retry.sh scripts/boot-retry.test.sh install.sh pzctl
+          bash -n scripts/common.sh scripts/boot-retry.sh scripts/boot-retry.test.sh scripts/pz-agent.sh scripts/pz-agent-log.test.sh scripts/pz-agent-worker.test.sh install.sh pzctl
           bash scripts/boot-retry.test.sh
+          bash scripts/pz-agent-log.test.sh
+          bash scripts/pz-agent-worker.test.sh
       - uses: docker/setup-buildx-action@v3
       - name: Build and test control-plane image
         run: docker build --file panel/Dockerfile --tag zomboid-control-plane:ci .

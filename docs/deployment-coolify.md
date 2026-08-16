@@ -36,7 +36,9 @@ PORT=3000
 heartbeat stored by PostgreSQL. The host-side `pz-agent --stdio` and outbound `--poll` boundary
 supports status plus allowlisted start/stop/restart/logs/backup/mods/settings/world-reset jobs.
 `PZ_AGENT_URL` must use HTTPS; `PZ_AGENT_ALLOW_INSECURE=1` is reserved for local testing. The
-mutating flows still require staging validation before production access is enabled.
+mutating flows still require staging validation before production access is enabled. Realtime
+operation state is stored in PostgreSQL; authenticated SSE emits bounded operation, progress and
+log events. The browser never opens a host-log or agent connection.
 
 ## Safe rollout sequence
 
@@ -74,8 +76,11 @@ mutating flows still require staging validation before production access is enab
    transport or a private Tailscale path; do not expose an unauthenticated systemd, RCON or shell
    port.
 10. Test `status` against a staging target before enabling any mutating operation for production.
-11. Enable production access only after the audit log, role checks and operation confirmations are
-    passing.
+11. Verify an authenticated `/api/servers/<id>/events/stream` connection receives `ready`,
+    heartbeat/status and operation events through the Coolify proxy; confirm reconnects use
+    `Last-Event-ID` and that proxy buffering is disabled.
+12. Enable production access only after the audit log, role checks, conflict handling and operation
+    confirmations are passing.
 
 ## Access and credentials
 

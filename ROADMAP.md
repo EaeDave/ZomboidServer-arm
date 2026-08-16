@@ -34,6 +34,19 @@ become a general-purpose shell or Docker host controller.
 | 7. React panel | In progress | Dashboard, logs, server actions, mods, backups and settings |
 | 8. Multi-user/multi-VPS | Planned | Roles, agent enrollment, outbound agent connection and PostgreSQL hardening |
 
+## Current milestone: realtime operations
+
+- [x] Persist operation events, expected target state and durable progress messages.
+- [x] Keep long-running host operations out of the heartbeat loop with lease renewal.
+- [x] Stream bounded console-log deltas with byte/inode cursors and rotation handling.
+- [x] Expose authenticated SSE with `Last-Event-ID`/query-cursor reconnects.
+- [x] Reconcile operation history after reload and provide pause/search/autoscroll log UX.
+- [x] Reject conflicting queued/running operations and recover expired leases.
+- [x] Validate log bounds, cursor idempotency, worker heartbeats, migrations and SSE behavior.
+
+The realtime slice is ready for review and staging deployment. Production remains unchanged until
+this branch is approved and the migration/agent rollout is explicitly scheduled.
+
 ## Current milestone: foundation
 
 - [x] Choose PostgreSQL instead of SQLite.
