@@ -6,10 +6,18 @@ import type {
   AgentJobCompleteRequest,
   AgentOperationRequest,
   AgentStatus,
+  ConsoleLogEntry,
   OperationCreateRequest,
   OperationRecord,
 } from "@zomboid/contracts";
-import { agents, auditEvents, operationEvents, operations, serverInstances } from "@zomboid/db";
+import {
+  agents,
+  auditEvents,
+  consoleLogEntries,
+  operationEvents,
+  operations,
+  serverInstances,
+} from "@zomboid/db";
 import { createDatabase, type Database } from "@zomboid/db/client";
 
 export interface AgentEnrollmentResult {
@@ -30,6 +38,7 @@ export interface AgentService {
   getOperation(operationId: string): Promise<OperationRecord>;
   listOperations(serverId: string, limit?: number): Promise<OperationRecord[]>;
   listEvents(serverId: string, after?: number): Promise<OperationEventRecord[]>;
+  listConsoleLogs(serverId: string, after?: number): Promise<ConsoleLogEntry[]>;
   claimNext(agentId: string, accessToken: string): Promise<AgentJob | null>;
   progressJob(
     agentId: string,
@@ -44,6 +53,13 @@ export interface AgentService {
     cursor: number,
     lines: string[],
   ): Promise<void>;
+  appendConsoleLogs(
+    agentId: string,
+    accessToken: string,
+    serverId: string,
+    cursor: number,
+    lines: string[],
+  ): Promise<number>;
   completeJob(
     agentId: string,
     accessToken: string,
@@ -221,6 +237,27 @@ export class DatabaseAgentService implements AgentService {
         .delete(operationEvents)
         .where(
           and(eq(operationEvents.serverId, serverId), lt(operationEvents.id, oldestRetained.id)),
+        );
+    }
+  }
+
+  private async trimConsoleLogs(database: Database, serverId: string) {
+    const maxLogs = 2_000;
+    const retained = await database
+      .select({ id: consoleLogEntries.id })
+      .from(consoleLogEntries)
+      .where(eq(consoleLogEntries.serverId, serverId))
+      .orderBy(desc(consoleLogEntries.id))
+      .limit(maxLogs + 1);
+    const oldestRetained = retained[maxLogs - 1];
+    if (retained.length > maxLogs && oldestRetained) {
+      await database
+        .delete(consoleLogEntries)
+        .where(
+          and(
+            eq(consoleLogEntries.serverId, serverId),
+            lt(consoleLogEntries.id, oldestRetained.id),
+          ),
         );
     }
   }
@@ -549,6 +586,23 @@ export class DatabaseAgentService implements AgentService {
     })) as OperationEventRecord[];
   }
 
+  async listConsoleLogs(serverId: string, after = 0): Promise<ConsoleLogEntry[]> {
+    const rows = await this.getDatabase()
+      .select({
+        id: consoleLogEntries.id,
+        serverId: serverInstances.serviceName,
+        line: consoleLogEntries.line,
+        createdAt: consoleLogEntries.createdAt,
+      })
+      .from(consoleLogEntries)
+      .innerJoin(serverInstances, eq(consoleLogEntries.serverId, serverInstances.id))
+      .where(and(eq(serverInstances.serviceName, serverId), gt(consoleLogEntries.id, after)))
+      .orderBy(after === 0 ? desc(consoleLogEntries.id) : asc(consoleLogEntries.id))
+      .limit(500);
+    const orderedRows = after === 0 ? rows.reverse() : rows;
+    return orderedRows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+  }
+
   async claimNext(agentId: string, accessToken: string): Promise<AgentJob | null> {
     const database = this.getDatabase();
     const agent = await this.authorizeAgent(agentId, accessToken);
@@ -688,6 +742,58 @@ export class DatabaseAgentService implements AgentService {
       });
     });
     await this.trimEvents(database, operation.serverId);
+  }
+
+  async appendConsoleLogs(
+    agentId: string,
+    accessToken: string,
+    serverId: string,
+    cursor: number,
+    lines: string[],
+  ): Promise<number> {
+    const encodedBytes = Buffer.byteLength(JSON.stringify(lines), "utf8");
+    if (
+      !Number.isInteger(cursor) ||
+      cursor < lines.length ||
+      lines.length === 0 ||
+      lines.length > 200 ||
+      encodedBytes > 64 * 1024 ||
+      lines.some((line) => line.length > 2048)
+    ) {
+      throw new AgentPayloadError();
+    }
+    const agent = await this.authorizeAgent(agentId, accessToken);
+    const database = this.getDatabase();
+    const [server] = await database
+      .select({ id: serverInstances.id, consoleLogCursor: serverInstances.consoleLogCursor })
+      .from(serverInstances)
+      .where(and(eq(serverInstances.agentId, agent.id), eq(serverInstances.serviceName, serverId)))
+      .limit(1);
+    if (!server) throw new ServerNotFoundError();
+
+    const acceptedCursor = await database.transaction(async (transaction) => {
+      const [advanced] = await transaction
+        .update(serverInstances)
+        .set({ consoleLogCursor: cursor })
+        .where(and(eq(serverInstances.id, server.id), lt(serverInstances.consoleLogCursor, cursor)))
+        .returning({ consoleLogCursor: serverInstances.consoleLogCursor });
+      if (!advanced) return server.consoleLogCursor;
+      await transaction
+        .insert(consoleLogEntries)
+        .values(
+          lines.map((line, index) => ({
+            serverId: server.id,
+            agentCursor: cursor - lines.length + index + 1,
+            line,
+          })),
+        )
+        // The API response may have reached the agent before its local cursor state was flushed.
+        // Keep newly observed suffixes while making that replay safe and idempotent.
+        .onConflictDoNothing();
+      return advanced.consoleLogCursor;
+    });
+    await this.trimConsoleLogs(database, server.id);
+    return acceptedCursor;
   }
 
   async completeJob(

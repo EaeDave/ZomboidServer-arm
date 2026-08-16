@@ -77,6 +77,7 @@ export const serverInstances = pgTable(
     port: integer("port").notNull(),
     runtime: text("runtime").notNull(),
     dataDir: text("data_dir").notNull(),
+    consoleLogCursor: integer("console_log_cursor").default(0).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
@@ -138,6 +139,28 @@ export const operationEvents = pgTable(
   (table) => ({
     operationIdx: index("operation_events_operation_idx").on(table.operationId, table.id),
     serverIdx: index("operation_events_server_idx").on(table.serverId, table.id),
+  }),
+);
+
+// The server console is deliberately independent of an operation. The bounded history lets a
+// newly connected browser receive recent output while the agent only sends incremental deltas.
+export const consoleLogEntries = pgTable(
+  "console_log_entries",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => serverInstances.id, { onDelete: "cascade" }),
+    agentCursor: integer("agent_cursor").notNull(),
+    line: text("line").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    serverIdx: index("console_log_entries_server_idx").on(table.serverId, table.id),
+    agentCursorUnique: uniqueIndex("console_log_entries_server_cursor_idx").on(
+      table.serverId,
+      table.agentCursor,
+    ),
   }),
 );
 

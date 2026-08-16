@@ -55,4 +55,35 @@ PY
 delta="$(read_console_delta 0 '' 0)"
 assert_eq '2048' "$(DELTA="$delta" python3 -c 'import json, os; print(len(json.loads(os.environ["DELTA"])["lines"][0]))')" 'individual log lines are bounded'
 
+python3 - <<'PY' >"$CONSOLE"
+for index in range(1, 301):
+    print(f"line-{index}")
+PY
+read -r inode cursor event_cursor < <(initial_console_position)
+delta="$(read_console_delta "$cursor" "$inode" 0)"
+assert_eq 'line-101' "$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["lines"][0])')" 'initial console state starts at a bounded recent tail'
+assert_eq '0' "$event_cursor" 'initial console event cursor starts at zero'
+
+state_file="$TMP_DIR/agent-state/console-cursor"
+save_console_state "$state_file" "$inode" 123 456
+read -r saved_inode saved_cursor saved_event_cursor < <(read_console_state "$state_file")
+assert_eq "$inode" "$saved_inode" 'console state preserves the inode'
+assert_eq '123' "$saved_cursor" 'console state preserves the file cursor'
+assert_eq '456' "$saved_event_cursor" 'console state preserves the agent cursor'
+
+printf 'live-one\n' >"$CONSOLE"
+console_body="$TMP_DIR/console-request.json"
+post_console_body() {
+  printf '%s' "$4" >"$console_body"
+  printf '{"ok":true,"cursor":10}'
+}
+send_live_console_delta https://panel.example agent token 0 '' 0 0
+assert_eq '10' "$LOG_NEXT_EVENT_CURSOR" 'a higher API cursor resynchronizes a restored agent state'
+assert_eq 'live-one' "$(python3 - "$console_body" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1]))["lines"][0])
+PY
+)" 'live console requests carry only the bounded delta'
+
 printf 'pz-agent log cursor tests: ok\n'

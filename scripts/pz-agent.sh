@@ -362,6 +362,86 @@ post_logs_body() {
     --data "$body" "$url/api/agents/$agent_id/jobs/$operation_id/logs" >/dev/null 2>&1
 }
 
+post_console_body() {
+  local url="$1" agent_id="$2" token="$3" body="$4"
+  curl -fsS --max-time 10 -H "authorization: Bearer $token" -H 'content-type: application/json' \
+    --data "$body" "$url/api/agents/$agent_id/console" 2>/dev/null
+}
+
+console_state_file() {
+  local state_dir
+  state_dir="$(agent_state_dir)" || return $?
+  printf '%s/console-cursor\n' "$state_dir"
+}
+
+initial_console_position() {
+  local initial_lines="${PZ_AGENT_CONSOLE_INITIAL_LINES:-200}"
+  case "$initial_lines" in ''|*[!0-9]*) return 64 ;; esac
+  [ "$initial_lines" -ge 1 ] 2>/dev/null && [ "$initial_lines" -le 500 ] 2>/dev/null || return 64
+  LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" LOG_INITIAL_LINES="$initial_lines" python3 - <<'PY'
+import os
+
+base = os.path.realpath(os.environ["LOG_BASE"])
+path = os.path.realpath(os.environ["LOG_FILE"])
+if os.path.commonpath((base, path)) != base:
+    print("0 0 0")
+    raise SystemExit
+try:
+    stat = os.stat(path)
+except OSError:
+    print("0 0 0")
+    raise SystemExit
+
+start = max(0, stat.st_size - 256 * 1024)
+try:
+    with open(path, "rb") as handle:
+        handle.seek(start)
+        raw = handle.read()
+except OSError:
+    print(f"{stat.st_ino} {stat.st_size} 0")
+    raise SystemExit
+if start:
+    newline = raw.find(b"\n")
+    if newline >= 0:
+        start += newline + 1
+        raw = raw[newline + 1 :]
+lines = raw.splitlines(keepends=True)
+keep = int(os.environ["LOG_INITIAL_LINES"])
+if len(lines) > keep:
+    start += sum(len(line) for line in lines[:-keep])
+print(f"{stat.st_ino} {start} 0")
+PY
+}
+
+read_console_state() {
+  local file="$1" inode cursor event_cursor
+  if read -r inode cursor event_cursor <"$file" 2>/dev/null; then
+    case "$inode:$cursor:$event_cursor" in
+      ''|*:*:*:*) ;;
+      *[!0-9:]*|*::*) ;;
+      *)
+        [ -n "$inode" ] && [ -n "$cursor" ] && [ -n "$event_cursor" ] || {
+          initial_console_position
+          return
+        }
+        printf '%s %s %s\n' "$inode" "$cursor" "$event_cursor"
+        return 0
+        ;;
+    esac
+  fi
+  initial_console_position
+}
+
+save_console_state() {
+  local file="$1" inode="$2" cursor="$3" event_cursor="$4" tmp
+  mkdir -p "$(dirname "$file")" || return 1
+  chmod 700 "$(dirname "$file")" || return 1
+  tmp="$file.tmp.$$"
+  umask 077
+  printf '%s %s %s\n' "$inode" "$cursor" "$event_cursor" >"$tmp" || return 1
+  mv -f "$tmp" "$file"
+}
+
 read_console_position() {
   LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" python3 - <<'PY'
 import os
@@ -456,6 +536,44 @@ print(json.dumps({"cursor": int(os.environ["CURSOR"]), "lines": json.loads(os.en
 PY
     )"
     post_logs_body "$url" "$agent_id" "$token" "$operation_id" "$body" || return 1
+  fi
+  LOG_NEXT_CURSOR="$next_file_cursor"
+  LOG_NEXT_INODE="$next_inode"
+  LOG_NEXT_EVENT_CURSOR="$next_event_cursor"
+}
+
+send_live_console_delta() {
+  local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" flush="$7"
+  local delta lines_json next_file_cursor next_inode line_count next_event_cursor body response accepted_cursor
+  delta="$(read_console_delta "$file_cursor" "$inode" "$flush")" || return 1
+  next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
+  next_inode="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["inode"])')"
+  lines_json="$(DELTA="$delta" python3 -c 'import json, os; print(json.dumps(json.loads(os.environ["DELTA"])["lines"], separators=(",", ":")))')"
+  line_count="$(LINES="$lines_json" python3 -c 'import json, os; print(len(json.loads(os.environ["LINES"])))')"
+  next_event_cursor=$((event_cursor + line_count))
+  if [ "$lines_json" != "[]" ]; then
+    body="$(SERVER_ID="$PZ_SERVER_ID" CURSOR="$next_event_cursor" LINES="$lines_json" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"serverId": os.environ["SERVER_ID"], "cursor": int(os.environ["CURSOR"]), "lines": json.loads(os.environ["LINES"])}, separators=(",", ":")))
+PY
+    )"
+    response="$(post_console_body "$url" "$agent_id" "$token" "$body")" || return 1
+    accepted_cursor="$(RESPONSE="$response" python3 - <<'PY'
+import json
+import os
+
+value = json.loads(os.environ["RESPONSE"]).get("cursor")
+if not isinstance(value, int) or value < 0:
+    raise SystemExit(1)
+print(value)
+PY
+    )" || return 1
+    # An agent restart can restore an older local state after the API already accepted a batch.
+    # A higher API cursor explicitly resynchronizes it without replaying the whole console.
+    [ "$accepted_cursor" -ge "$next_event_cursor" ] || return 1
+    next_event_cursor="$accepted_cursor"
   fi
   LOG_NEXT_CURSOR="$next_file_cursor"
   LOG_NEXT_INODE="$next_inode"
@@ -593,9 +711,13 @@ poll_agent() {
     return 64
   }
   local active_file active_id active_pid active_start dead_worker_rc
+  local console_state console_inode console_file_cursor console_event_cursor
   agent_state_dir >/dev/null || return $?
   active_file="$(active_job_file)" || return $?
   mkdir -p "$(dirname "$active_file")" || return 1
+  console_state="$(console_state_file)" || return $?
+  read -r console_inode console_file_cursor console_event_cursor < <(read_console_state "$console_state") ||
+    return 1
   url="${url%/}"
   require_secure_url "$url" || return $?
 
@@ -685,6 +807,17 @@ PY
         --data "$payload" \
         "$url/api/agents/$agent_id/heartbeat" >/dev/null; then
         printf 'pz-agent: heartbeat failed; retrying\n' >&2
+      fi
+
+      if send_live_console_delta "$url" "$agent_id" "$access_token" \
+        "$console_file_cursor" "$console_inode" "$console_event_cursor" 0; then
+        console_file_cursor="$LOG_NEXT_CURSOR"
+        console_inode="$LOG_NEXT_INODE"
+        console_event_cursor="$LOG_NEXT_EVENT_CURSOR"
+        save_console_state "$console_state" "$console_inode" "$console_file_cursor" "$console_event_cursor" ||
+          printf 'pz-agent: could not persist console cursor; retrying from the prior cursor\n' >&2
+      else
+        printf 'pz-agent: console publish failed; retrying\n' >&2
       fi
 
       local job_response job_id job_kind job_payload completion result_status lines workshop_id keep log_publish_rc

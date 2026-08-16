@@ -71,6 +71,13 @@
       "when": 1786916742374,
       "tag": "0009_grey_robbie_robertson",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786921764795,
+      "tag": "0010_secret_black_panther",
+      "breakpoints": true
     }
   ]
 }
