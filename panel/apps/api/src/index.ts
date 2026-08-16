@@ -639,7 +639,10 @@ export function createApp(
       },
     );
 
-  if (options.serveFrontend ?? process.env.NODE_ENV === "production") {
+  const serveFrontend =
+    options.serveFrontend ??
+    (process.env.NODE_ENV === "production" || process.env.PZ_SERVE_FRONTEND === "1");
+  if (serveFrontend) {
     app.get("/", () => Bun.file(`${webDist}/index.html`));
     app.use(staticPlugin({ assets: webDist, prefix: "/", indexHTML: true }));
   }

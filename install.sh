@@ -287,8 +287,9 @@ sed "s/__XMX__/${RAM_GB}g/" "$REPO_DIR/templates/ProjectZomboid64.json" > "$INST
 # ----------------------------------------------------------------- 5. ciopfs dirs
 step "Preparing ciopfs (case-insensitive mods)"
 if [ -d "$WS" ] && [ ! -d "${WS}.ci" ]; then mv "$WS" "${WS}.ci"; fi
-mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods"
+mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods" "$BACKUPS"
 chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR" "$CACHEDIR" 2>/dev/null || true
+chown "$TARGET_USER":"$TARGET_USER" "$BACKUPS" 2>/dev/null || true
 
 # ----------------------------------------------------------------- 6. systemd + scripts
 step "Installing systemd services, pzctl and the mod updater"
@@ -379,6 +380,7 @@ PZ_AGENT_ENVFILE=$AGENT_ENVFILE
 PZ_CONF=$CACHEDIR/pzctl.conf
 PZ_UPDATELOG=$CACHEDIR/mod-updates.log
 PZ_BACKUPS=$BACKUPS
+PZ_REQUIRE_STEAM=${PZ_REQUIRE_STEAM:-auto}
 EOF
 chown "$TARGET_USER":"$TARGET_USER" "$ENVFILE"
 chmod 600 "$ENVFILE"
