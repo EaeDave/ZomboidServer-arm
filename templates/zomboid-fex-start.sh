@@ -13,7 +13,8 @@ export LD_LIBRARY_PATH="__INSTALL_DIR__/linux64:__INSTALL_DIR__:__INSTALL_DIR__/
 # LD_PRELOAD must not contain an x86 library here: this launcher itself is an
 # ARM64 process. FEX loads the x86 JVM and its libraries from the guest path.
 unset LD_PRELOAD
+[ -n "${PZ_ADMIN_PW:-}" ] || { echo "PZ_ADMIN_PW is required" >&2; exit 1; }
 rm -f "$FEX_SERVERSOCKETPATH"
 mkdir -p "$XDG_DATA_HOME"
 
-exec "__FEX_PREFIX__/bin/FEXLoader" -- ./ProjectZomboid64 "$@"
+exec "__FEX_PREFIX__/bin/FEXLoader" -- ./ProjectZomboid64 "$@" -adminpassword "$PZ_ADMIN_PW"

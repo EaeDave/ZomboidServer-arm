@@ -75,6 +75,7 @@ BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
 BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
 BIN_MODUPDATE="/usr/local/sbin/pz-modupdate${SFX}"
 BIN_FEXSTART="/usr/local/sbin/zomboid-fex-start${SFX}.sh"
+BIN_BOXSTART="/usr/local/sbin/zomboid-b42-start${SFX}.sh"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
 
 # FEX a08a6ce is the tested pre-FEX-2506 build. Keep the backend selectable so
@@ -305,13 +306,15 @@ render() { sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__INSTALL_DIR__|$(e
                -e "s|__WATCHDOG__|$(esc "$BIN_WATCHDOG")|g" -e "s|__LIBDIR__|$(esc "$LIBDIR")|g" \
                -e "s|__FEX_PREFIX__|$(esc "$FEX_PREFIX")|g" -e "s|__FEX_ROOTFS__|$(esc "$FEX_ROOTFS")|g" \
                -e "s|__FEX_DATA_HOME__|$(esc "$FEX_DATA_HOME")|g" -e "s|__FEX_SOCKET__|$(esc "$FEX_SOCKET")|g" \
-               -e "s|__FEX_START__|$(esc "$BIN_FEXSTART")|g" "$1"; }
+               -e "s|__FEX_START__|$(esc "$BIN_FEXSTART")|g" -e "s|__BOX_START__|$(esc "$BIN_BOXSTART")|g" "$1"; }
 if [ "$RUNTIME" = fex ]; then
   render "$REPO_DIR/templates/zomboid-fex.service" > "/etc/systemd/system/$SVC.service"
   render "$REPO_DIR/templates/zomboid-fex-start.sh" > "$BIN_FEXSTART"
   chmod 755 "$BIN_FEXSTART"
 else
   render "$REPO_DIR/templates/zomboid-b42.service" > "/etc/systemd/system/$SVC.service"
+  render "$REPO_DIR/templates/zomboid-b42-start.sh" > "$BIN_BOXSTART"
+  chmod 755 "$BIN_BOXSTART"
 fi
 render "$REPO_DIR/templates/zomboid-ciopfs.service"    > "/etc/systemd/system/$SVC-ciopfs.service"
 render "$REPO_DIR/templates/zomboid-watchdog.service"  > "/etc/systemd/system/$SVC-watchdog.service"

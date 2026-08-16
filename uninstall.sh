@@ -33,6 +33,7 @@ EOF
 ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"
 [ -f "$ENVF" ] && . "$ENVF"
 SVC="${PZ_SERVICE:-zomboid-b42}"
+SFX=""; [ "$SVC" != "zomboid-b42" ] && SFX="-${SVC#zomboid-b42-}"
 PZ_USER="${PZ_USER:-ubuntu}"
 PZ_HOME="$(getent passwd "$PZ_USER" | cut -d: -f6)"; PZ_HOME="${PZ_HOME:-/home/ubuntu}"
 INSTALL_DIR="${PZ_INSTALL:-/opt/zomboid-server}"
@@ -47,6 +48,7 @@ AGENT_PRIV="${PZ_AGENT_PRIV:-/usr/local/sbin/pz-agent-priv}"
 AGENT_ENVFILE="${PZ_AGENT_ENVFILE:-/etc/${SVC}-agent.env}"
 RUNTIME="${PZ_RUNTIME:-fex}"
 FEXSTART="${PZ_FEX_START:-/usr/local/sbin/zomboid-fex-start.sh}"
+BOXSTART="/usr/local/sbin/zomboid-b42-start${SFX}.sh"
 FEX_PREFIX="${PZ_FEX_PREFIX:-/opt/fex-a08}"
 FEX_DATA_HOME="${PZ_FEX_DATA_HOME:-$PZ_HOME/.local/share/${SVC}-fex}"
 LIBDIR="$(dirname "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}")"
@@ -83,7 +85,7 @@ rm -f "/etc/systemd/system/$SVC.service" \
       "/etc/systemd/system/$SVC-watchdog.timer" \
       "/etc/systemd/system/$SVC-modupdate.service" \
       "/etc/systemd/system/$SVC-modupdate.timer"
-rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$AGENT_PRIV" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$AGENT_PRIV" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART" "$BOXSTART"
 case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
 systemctl reset-failed "$SVC.service" 2>/dev/null
