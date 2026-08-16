@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   index,
   integer,
+  bigint,
   bigserial,
   jsonb,
   pgEnum,
@@ -77,7 +78,7 @@ export const serverInstances = pgTable(
     port: integer("port").notNull(),
     runtime: text("runtime").notNull(),
     dataDir: text("data_dir").notNull(),
-    consoleLogCursor: integer("console_log_cursor").default(0).notNull(),
+    consoleLogCursor: bigint("console_log_cursor", { mode: "number" }).default(0).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
@@ -151,7 +152,7 @@ export const consoleLogEntries = pgTable(
     serverId: uuid("server_id")
       .notNull()
       .references(() => serverInstances.id, { onDelete: "cascade" }),
-    agentCursor: integer("agent_cursor").notNull(),
+    agentCursor: bigint("agent_cursor", { mode: "number" }).notNull(),
     line: text("line").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },

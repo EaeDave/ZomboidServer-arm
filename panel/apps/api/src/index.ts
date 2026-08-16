@@ -47,6 +47,7 @@ import { AuditUnavailableError, createDatabaseAuditService, type AuditService } 
 import { FakeAgentAdapter, type AgentAdapter } from "./agent";
 import {
   AgentAlreadyEnrolledError,
+  AgentCursorMismatchError,
   AgentPayloadError,
   AgentStatusMismatchError,
   AgentUnauthorizedError,
@@ -93,6 +94,84 @@ function createDefaultAgentAdapter(): AgentAdapter {
 function bearerToken(request: Request): string | null {
   const match = (request.headers.get("authorization") ?? "").match(/^Bearer\s+(.+)$/i);
   return match?.[1] ?? null;
+}
+
+interface SseEvent {
+  event: string;
+  data: unknown;
+  id?: number;
+}
+
+function streamCursor(request: Request) {
+  const streamUrl = new URL(request.url);
+  const lastEventId = request.headers.get("last-event-id");
+  const headerCursor = lastEventId === null ? Number.NaN : Number(lastEventId);
+  const queryCursor = Number(streamUrl.searchParams.get("after") ?? "");
+  const cursor = Number.isInteger(headerCursor) && headerCursor >= 0 ? headerCursor : queryCursor;
+  return Number.isInteger(cursor) && cursor >= 0 ? cursor : 0;
+}
+
+function pollingSseResponse(
+  request: Request,
+  initialCursor: number,
+  warningMessage: string,
+  poll: (cursor: number) => Promise<{ cursor: number; events: SseEvent[] }>,
+) {
+  const encoder = new TextEncoder();
+  const write = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    event: string,
+    data: unknown,
+    id?: number,
+  ) => {
+    const prefix = id === undefined ? "" : `id: ${id}\n`;
+    try {
+      controller.enqueue(
+        encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      let cursor = initialCursor;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // The client may have already closed the response.
+        }
+      };
+      request.signal.addEventListener("abort", close, { once: true });
+      if (!write(controller, "ready", { cursor })) return close();
+      while (!closed) {
+        try {
+          const update = await poll(cursor);
+          cursor = update.cursor;
+          for (const item of update.events) {
+            if (!write(controller, item.event, item.data, item.id)) return close();
+          }
+          if (!write(controller, "heartbeat", { cursor })) return close();
+        } catch {
+          if (!closed && !write(controller, "warning", { message: warningMessage })) return close();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "content-type": "text/event-stream",
+      "x-accel-buffering": "no",
+    },
+  });
 }
 
 export function createApp(
@@ -600,10 +679,16 @@ export function createApp(
           const logs = await agentService.listConsoleLogs(params.serverId, after);
           return { logs, cursor: logs.at(-1)?.id ?? after };
         } catch (error) {
-          set.status = error instanceof AuthUnavailableError ? 503 : 500;
+          if (error instanceof ServerNotFoundError) {
+            set.status = 404;
+            return { error: { code: "server_not_found", message: "Server was not found" } };
+          }
+          const unavailable =
+            error instanceof AuthUnavailableError || error instanceof AgentUnavailableError;
+          set.status = unavailable ? 503 : 500;
           return {
             error: {
-              code: error instanceof AuthUnavailableError ? "auth_unavailable" : "console_error",
+              code: unavailable ? "agent_unavailable" : "console_error",
               message: "Server console could not be read",
             },
           };
@@ -615,6 +700,7 @@ export function createApp(
         response: {
           200: consoleLogListResponseSchema,
           401: agentOperationErrorResponseSchema,
+          404: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
@@ -641,79 +727,26 @@ export function createApp(
         };
       }
 
-      const encoder = new TextEncoder();
-      const streamUrl = new URL(request.url);
-      const lastEventId = request.headers.get("last-event-id");
-      const headerCursor = lastEventId === null ? Number.NaN : Number(lastEventId);
-      const queryCursor = Number(streamUrl.searchParams.get("after") ?? "");
-      let cursor = Number.isInteger(headerCursor) && headerCursor >= 0 ? headerCursor : queryCursor;
-      if (!Number.isInteger(cursor) || cursor < 0) cursor = 0;
-      const write = (
-        controller: ReadableStreamDefaultController<Uint8Array>,
-        event: string,
-        data: unknown,
-        id?: number,
-      ) => {
-        const prefix = id === undefined ? "" : `id: ${id}\n`;
-        try {
-          controller.enqueue(
-            encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-          );
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          let closed = false;
-          let lastStatusAt = 0;
-          const close = () => {
-            if (closed) return;
-            closed = true;
-            try {
-              controller.close();
-            } catch {
-              // The client may have already closed the response.
-            }
-          };
-          request.signal.addEventListener("abort", close, { once: true });
-          if (!write(controller, "ready", { cursor })) return close();
-          while (!closed) {
-            try {
-              const events = await agentService.listEvents(params.serverId, cursor);
-              for (const event of events) {
-                if (!write(controller, "operation", event, event.id)) return close();
-                cursor = event.id;
-              }
-              if (Date.now() - lastStatusAt >= 5_000) {
-                const status = await agent.getStatus(params.serverId);
-                if (!write(controller, "status", status)) return close();
-                lastStatusAt = Date.now();
-              } else if (!write(controller, "heartbeat", { cursor })) {
-                return close();
-              }
-            } catch {
-              if (
-                !closed &&
-                !write(controller, "warning", {
-                  message: "Realtime update temporarily unavailable",
-                })
-              )
-                return close();
-            }
-            await new Promise((resolve) => setTimeout(resolve, 1_000));
+      let lastStatusAt = 0;
+      return pollingSseResponse(
+        request,
+        streamCursor(request),
+        "Realtime update temporarily unavailable",
+        async (cursor) => {
+          const events = await agentService.listEvents(params.serverId, cursor);
+          const streamEvents: SseEvent[] = events.map((event) => ({
+            event: "operation",
+            data: event,
+            id: event.id,
+          }));
+          const nextCursor = events.at(-1)?.id ?? cursor;
+          if (Date.now() - lastStatusAt >= 5_000) {
+            streamEvents.push({ event: "status", data: await agent.getStatus(params.serverId) });
+            lastStatusAt = Date.now();
           }
+          return { cursor: nextCursor, events: streamEvents };
         },
-      });
-      return new Response(stream, {
-        headers: {
-          "cache-control": "no-cache, no-transform",
-          connection: "keep-alive",
-          "content-type": "text/event-stream",
-          "x-accel-buffering": "no",
-        },
-      });
+      );
     })
     .get("/api/servers/:serverId/console/stream", async ({ params, request, set }) => {
       const token = readSessionToken(request.headers.get("cookie"));
@@ -736,70 +769,37 @@ export function createApp(
         };
       }
 
-      const encoder = new TextEncoder();
-      const streamUrl = new URL(request.url);
-      const lastEventId = request.headers.get("last-event-id");
-      const headerCursor = lastEventId === null ? Number.NaN : Number(lastEventId);
-      const queryCursor = Number(streamUrl.searchParams.get("after") ?? "");
-      let cursor = Number.isInteger(headerCursor) && headerCursor >= 0 ? headerCursor : queryCursor;
-      if (!Number.isInteger(cursor) || cursor < 0) cursor = 0;
-      const write = (
-        controller: ReadableStreamDefaultController<Uint8Array>,
-        event: string,
-        data: unknown,
-        id?: number,
-      ) => {
-        const prefix = id === undefined ? "" : `id: ${id}\n`;
-        try {
-          controller.enqueue(
-            encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-          );
-          return true;
-        } catch {
-          return false;
+      try {
+        // Reject unknown/deleted servers before creating an unbounded polling stream.
+        await agentService.listConsoleLogs(params.serverId, 0);
+      } catch (error) {
+        if (error instanceof ServerNotFoundError) {
+          set.status = 404;
+          return { error: { code: "server_not_found", message: "Server was not found" } };
         }
-      };
-      const stream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          let closed = false;
-          const close = () => {
-            if (closed) return;
-            closed = true;
-            try {
-              controller.close();
-            } catch {
-              // The client may have already closed the response.
-            }
+        const unavailable =
+          error instanceof AuthUnavailableError || error instanceof AgentUnavailableError;
+        set.status = unavailable ? 503 : 500;
+        return {
+          error: {
+            code: unavailable ? "agent_unavailable" : "console_error",
+            message: "Console stream is temporarily unavailable",
+          },
+        };
+      }
+
+      return pollingSseResponse(
+        request,
+        streamCursor(request),
+        "Console update temporarily unavailable",
+        async (cursor) => {
+          const logs = await agentService.listConsoleLogs(params.serverId, cursor);
+          return {
+            cursor: logs.at(-1)?.id ?? cursor,
+            events: logs.map((log) => ({ event: "console", data: log, id: log.id })),
           };
-          request.signal.addEventListener("abort", close, { once: true });
-          if (!write(controller, "ready", { cursor })) return close();
-          while (!closed) {
-            try {
-              const logs = await agentService.listConsoleLogs(params.serverId, cursor);
-              for (const log of logs) {
-                if (!write(controller, "console", log, log.id)) return close();
-                cursor = log.id;
-              }
-              if (!write(controller, "heartbeat", { cursor })) return close();
-            } catch {
-              if (
-                !closed &&
-                !write(controller, "warning", { message: "Console update temporarily unavailable" })
-              )
-                return close();
-            }
-            await new Promise((resolve) => setTimeout(resolve, 1_000));
-          }
         },
-      });
-      return new Response(stream, {
-        headers: {
-          "cache-control": "no-cache, no-transform",
-          connection: "keep-alive",
-          "content-type": "text/event-stream",
-          "x-accel-buffering": "no",
-        },
-      });
+      );
     })
     .post(
       "/api/agents/:agentId/jobs/claim",
@@ -997,6 +997,7 @@ export function createApp(
             body.serverId,
             body.cursor,
             body.lines,
+            body.resync ?? false,
           );
           return { ok: true as const, cursor };
         } catch (error) {
@@ -1011,6 +1012,10 @@ export function createApp(
           if (error instanceof AgentPayloadError) {
             set.status = 400;
             return { error: { code: "invalid_agent_payload", message: error.message } };
+          }
+          if (error instanceof AgentCursorMismatchError) {
+            set.status = 409;
+            return { error: { code: "console_cursor_mismatch", message: error.message } };
           }
           if (error instanceof AgentUnavailableError) {
             set.status = 503;
@@ -1030,6 +1035,7 @@ export function createApp(
           400: agentOperationErrorResponseSchema,
           401: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
+          409: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },

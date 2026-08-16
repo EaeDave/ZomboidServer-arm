@@ -582,7 +582,8 @@ export const agentJobLogRequestSchema = Type.Object(
 export const agentConsoleLogRequestSchema = Type.Object(
   {
     serverId: Type.String({ minLength: 1, maxLength: 128 }),
-    cursor: Type.Integer({ minimum: 1 }),
+    cursor: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    resync: Type.Optional(Type.Boolean()),
     lines: Type.Array(Type.String({ maxLength: 2048 }), { minItems: 1, maxItems: 200 }),
   },
   closedObjectOptions,
@@ -590,7 +591,7 @@ export const agentConsoleLogRequestSchema = Type.Object(
 
 export const agentConsoleLogResponseSchema = Type.Object({
   ok: Type.Literal(true),
-  cursor: Type.Integer({ minimum: 0 }),
+  cursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 });
 
 export const agentJobSchema = Type.Object({

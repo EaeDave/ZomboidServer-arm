@@ -135,6 +135,20 @@ describe("agent operation contracts", () => {
     expect(
       Value.Check(agentConsoleLogRequestSchema, {
         serverId: "production",
+        cursor: 201,
+        lines: Array.from({ length: 201 }, () => "line"),
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(agentConsoleLogRequestSchema, {
+        serverId: "production",
+        cursor: 1,
+        lines: ["x".repeat(2049)],
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(agentConsoleLogRequestSchema, {
+        serverId: "production",
         cursor: 1,
         lines: ["line"],
         command: "tail -f",

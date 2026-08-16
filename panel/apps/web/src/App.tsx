@@ -249,6 +249,12 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     return () => window.removeEventListener("zomboid-auth-expired", handleAuthExpired);
   }, [queryClient]);
   useEffect(() => {
+    if (lastOperationId || !operations.data?.length) return;
+    const preferred =
+      operations.data.find((operation) => operation.status === "running") ?? operations.data[0];
+    if (preferred) setLastOperationId(preferred.operationId);
+  }, [lastOperationId, operations.data]);
+  useEffect(() => {
     if (!user || !events.isFetched) return;
     const stream = new EventSource(`/api/servers/${SERVER_ID}/events/stream?after=0`);
     stream.addEventListener("status", (event) => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AuthService } from "./auth";
 import type { AuditService } from "./audit";
-import { AgentUnauthorizedError, type AgentService } from "./agent-service";
+import { AgentUnauthorizedError, ServerNotFoundError, type AgentService } from "./agent-service";
 import { FakeAgentAdapter } from "./agent";
 import { createApp } from "./index";
 
@@ -264,7 +264,7 @@ describe("control-plane API", () => {
         return [];
       },
       async listConsoleLogs(serverId, after) {
-        if (serverId !== "production") throw new Error("unexpected server");
+        if (serverId !== "production") throw new ServerNotFoundError();
         return after ? consoleLogs.filter((entry) => entry.id > after) : consoleLogs;
       },
       async claimNext(agentId, accessToken) {
@@ -302,12 +302,13 @@ describe("control-plane API", () => {
         expect(lines).toEqual(["line one", "line two"]);
         logged = true;
       },
-      async appendConsoleLogs(agentId, accessToken, serverId, cursor, lines) {
+      async appendConsoleLogs(agentId, accessToken, serverId, cursor, lines, resync) {
         if (agentId !== "agent-1" || accessToken !== "agent-access" || serverId !== "production") {
           throw new AgentUnauthorizedError();
         }
         expect(cursor).toBe(2);
         expect(lines).toEqual(["console one", "console two"]);
+        expect(resync).toBe(false);
         consoleLogged = true;
         return cursor;
       },
@@ -386,6 +387,19 @@ describe("control-plane API", () => {
     );
     expect(consoleHistory.status).toBe(200);
     expect(await consoleHistory.json()).toEqual({ logs: consoleLogs, cursor: 11 });
+
+    const unknownConsole = await operationApp.handle(
+      new Request("http://localhost/api/servers/unknown/console?after=0", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(unknownConsole.status).toBe(404);
+    const unknownConsoleStream = await operationApp.handle(
+      new Request("http://localhost/api/servers/unknown/console/stream?after=0", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(unknownConsoleStream.status).toBe(404);
 
     const history = await operationApp.handle(
       new Request("http://localhost/api/servers/production/operations", {

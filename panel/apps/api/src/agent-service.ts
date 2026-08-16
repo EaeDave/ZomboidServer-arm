@@ -59,6 +59,7 @@ export interface AgentService {
     serverId: string,
     cursor: number,
     lines: string[],
+    resync: boolean,
   ): Promise<number>;
   completeJob(
     agentId: string,
@@ -116,6 +117,13 @@ export class AgentPayloadError extends Error {
   constructor() {
     super("agent payload exceeds the bounded operation event limits");
     this.name = "AgentPayloadError";
+  }
+}
+
+export class AgentCursorMismatchError extends Error {
+  constructor() {
+    super("console cursor does not continue the persisted stream");
+    this.name = "AgentCursorMismatchError";
   }
 }
 
@@ -600,6 +608,14 @@ export class DatabaseAgentService implements AgentService {
       .orderBy(after === 0 ? desc(consoleLogEntries.id) : asc(consoleLogEntries.id))
       .limit(500);
     const orderedRows = after === 0 ? rows.reverse() : rows;
+    if (after === 0 && orderedRows.length === 0) {
+      const [server] = await this.getDatabase()
+        .select({ id: serverInstances.id })
+        .from(serverInstances)
+        .where(eq(serverInstances.serviceName, serverId))
+        .limit(1);
+      if (!server) throw new ServerNotFoundError();
+    }
     return orderedRows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
   }
 
@@ -750,10 +766,11 @@ export class DatabaseAgentService implements AgentService {
     serverId: string,
     cursor: number,
     lines: string[],
+    resync: boolean,
   ): Promise<number> {
     const encodedBytes = Buffer.byteLength(JSON.stringify(lines), "utf8");
     if (
-      !Number.isInteger(cursor) ||
+      !Number.isSafeInteger(cursor) ||
       cursor < lines.length ||
       lines.length === 0 ||
       lines.length > 200 ||
@@ -765,32 +782,49 @@ export class DatabaseAgentService implements AgentService {
     const agent = await this.authorizeAgent(agentId, accessToken);
     const database = this.getDatabase();
     const [server] = await database
-      .select({ id: serverInstances.id, consoleLogCursor: serverInstances.consoleLogCursor })
+      .select({ id: serverInstances.id })
       .from(serverInstances)
       .where(and(eq(serverInstances.agentId, agent.id), eq(serverInstances.serviceName, serverId)))
       .limit(1);
     if (!server) throw new ServerNotFoundError();
 
     const acceptedCursor = await database.transaction(async (transaction) => {
-      const [advanced] = await transaction
-        .update(serverInstances)
-        .set({ consoleLogCursor: cursor })
-        .where(and(eq(serverInstances.id, server.id), lt(serverInstances.consoleLogCursor, cursor)))
-        .returning({ consoleLogCursor: serverInstances.consoleLogCursor });
-      if (!advanced) return server.consoleLogCursor;
+      const [current] = await transaction
+        .select({ consoleLogCursor: serverInstances.consoleLogCursor })
+        .from(serverInstances)
+        .where(eq(serverInstances.id, server.id))
+        .for("update");
+      if (!current) throw new ServerNotFoundError();
+
+      const storedCursor = current.consoleLogCursor;
+      const incomingStart = cursor - lines.length + 1;
+      if (!resync && cursor <= storedCursor) return storedCursor;
+      if (!resync && incomingStart > storedCursor + 1) throw new AgentCursorMismatchError();
+
+      // A missing or corrupt local state file requests a one-time rebase. Replays otherwise keep
+      // their original cursor range, allowing the overlapping prefix to remain idempotent.
+      const firstLine = resync ? 0 : Math.max(0, storedCursor - incomingStart + 1);
+      const appendedLines = lines.slice(firstLine);
+      const nextCursor = resync ? storedCursor + appendedLines.length : cursor;
+      if (appendedLines.length === 0) return storedCursor;
+
       await transaction
-        .insert(consoleLogEntries)
-        .values(
-          lines.map((line, index) => ({
-            serverId: server.id,
-            agentCursor: cursor - lines.length + index + 1,
-            line,
-          })),
-        )
-        // The API response may have reached the agent before its local cursor state was flushed.
-        // Keep newly observed suffixes while making that replay safe and idempotent.
-        .onConflictDoNothing();
-      return advanced.consoleLogCursor;
+        .update(serverInstances)
+        .set({ consoleLogCursor: nextCursor })
+        .where(
+          and(
+            eq(serverInstances.id, server.id),
+            eq(serverInstances.consoleLogCursor, storedCursor),
+          ),
+        );
+      await transaction.insert(consoleLogEntries).values(
+        appendedLines.map((line, index) => ({
+          serverId: server.id,
+          agentCursor: resync ? storedCursor + index + 1 : incomingStart + firstLine + index,
+          line,
+        })),
+      );
+      return nextCursor;
     });
     await this.trimConsoleLogs(database, server.id);
     return acceptedCursor;

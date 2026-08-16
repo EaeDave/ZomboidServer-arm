@@ -78,6 +78,13 @@
       "when": 1786921764795,
       "tag": "0010_secret_black_panther",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786923925835,
+      "tag": "0011_clammy_karen_page",
+      "breakpoints": true
     }
   ]
 }

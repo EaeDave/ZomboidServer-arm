@@ -53,6 +53,7 @@ error_response() {
   RESPONSE_MESSAGE="$message" \
   python3 - <<'PY'
 import json
+import hashlib
 import os
 
 print(
@@ -379,17 +380,18 @@ initial_console_position() {
   case "$initial_lines" in ''|*[!0-9]*) return 64 ;; esac
   [ "$initial_lines" -ge 1 ] 2>/dev/null && [ "$initial_lines" -le 500 ] 2>/dev/null || return 64
   LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" LOG_INITIAL_LINES="$initial_lines" python3 - <<'PY'
+import hashlib
 import os
 
 base = os.path.realpath(os.environ["LOG_BASE"])
 path = os.path.realpath(os.environ["LOG_FILE"])
 if os.path.commonpath((base, path)) != base:
-    print("0 0 0")
+    print("0 0 0 1 -")
     raise SystemExit
 try:
     stat = os.stat(path)
 except OSError:
-    print("0 0 0")
+    print("0 0 0 1 -")
     raise SystemExit
 
 start = max(0, stat.st_size - 256 * 1024)
@@ -398,7 +400,7 @@ try:
         handle.seek(start)
         raw = handle.read()
 except OSError:
-    print(f"{stat.st_ino} {stat.st_size} 0")
+    print(f"{stat.st_ino} {stat.st_size} 0 1 -")
     raise SystemExit
 if start:
     newline = raw.find(b"\n")
@@ -409,36 +411,35 @@ lines = raw.splitlines(keepends=True)
 keep = int(os.environ["LOG_INITIAL_LINES"])
 if len(lines) > keep:
     start += sum(len(line) for line in lines[:-keep])
-print(f"{stat.st_ino} {start} 0")
+try:
+    with open(path, "rb") as handle:
+        handle.seek(max(0, start - 64))
+        fingerprint = hashlib.sha256(handle.read(start - max(0, start - 64))).hexdigest()
+except OSError:
+    fingerprint = "-"
+print(f"{stat.st_ino} {start} 0 1 {fingerprint}")
 PY
 }
 
 read_console_state() {
-  local file="$1" inode cursor event_cursor
-  if [ -r "$file" ] && read -r inode cursor event_cursor <"$file"; then
-    case "$inode:$cursor:$event_cursor" in
-      ''|*:*:*:*) ;;
-      *[!0-9:]*|*::*) ;;
-      *)
-        [ -n "$inode" ] && [ -n "$cursor" ] && [ -n "$event_cursor" ] || {
-          initial_console_position
-          return
-        }
-        printf '%s %s %s\n' "$inode" "$cursor" "$event_cursor"
-        return 0
-        ;;
-    esac
+  local file="$1" inode cursor event_cursor resync fingerprint extra
+  if [ -r "$file" ] && read -r inode cursor event_cursor resync fingerprint extra <"$file" &&
+    [ -z "${extra:-}" ] && [[ "$inode" =~ ^[0-9]+$ ]] && [[ "$cursor" =~ ^[0-9]+$ ]] &&
+    [[ "$event_cursor" =~ ^[0-9]+$ ]] && { [ "$resync" = 0 ] || [ "$resync" = 1 ]; } &&
+    [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+    printf '%s %s %s %s %s\n' "$inode" "$cursor" "$event_cursor" "$resync" "$fingerprint"
+    return 0
   fi
   initial_console_position
 }
 
 save_console_state() {
-  local file="$1" inode="$2" cursor="$3" event_cursor="$4" tmp
+  local file="$1" inode="$2" cursor="$3" event_cursor="$4" resync="$5" fingerprint="$6" tmp
   mkdir -p "$(dirname "$file")" || return 1
   chmod 700 "$(dirname "$file")" || return 1
   tmp="$file.tmp.$$"
   umask 077
-  printf '%s %s %s\n' "$inode" "$cursor" "$event_cursor" >"$tmp" || return 1
+  printf '%s %s %s %s %s\n' "$inode" "$cursor" "$event_cursor" "$resync" "$fingerprint" >"$tmp" || return 1
   mv -f "$tmp" "$file"
 }
 
@@ -460,41 +461,56 @@ PY
 }
 
 read_console_delta() {
-  local cursor="$1" inode="$2" flush="$3"
-  LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" LOG_CURSOR="$cursor" LOG_INODE="$inode" LOG_FLUSH="$flush" python3 - <<'PY'
+  local cursor="$1" inode="$2" flush="$3" fingerprint="${4:-}"
+  LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" LOG_CURSOR="$cursor" LOG_INODE="$inode" LOG_FLUSH="$flush" LOG_FINGERPRINT="$fingerprint" python3 - <<'PY'
+import hashlib
 import json
 import os
 
 MAX_BYTES = 64 * 1024
 MAX_LINES = 100
 MAX_LINE = 2048
+MAX_JSON_BYTES = 60 * 1024
 path = os.environ["LOG_FILE"]
 base = os.path.realpath(os.environ["LOG_BASE"])
 path = os.path.realpath(path)
 if os.path.commonpath((base, path)) != base:
-    print(json.dumps({"inode": 0, "cursor": 0, "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": 0, "cursor": 0, "fingerprint": "-", "lines": []}, separators=(",", ":")))
     raise SystemExit
 try:
     stat = os.stat(path)
 except OSError:
-    print(json.dumps({"inode": 0, "cursor": 0, "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": 0, "cursor": 0, "fingerprint": "-", "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 inode = str(stat.st_ino)
 offset = int(os.environ.get("LOG_CURSOR", "0"))
+saved_fingerprint = os.environ.get("LOG_FINGERPRINT", "")
 if os.environ.get("LOG_INODE", "") != inode or offset > stat.st_size:
     offset = 0
 
 try:
     with open(path, "rb") as handle:
+        if offset and saved_fingerprint and saved_fingerprint != "-":
+            handle.seek(max(0, offset - 64))
+            current_fingerprint = hashlib.sha256(handle.read(offset - max(0, offset - 64))).hexdigest()
+            if current_fingerprint != saved_fingerprint:
+                # A same-inode truncate/rewrite can refill beyond the prior byte offset.
+                offset = 0
         handle.seek(offset)
         raw = handle.read(MAX_BYTES)
 except OSError:
-    print(json.dumps({"inode": inode, "cursor": offset, "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": "-", "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 if not raw:
-    print(json.dumps({"inode": inode, "cursor": offset, "lines": []}, separators=(",", ":")))
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(max(0, offset - 64))
+            fingerprint = hashlib.sha256(handle.read(offset - max(0, offset - 64))).hexdigest()
+    except OSError:
+        fingerprint = "-"
+    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": fingerprint, "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 flush = os.environ.get("LOG_FLUSH") == "1"
@@ -510,10 +526,27 @@ else:
     complete_end = 0
 
 pieces = raw[:complete_end].splitlines(keepends=True)
-selected = pieces[:MAX_LINES]
-consumed = sum(len(piece) for piece in selected)
-lines = [piece.rstrip(b"\r\n").decode("utf-8", "replace")[:MAX_LINE] for piece in selected]
-print(json.dumps({"inode": inode, "cursor": offset + consumed, "lines": lines}, separators=(",", ":")))
+selected = []
+encoded_bytes = 2
+for piece in pieces:
+    if len(selected) >= MAX_LINES:
+        break
+    line = piece.rstrip(b"\r\n").decode("utf-8", "replace")[:MAX_LINE]
+    candidate_bytes = len(json.dumps(line).encode("utf-8")) + (1 if selected else 0)
+    if selected and encoded_bytes + candidate_bytes > MAX_JSON_BYTES:
+        break
+    selected.append((piece, line))
+    encoded_bytes += candidate_bytes
+consumed = sum(len(piece) for piece, _ in selected)
+lines = [line for _, line in selected]
+next_offset = offset + consumed
+try:
+    with open(path, "rb") as handle:
+        handle.seek(max(0, next_offset - 64))
+        fingerprint = hashlib.sha256(handle.read(next_offset - max(0, next_offset - 64))).hexdigest()
+except OSError:
+    fingerprint = "-"
+print(json.dumps({"inode": inode, "cursor": next_offset, "fingerprint": fingerprint, "lines": lines}, separators=(",", ":")))
 PY
 }
 
@@ -543,20 +576,21 @@ PY
 }
 
 send_live_console_delta() {
-  local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" flush="$7"
-  local delta lines_json next_file_cursor next_inode line_count next_event_cursor body response accepted_cursor
-  delta="$(read_console_delta "$file_cursor" "$inode" "$flush")" || return 1
+  local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" resync="$7" fingerprint="$8" flush="$9"
+  local delta lines_json next_file_cursor next_inode next_fingerprint line_count next_event_cursor body response accepted_cursor
+  delta="$(read_console_delta "$file_cursor" "$inode" "$flush" "$fingerprint")" || return 1
   next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
   next_inode="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["inode"])')"
+  next_fingerprint="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["fingerprint"])')"
   lines_json="$(DELTA="$delta" python3 -c 'import json, os; print(json.dumps(json.loads(os.environ["DELTA"])["lines"], separators=(",", ":")))')"
   line_count="$(LINES="$lines_json" python3 -c 'import json, os; print(len(json.loads(os.environ["LINES"])))')"
   next_event_cursor=$((event_cursor + line_count))
   if [ "$lines_json" != "[]" ]; then
-    body="$(SERVER_ID="$PZ_SERVER_ID" CURSOR="$next_event_cursor" LINES="$lines_json" python3 - <<'PY'
+    body="$(SERVER_ID="$PZ_SERVER_ID" CURSOR="$next_event_cursor" RESYNC="$resync" LINES="$lines_json" python3 - <<'PY'
 import json
 import os
 
-print(json.dumps({"serverId": os.environ["SERVER_ID"], "cursor": int(os.environ["CURSOR"]), "lines": json.loads(os.environ["LINES"])}, separators=(",", ":")))
+print(json.dumps({"serverId": os.environ["SERVER_ID"], "cursor": int(os.environ["CURSOR"]), "resync": os.environ["RESYNC"] == "1", "lines": json.loads(os.environ["LINES"])}, separators=(",", ":")))
 PY
     )"
     response="$(post_console_body "$url" "$agent_id" "$token" "$body")" || return 1
@@ -574,10 +608,13 @@ PY
     # A higher API cursor explicitly resynchronizes it without replaying the whole console.
     [ "$accepted_cursor" -ge "$next_event_cursor" ] || return 1
     next_event_cursor="$accepted_cursor"
+    resync=0
   fi
   LOG_NEXT_CURSOR="$next_file_cursor"
   LOG_NEXT_INODE="$next_inode"
   LOG_NEXT_EVENT_CURSOR="$next_event_cursor"
+  LOG_NEXT_RESYNC="$resync"
+  LOG_NEXT_FINGERPRINT="$next_fingerprint"
 }
 
 post_result_logs() {
@@ -711,13 +748,14 @@ poll_agent() {
     return 64
   }
   local active_file active_id active_pid active_start dead_worker_rc
-  local console_state console_inode console_file_cursor console_event_cursor
+  local console_state console_inode console_file_cursor console_event_cursor console_resync console_fingerprint
   agent_state_dir >/dev/null || return $?
   active_file="$(active_job_file)" || return $?
   mkdir -p "$(dirname "$active_file")" || return 1
   console_state="$(console_state_file)" || return $?
-  read -r console_inode console_file_cursor console_event_cursor < <(read_console_state "$console_state") ||
-    return 1
+  read -r console_inode console_file_cursor console_event_cursor console_resync console_fingerprint < <(
+    read_console_state "$console_state"
+  ) || return 1
   url="${url%/}"
   require_secure_url "$url" || return $?
 
@@ -810,11 +848,15 @@ PY
       fi
 
       if send_live_console_delta "$url" "$agent_id" "$access_token" \
-        "$console_file_cursor" "$console_inode" "$console_event_cursor" 0; then
+        "$console_file_cursor" "$console_inode" "$console_event_cursor" "$console_resync" \
+        "$console_fingerprint" 0; then
         console_file_cursor="$LOG_NEXT_CURSOR"
         console_inode="$LOG_NEXT_INODE"
         console_event_cursor="$LOG_NEXT_EVENT_CURSOR"
-        save_console_state "$console_state" "$console_inode" "$console_file_cursor" "$console_event_cursor" ||
+        console_resync="$LOG_NEXT_RESYNC"
+        console_fingerprint="$LOG_NEXT_FINGERPRINT"
+        save_console_state "$console_state" "$console_inode" "$console_file_cursor" \
+          "$console_event_cursor" "$console_resync" "$console_fingerprint" ||
           printf 'pz-agent: could not persist console cursor; retrying from the prior cursor\n' >&2
       else
         printf 'pz-agent: console publish failed; retrying\n' >&2
