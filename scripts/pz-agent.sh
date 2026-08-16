@@ -259,9 +259,46 @@ post_completion() {
   return 1
 }
 
+dead_letter_completion() {
+  local operation_id="$1" body="$2"
+  local state_dir="${PZ_AGENT_STATE_DIR:-${PZ_CACHEDIR:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/zomboid-agent}/agent-state}"
+  local tmp
+  case "$operation_id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  mkdir -p "$state_dir" || return 1
+  chmod 700 "$state_dir" || return 1
+  umask 077
+  tmp="$state_dir/.${operation_id}.tmp.$$"
+  if ! printf '%s\n' "$body" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$state_dir/$operation_id.json"
+}
+
+retry_dead_letters() {
+  local url="$1" agent_id="$2" token="$3"
+  local state_dir="${PZ_AGENT_STATE_DIR:-${PZ_CACHEDIR:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/zomboid-agent}/agent-state}"
+  local file operation_id body rc
+  [ -d "$state_dir" ] || return 0
+  shopt -s nullglob
+  local -a files=("$state_dir"/*.json)
+  shopt -u nullglob
+  for file in "${files[@]}"; do
+    operation_id="${file##*/}"
+    operation_id="${operation_id%.json}"
+    body="$(cat "$file" 2>/dev/null)" || continue
+    if post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$body"; then
+      rm -f "$file"
+    else
+      rc=$?
+      [ "$rc" -eq 2 ] && return 2
+    fi
+  done
+}
+
 poll_agent() {
   local url="${PZ_AGENT_URL:-}" agent_id="${PZ_AGENT_ID:-}" access_token="${PZ_AGENT_ACCESS_TOKEN:-}"
-  local interval="${PZ_AGENT_INTERVAL:-15}" status payload completion_rc fallback_completion
+  local interval="${PZ_AGENT_INTERVAL:-15}" status payload completion_rc fallback_completion dead_letter_rc
   local pending_job_id="" pending_completion="" pending_completion_attempts=0
   local pending_completion_retry_limit="${PZ_AGENT_PENDING_COMPLETION_RETRIES:-3}"
   [ -n "$url" ] || { printf 'pz-agent: PZ_AGENT_URL is required\n' >&2; return 64; }
@@ -278,6 +315,12 @@ poll_agent() {
   require_secure_url "$url" || return $?
 
   while :; do
+    retry_dead_letters "$url" "$agent_id" "$access_token"
+    dead_letter_rc=$?
+    [ "$dead_letter_rc" -eq 2 ] && {
+      printf 'pz-agent: agent authorization failed while replaying dead letters\n' >&2
+      return 1
+    }
     if [ -n "$pending_job_id" ]; then
       pending_completion_attempts=$((pending_completion_attempts + 1))
       if post_completion "$url/api/agents/$agent_id/jobs/$pending_job_id/complete" "$access_token" "$pending_completion"; then
@@ -299,11 +342,16 @@ poll_agent() {
           completion_rc=$?
           [ "$completion_rc" -eq 2 ] && return 1
           if [ "$pending_completion_attempts" -ge "$pending_completion_retry_limit" ]; then
-            printf 'pz-agent: pending completion dead-lettered after %s attempts; continuing\n' \
-              "$pending_completion_attempts" >&2
-            pending_job_id=""
-            pending_completion=""
-            pending_completion_attempts=0
+            if dead_letter_completion "$pending_job_id" "$pending_completion"; then
+              printf 'pz-agent: pending completion dead-lettered after %s attempts; continuing\n' \
+                "$pending_completion_attempts" >&2
+              pending_job_id=""
+              pending_completion=""
+              pending_completion_attempts=0
+            else
+              printf 'pz-agent: could not persist pending completion; retaining retry\n' >&2
+              pending_completion_attempts=0
+            fi
           else
             printf 'pz-agent: pending completion rejected; retaining retry (%s/%s)\n' \
               "$pending_completion_attempts" "$pending_completion_retry_limit" >&2
@@ -437,7 +485,7 @@ PY
             }
             pending_job_id="$job_id"
             pending_completion="$completion"
-            pending_completion_attempts=1
+            pending_completion_attempts=0
             printf 'pz-agent: job completion failed; retaining for retry\n' >&2
           fi
         fi
