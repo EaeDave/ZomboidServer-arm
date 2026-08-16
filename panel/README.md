@@ -28,6 +28,7 @@ bun run dev:web
 ## Deployment model
 
 Coolify builds the control-plane image from the repository. The image must not contain the PZ
-server, FEX RootFS, worlds or saves. A future host `pz-agent` will provide the narrow, allowlisted operations over a private
-authenticated transport. See [`docs/deployment-coolify.md`](../docs/deployment-coolify.md) for
-Coolify configuration and the safe rollout sequence.
+server, FEX RootFS, worlds or saves. The host `pz-agent` provides narrow, allowlisted operations
+over an outbound authenticated transport; mutating access remains staging-gated. See
+[`docs/deployment-coolify.md`](../docs/deployment-coolify.md) for Coolify configuration and the
+safe rollout sequence.

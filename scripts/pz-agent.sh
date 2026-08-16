@@ -2,9 +2,8 @@
 #
 # pz-agent — narrow stdio boundary for the host control plane.
 #
-# This first implementation supports status heartbeats and a local stdio protocol only. The
-# outbound --poll mode never opens a listening port on the VPS. Mutating operations stay disabled
-# until their pzctl core functions and audit semantics are tested.
+# The outbound --poll mode never opens a listening port on the VPS. It sends heartbeats and
+# claims only typed, allowlisted jobs; mutating jobs must be validated in staging before use.
 set -uo pipefail
 
 PZCTL_BIN="${PZCTL_BIN:-/usr/local/bin/pzctl}"
@@ -17,6 +16,22 @@ PZ_COMMON="${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
 }
 . "$PZ_COMMON"
 pz_load_env
+
+require_secure_url() {
+  case "$1" in
+    https://*) ;;
+    http://*)
+      [ "${PZ_AGENT_ALLOW_INSECURE:-0}" = "1" ] || {
+        printf 'pz-agent: HTTPS is required (set PZ_AGENT_ALLOW_INSECURE=1 only for local testing)\n' >&2
+        return 64
+      }
+      ;;
+    *)
+      printf 'pz-agent: PZ_AGENT_URL must use https://\n' >&2
+      return 64
+      ;;
+  esac
+}
 
 agent_help() {
   cat <<'EOF'
@@ -177,6 +192,7 @@ enroll_agent() {
   name="${PZ_AGENT_NAME:-$(hostname)}"
   display_name="${PZ_AGENT_DISPLAY_NAME:-$PZ_SERVERNAME}"
   url="${url%/}"
+  require_secure_url "$url" || return $?
 
   local payload response
   payload="$(
@@ -225,6 +241,7 @@ poll_agent() {
   case "$interval" in ''|*[!0-9]*) printf 'pz-agent: PZ_AGENT_INTERVAL must be an integer\n' >&2; return 64 ;; esac
   [ "$interval" -ge 5 ] 2>/dev/null || { printf 'pz-agent: PZ_AGENT_INTERVAL must be at least 5 seconds\n' >&2; return 64; }
   url="${url%/}"
+  require_secure_url "$url" || return $?
 
   while :; do
     if status="$("$PZCTL_BIN" status --json 2>/dev/null)"; then

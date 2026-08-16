@@ -30,10 +30,11 @@ AGENT_STALE_SECONDS=60
 PORT=3000
 ```
 
-`HOST` is set to `0.0.0.0` by the image. The API's default status adapter is still fake in development; production reads the latest
+`HOST` is set to `0.0.0.0` by the image. The API's default status adapter is fake only in development; production reads the latest
 heartbeat stored by PostgreSQL. The host-side `pz-agent --stdio` and outbound `--poll` boundary
 supports status plus allowlisted start/stop/restart/logs/backup/mods/settings/world-reset jobs.
-The mutating flows still require staging validation before production access is enabled.
+`PZ_AGENT_URL` must use HTTPS; `PZ_AGENT_ALLOW_INSECURE=1` is reserved for local testing. The
+mutating flows still require staging validation before production access is enabled.
 
 ## Safe rollout sequence
 
