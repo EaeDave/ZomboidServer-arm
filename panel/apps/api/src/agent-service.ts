@@ -4,7 +4,9 @@ import type {
   AgentEnrollmentRequest,
   AgentJob,
   AgentJobCompleteRequest,
+  AgentOperationRequest,
   AgentStatus,
+  OperationCreateRequest,
   OperationRecord,
 } from "@zomboid/contracts";
 import { agents, auditEvents, operations, serverInstances } from "@zomboid/db";
@@ -19,6 +21,11 @@ export interface AgentService {
   enroll(input: AgentEnrollmentRequest): Promise<AgentEnrollmentResult>;
   heartbeat(agentId: string, accessToken: string, status: AgentStatus): Promise<void>;
   getStatus(serverId: string): Promise<AgentStatus>;
+  enqueueOperation(
+    serverId: string,
+    actorUserId: string,
+    request: OperationCreateRequest,
+  ): Promise<OperationRecord>;
   enqueueStatus(serverId: string, actorUserId: string): Promise<OperationRecord>;
   getOperation(operationId: string): Promise<OperationRecord>;
   claimNext(agentId: string, accessToken: string): Promise<AgentJob | null>;
@@ -85,6 +92,21 @@ function operationRecord(row: {
     finishedAt: dateString(row.finishedAt),
     error: row.error,
   };
+}
+
+function operationRequest(
+  operationId: string,
+  serverId: string,
+  kind: string,
+  payload: unknown,
+): AgentOperationRequest {
+  return {
+    protocolVersion: 1,
+    requestId: operationId,
+    serverId,
+    kind,
+    payload,
+  } as AgentOperationRequest;
 }
 
 export class DatabaseAgentService implements AgentService {
@@ -172,7 +194,11 @@ export class DatabaseAgentService implements AgentService {
     return row.lastStatus as AgentStatus;
   }
 
-  async enqueueStatus(serverId: string, actorUserId: string): Promise<OperationRecord> {
+  async enqueueOperation(
+    serverId: string,
+    actorUserId: string,
+    request: OperationCreateRequest,
+  ): Promise<OperationRecord> {
     const database = this.getDatabase();
     const [server] = await database
       .select({ id: serverInstances.id, serviceName: serverInstances.serviceName })
@@ -187,8 +213,8 @@ export class DatabaseAgentService implements AgentService {
       .values({
         serverId: server.id,
         actorUserId,
-        kind: "status",
-        payload: {},
+        kind: request.kind,
+        payload: request.payload,
       })
       .returning({
         operationId: operations.id,
@@ -204,7 +230,7 @@ export class DatabaseAgentService implements AgentService {
     const record = operationRecord({
       ...created,
       serverId: server.serviceName,
-      kind: "status",
+      kind: request.kind,
     });
     await database.insert(auditEvents).values({
       actorUserId,
@@ -212,6 +238,10 @@ export class DatabaseAgentService implements AgentService {
       metadata: { operationId: record.operationId, serverId, kind: record.kind },
     });
     return record;
+  }
+
+  async enqueueStatus(serverId: string, actorUserId: string): Promise<OperationRecord> {
+    return this.enqueueOperation(serverId, actorUserId, { kind: "status", payload: {} });
   }
 
   async getOperation(operationId: string): Promise<OperationRecord> {
@@ -242,16 +272,12 @@ export class DatabaseAgentService implements AgentService {
       .select({
         operationId: operations.id,
         serverId: serverInstances.serviceName,
+        kind: operations.kind,
+        payload: operations.payload,
       })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
-      .where(
-        and(
-          eq(serverInstances.agentId, agent.id),
-          eq(operations.status, "queued"),
-          eq(operations.kind, "status"),
-        ),
-      )
+      .where(and(eq(serverInstances.agentId, agent.id), eq(operations.status, "queued")))
       .orderBy(asc(operations.createdAt))
       .limit(1);
 
@@ -267,13 +293,7 @@ export class DatabaseAgentService implements AgentService {
 
     return {
       operationId: claimed.id,
-      request: {
-        protocolVersion: 1,
-        requestId: claimed.id,
-        serverId: candidate.serverId,
-        kind: "status",
-        payload: {},
-      },
+      request: operationRequest(claimed.id, candidate.serverId, candidate.kind, candidate.payload),
     };
   }
 

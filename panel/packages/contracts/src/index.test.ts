@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import {
   agentOperationRequestSchema,
   agentOperationResponseSchema,
+  operationCreateRequestSchema,
   worldResetOperationRequestSchema,
 } from "./index";
 
@@ -20,6 +21,19 @@ describe("agent operation contracts", () => {
         },
       }),
     ).toBe(true);
+  });
+
+  it("accepts only allowlisted operation payloads", () => {
+    expect(Value.Check(operationCreateRequestSchema, { kind: "start", payload: {} })).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, { kind: "logs", payload: { lines: 100 } }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "restart",
+        payload: { command: "rm -rf /" },
+      }),
+    ).toBe(false);
   });
 
   it("accepts a status success and a bounded error response", () => {

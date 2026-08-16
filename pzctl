@@ -16,12 +16,54 @@ ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
 pz_load_env
 PZ_MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 
+cli_start_json() {
+  local rc=0
+  PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY" >/dev/null 2>&1 || rc=$?
+  status_json
+  return "$rc"
+}
+
+cli_stop_json() {
+  local rc=0
+  sudo -n systemctl stop "$PZ_SERVICE" >/dev/null 2>&1 || rc=$?
+  status_json
+  return "$rc"
+}
+
+cli_restart_json() {
+  local rc=0
+  PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY" >/dev/null 2>&1 || rc=$?
+  status_json
+  return "$rc"
+}
+
+cli_backup_json() {
+  local out
+  out="$(backup_world "$PZ_BACKUPS" pzbackup)" || return 1
+  cp "$PZ_JSON" "$PZ_BACKUPS/ProjectZomboid64_$(date +%Y%m%d_%H%M%S).json" 2>/dev/null || true
+  fix_owner "$PZ_BACKUPS"
+  BACKUP_PATH="$out" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"backupPath": os.environ["BACKUP_PATH"]}, separators=(",", ":")))
+PY
+}
+
+cli_logs_json() {
+  local lines="${1:-50}"
+  case "$lines" in ''|*[!0-9]*) return 64 ;; esac
+  [ "$lines" -ge 1 ] && [ "$lines" -le 1000 ] || return 64
+  tail -n "$lines" "$PZ_CONSOLE" 2>/dev/null | python3 -c 'import json, sys; print(json.dumps({"lines": sys.stdin.read().splitlines()}, separators=(",", ":")))'
+}
+
 cli_help() {
   cat <<'EOF'
-Usage: pzctl [status [--json] | --json status | --version | --help]
+Usage: pzctl [status|start|stop|restart|backup|logs] [--json] [lines]
+       pzctl --version | --help
 
-The no-argument form opens the interactive control panel. The status command is
-non-interactive and emits the versioned JSON contract used by pz-agent.
+The no-argument form opens the interactive control panel. The listed commands are
+non-interactive JSON operations used by pz-agent.
 EOF
 }
 
@@ -35,13 +77,33 @@ if [ "$#" -gt 0 ]; then
       status_json
       exit 0
       ;;
-    --json)
-      [ "$#" -eq 2 ] && [ "$2" = status ] || {
-        printf 'pzctl: --json currently supports only status\n' >&2
+    start|stop|restart|backup)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || {
+        printf 'pzctl: %s requires --json\n' "$1" >&2
         exit 64
       }
-      status_json
-      exit 0
+      "cli_${1}_json"
+      exit $?
+      ;;
+    logs)
+      if [ "$#" -eq 1 ]; then cli_logs_json; elif [ "$2" = --json ] && [ "$#" -le 3 ]; then cli_logs_json "${3:-50}"; else
+        printf 'pzctl: logs syntax is logs --json [lines]\n' >&2
+        exit 64
+      fi
+      exit $?
+      ;;
+    --json)
+      [ "$#" -ge 2 ] || {
+        printf 'pzctl: --json requires an operation\n' >&2
+        exit 64
+      }
+      case "$2" in
+        status) [ "$#" -eq 2 ] && status_json || exit 64 ;;
+        start|stop|restart|backup) [ "$#" -eq 2 ] && "cli_${2}_json" || exit 64 ;;
+        logs) [ "$#" -le 3 ] && cli_logs_json "${3:-50}" || exit 64 ;;
+        *) printf 'pzctl: unsupported JSON operation: %s\n' "$2" >&2; exit 64 ;;
+      esac
+      exit $?
       ;;
     --version|-V)
       printf '%s\n' "$PZCTL_VERSION"

@@ -63,6 +63,9 @@ describe("control-plane API", () => {
       async getStatus() {
         throw new Error("not used in enrollment test");
       },
+      async enqueueOperation() {
+        throw new Error("not used in enrollment test");
+      },
       async enqueueStatus() {
         throw new Error("not used in enrollment test");
       },
@@ -191,6 +194,9 @@ describe("control-plane API", () => {
       async heartbeat() {},
       async getStatus() {
         throw new Error("not used in operation test");
+      },
+      async enqueueOperation() {
+        return operation;
       },
       async enqueueStatus() {
         return operation;

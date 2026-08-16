@@ -150,7 +150,8 @@ export const agentOperationErrorResponseSchema = Type.Object({
   }),
 });
 
-const emptyPayloadSchema = Type.Object({});
+const closedObjectOptions = { additionalProperties: false } as const;
+const emptyPayloadSchema = Type.Object({}, closedObjectOptions);
 
 const operationBaseSchema = {
   protocolVersion: Type.Literal(1),
@@ -296,10 +297,87 @@ export const operationStatusSchema = Type.Union([
   Type.Literal("cancelled"),
 ]);
 
-export const operationCreateRequestSchema = Type.Object({
-  kind: Type.Literal("status"),
-  payload: emptyPayloadSchema,
-});
+export const operationCreateRequestSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("status"), payload: emptyPayloadSchema }, closedObjectOptions),
+  Type.Object({ kind: Type.Literal("start"), payload: emptyPayloadSchema }, closedObjectOptions),
+  Type.Object({ kind: Type.Literal("stop"), payload: emptyPayloadSchema }, closedObjectOptions),
+  Type.Object({ kind: Type.Literal("restart"), payload: emptyPayloadSchema }, closedObjectOptions),
+  Type.Object(
+    {
+      kind: Type.Literal("logs"),
+      payload: Type.Object(
+        { lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) },
+        closedObjectOptions,
+      ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("backup"),
+      payload: Type.Object(
+        { keep: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) },
+        closedObjectOptions,
+      ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    { kind: Type.Literal("mods.list"), payload: emptyPayloadSchema },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("mods.add"),
+      payload: Type.Object(
+        { workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }) },
+        closedObjectOptions,
+      ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("mods.remove"),
+      payload: Type.Object(
+        {
+          modIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+            minItems: 1,
+            maxItems: 100,
+          }),
+        },
+        closedObjectOptions,
+      ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("settings.update"),
+      payload: Type.Object(
+        {
+          public: Type.Optional(Type.Boolean()),
+          publicName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          password: Type.Optional(Type.String({ maxLength: 128 })),
+          defaultPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
+          udpPort: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65535 })),
+        },
+        closedObjectOptions,
+      ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("world.reset"),
+      payload: Type.Object(
+        { confirm: Type.Literal(true), createBackup: Type.Optional(Type.Boolean()) },
+        closedObjectOptions,
+      ),
+    },
+    closedObjectOptions,
+  ),
+]);
 
 export type OperationCreateRequest = Static<typeof operationCreateRequestSchema>;
 
@@ -318,7 +396,7 @@ export type OperationRecord = Static<typeof operationRecordSchema>;
 
 export const agentJobSchema = Type.Object({
   operationId: Type.String({ minLength: 1 }),
-  request: statusOperationRequestSchema,
+  request: agentOperationRequestSchema,
 });
 
 export type AgentJob = Static<typeof agentJobSchema>;
@@ -329,7 +407,7 @@ export const agentJobResponseSchema = Type.Object({
 
 export const agentJobCompleteRequestSchema = Type.Object({
   status: Type.Union([Type.Literal("succeeded"), Type.Literal("failed")]),
-  result: Type.Optional(agentStatusSchema),
+  result: Type.Optional(Type.Unknown()),
   error: Type.Optional(Type.String({ maxLength: 1000 })),
 });
 

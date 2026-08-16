@@ -29,6 +29,7 @@ import {
   createDatabaseAuthService,
   readSessionToken,
   serializeClearedSessionCookie,
+  roleAtLeast,
   serializeSessionCookie,
   type AuthService,
 } from "./auth";
@@ -45,6 +46,9 @@ import {
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
 const version = process.env.npm_package_version ?? "0.1.0";
+// Mutating operations stay disabled until the host service unit has a dedicated privileged
+// helper and the corresponding pzctl tests. Status is the only queued operation in this slice.
+const supportedOperationKinds = new Set(["status"]);
 type DatabaseCheck = () => Promise<void>;
 type AppOptions = { serveFrontend?: boolean };
 
@@ -269,7 +273,7 @@ export function createApp(
     )
     .post(
       "/api/servers/:serverId/operations",
-      async ({ params, request, set }) => {
+      async ({ body, params, request, set }) => {
         const token = readSessionToken(request.headers.get("cookie"));
         if (!token) {
           set.status = 401;
@@ -292,9 +296,20 @@ export function createApp(
           set.status = 401;
           return { error: { code: "unauthenticated", message: "Login required" } };
         }
+        if (!supportedOperationKinds.has(body.kind)) {
+          set.status = 400;
+          return {
+            error: { code: "operation_disabled", message: "This operation is not enabled yet" },
+          };
+        }
+        const requiredRole = body.kind === "status" || body.kind === "logs" ? "viewer" : "operator";
+        if (!roleAtLeast(user.role, requiredRole)) {
+          set.status = 403;
+          return { error: { code: "forbidden", message: "Insufficient role for this operation" } };
+        }
 
         try {
-          const operation = await agentService.enqueueStatus(params.serverId, user.id);
+          const operation = await agentService.enqueueOperation(params.serverId, user.id, body);
           set.status = 202;
           return operation;
         } catch (error) {
@@ -317,7 +332,9 @@ export function createApp(
         body: operationCreateRequestSchema,
         response: {
           202: operationRecordSchema,
+          400: agentOperationErrorResponseSchema,
           401: agentOperationErrorResponseSchema,
+          403: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,

@@ -242,7 +242,7 @@ PY
         printf 'pz-agent: heartbeat failed; retrying\n' >&2
       fi
 
-      local job_response job_id completion
+      local job_response job_id job_kind job_payload completion result_status lines
       if job_response="$(curl -fsS --max-time 20 -X POST \
         -H "authorization: Bearer $access_token" \
         "$url/api/agents/$agent_id/jobs/claim" 2>/dev/null)"; then
@@ -254,17 +254,61 @@ job = json.loads(os.environ["JOB"]).get("job")
 print(job["operationId"] if job else "")
 PY
         )"
-        if [ -n "$job_id" ]; then
-          if result_status="$("$PZCTL_BIN" status --json 2>/dev/null)"; then
-            completion="$(STATUS="$result_status" python3 - <<'PY'
+        job_kind="$(JOB="$job_response" python3 - <<'PY'
 import json
 import os
 
-print(json.dumps({"status": "succeeded", "result": json.loads(os.environ["STATUS"])}, separators=(",", ":")))
+job = json.loads(os.environ["JOB"]).get("job")
+print(job["request"]["kind"] if job else "")
+PY
+        )"
+        job_payload="$(JOB="$job_response" python3 - <<'PY'
+import json
+import os
+
+job = json.loads(os.environ["JOB"]).get("job")
+print(json.dumps(job["request"]["payload"] if job else {}, separators=(",", ":")))
+PY
+        )"
+        if [ -n "$job_id" ]; then
+          case "$job_kind" in
+            status|start|stop|restart)
+              if result_status="$("$PZCTL_BIN" "$job_kind" --json 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            logs)
+              lines="$(PAYLOAD="$job_payload" python3 - <<'PY'
+import json
+import os
+
+print(json.loads(os.environ["PAYLOAD"]).get("lines", 50))
+PY
+              )"
+              if result_status="$("$PZCTL_BIN" logs --json "$lines" 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            backup)
+              if result_status="$("$PZCTL_BIN" backup --json 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            *)
+              result_status=""
+              ;;
+          esac
+
+          if [ -n "$result_status" ]; then
+            completion="$(RESULT="$result_status" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"status": "succeeded", "result": json.loads(os.environ["RESULT"])}, separators=(",", ":")))
 PY
             )"
           else
-            completion='{"status":"failed","error":"local status command failed"}'
+            completion="$(KIND="$job_kind" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"status": "failed", "error": f"unsupported or failed operation: {os.environ['KIND']}"}, separators=(",", ":")))
+PY
+            )"
           fi
           if ! curl -fsS --max-time 20 \
             -H "authorization: Bearer $access_token" \

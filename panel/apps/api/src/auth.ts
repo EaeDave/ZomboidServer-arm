@@ -8,6 +8,12 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export type AuthRole = "admin" | "operator" | "viewer";
 
+const roleRank: Record<AuthRole, number> = { viewer: 0, operator: 1, admin: 2 };
+
+export function roleAtLeast(role: AuthRole, required: AuthRole): boolean {
+  return roleRank[role] >= roleRank[required];
+}
+
 export interface AuthUser {
   id: string;
   email: string;
