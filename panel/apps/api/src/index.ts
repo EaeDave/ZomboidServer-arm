@@ -11,6 +11,8 @@ import {
   agentHeartbeatResponseSchema,
   agentJobCompleteRequestSchema,
   agentJobCompleteResponseSchema,
+  agentJobLogRequestSchema,
+  agentJobProgressRequestSchema,
   agentJobResponseSchema,
   agentOperationErrorResponseSchema,
   agentStatusSchema,
@@ -23,6 +25,8 @@ import {
   databaseHealthResponseSchema,
   healthResponseSchema,
   operationCreateRequestSchema,
+  operationEventListResponseSchema,
+  operationListResponseSchema,
   operationRecordSchema,
 } from "@zomboid/contracts";
 import { checkDatabase } from "@zomboid/db/client";
@@ -40,10 +44,12 @@ import { AuditUnavailableError, createDatabaseAuditService, type AuditService } 
 import { FakeAgentAdapter, type AgentAdapter } from "./agent";
 import {
   AgentAlreadyEnrolledError,
+  AgentPayloadError,
   AgentStatusMismatchError,
   AgentUnauthorizedError,
   AgentUnavailableError,
   createDatabaseAgentService,
+  OperationConflictError,
   OperationNotFoundError,
   ServerNotFoundError,
   type AgentService,
@@ -424,6 +430,15 @@ export function createApp(
             set.status = 404;
             return { error: { code: "server_not_found", message: "Server was not found" } };
           }
+          if (error instanceof OperationConflictError) {
+            set.status = 409;
+            return {
+              error: {
+                code: "operation_conflict",
+                message: "Another operation is already queued or running for this server",
+              },
+            };
+          }
           set.status = error instanceof AgentUnavailableError ? 503 : 500;
           return {
             error: {
@@ -443,6 +458,7 @@ export function createApp(
           401: agentOperationErrorResponseSchema,
           403: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
+          409: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
@@ -488,6 +504,176 @@ export function createApp(
         },
       },
     )
+    .get(
+      "/api/servers/:serverId/operations",
+      async ({ params, query, request, set }) => {
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        try {
+          if (!(await auth.currentUser(token))) {
+            set.status = 401;
+            return { error: { code: "unauthenticated", message: "Login required" } };
+          }
+          const parsed = Number(query.limit ?? 50);
+          const limit = Number.isInteger(parsed) ? Math.max(1, Math.min(parsed, 100)) : 50;
+          return { operations: await agentService.listOperations(params.serverId, limit) };
+        } catch (error) {
+          set.status = error instanceof AuthUnavailableError ? 503 : 500;
+          return {
+            error: {
+              code: error instanceof AuthUnavailableError ? "auth_unavailable" : "operation_error",
+              message: "Operation history could not be read",
+            },
+          };
+        }
+      },
+      {
+        params: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+        query: Type.Object({ limit: Type.Optional(Type.String()) }),
+        response: {
+          200: operationListResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .get(
+      "/api/servers/:serverId/events",
+      async ({ params, query, request, set }) => {
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        try {
+          if (!(await auth.currentUser(token))) {
+            set.status = 401;
+            return { error: { code: "unauthenticated", message: "Login required" } };
+          }
+          const parsed = Number(query.after ?? 0);
+          const after = Number.isInteger(parsed) ? Math.max(0, parsed) : 0;
+          const events = await agentService.listEvents(params.serverId, after);
+          return { events, cursor: events.at(-1)?.id ?? after };
+        } catch (error) {
+          set.status = error instanceof AuthUnavailableError ? 503 : 500;
+          return {
+            error: {
+              code: error instanceof AuthUnavailableError ? "auth_unavailable" : "operation_error",
+              message: "Operation events could not be read",
+            },
+          };
+        }
+      },
+      {
+        params: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+        query: Type.Object({ after: Type.Optional(Type.String()) }),
+        response: {
+          200: operationEventListResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .get("/api/servers/:serverId/events/stream", async ({ params, request, set }) => {
+      const token = readSessionToken(request.headers.get("cookie"));
+      if (!token) {
+        set.status = 401;
+        return { error: { code: "unauthenticated", message: "Login required" } };
+      }
+      try {
+        if (!(await auth.currentUser(token))) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+      } catch (error) {
+        set.status = error instanceof AuthUnavailableError ? 503 : 500;
+        return {
+          error: {
+            code: error instanceof AuthUnavailableError ? "auth_unavailable" : "auth_error",
+            message: "Event stream is temporarily unavailable",
+          },
+        };
+      }
+
+      const encoder = new TextEncoder();
+      const streamUrl = new URL(request.url);
+      const lastEventId = request.headers.get("last-event-id");
+      const headerCursor = lastEventId === null ? Number.NaN : Number(lastEventId);
+      const queryCursor = Number(streamUrl.searchParams.get("after") ?? "");
+      let cursor = Number.isInteger(headerCursor) && headerCursor >= 0 ? headerCursor : queryCursor;
+      if (!Number.isInteger(cursor) || cursor < 0) cursor = 0;
+      const write = (
+        controller: ReadableStreamDefaultController<Uint8Array>,
+        event: string,
+        data: unknown,
+        id?: number,
+      ) => {
+        const prefix = id === undefined ? "" : `id: ${id}\n`;
+        try {
+          controller.enqueue(
+            encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          let closed = false;
+          let lastStatusAt = 0;
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              // The client may have already closed the response.
+            }
+          };
+          request.signal.addEventListener("abort", close, { once: true });
+          if (!write(controller, "ready", { cursor })) return close();
+          while (!closed) {
+            try {
+              const events = await agentService.listEvents(params.serverId, cursor);
+              for (const event of events) {
+                if (!write(controller, "operation", event, event.id)) return close();
+                cursor = event.id;
+              }
+              if (Date.now() - lastStatusAt >= 5_000) {
+                const status = await agent.getStatus(params.serverId);
+                if (!write(controller, "status", status)) return close();
+                lastStatusAt = Date.now();
+              } else if (!write(controller, "heartbeat", { cursor })) {
+                return close();
+              }
+            } catch {
+              if (
+                !closed &&
+                !write(controller, "warning", {
+                  message: "Realtime update temporarily unavailable",
+                })
+              )
+                return close();
+            }
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no",
+        },
+      });
+    })
     .post(
       "/api/agents/:agentId/jobs/claim",
       async ({ params, request, set }) => {
@@ -564,6 +750,107 @@ export function createApp(
           400: agentOperationErrorResponseSchema,
           401: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .post(
+      "/api/agents/:agentId/jobs/:operationId/progress",
+      async ({ body, params, request, set }) => {
+        const token = bearerToken(request);
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "missing_agent_token", message: "Bearer token required" } };
+        }
+        try {
+          await agentService.progressJob(params.agentId, token, params.operationId, body.message);
+          return { ok: true as const };
+        } catch (error) {
+          if (error instanceof AgentUnauthorizedError) {
+            set.status = 401;
+            return { error: { code: "invalid_agent_token", message: "Invalid agent token" } };
+          }
+          if (error instanceof OperationNotFoundError) {
+            set.status = 404;
+            return { error: { code: "operation_not_found", message: "Operation was not found" } };
+          }
+          if (error instanceof AgentUnavailableError) {
+            set.status = 503;
+            return {
+              error: { code: "agent_unavailable", message: "Operation progress was not accepted" },
+            };
+          }
+          set.status = 500;
+          return { error: { code: "agent_error", message: "Operation progress was not accepted" } };
+        }
+      },
+      {
+        params: Type.Object({
+          agentId: Type.String({ minLength: 1 }),
+          operationId: Type.String({ minLength: 1 }),
+        }),
+        body: agentJobProgressRequestSchema,
+        response: {
+          200: agentJobCompleteResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          404: agentOperationErrorResponseSchema,
+          500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .post(
+      "/api/agents/:agentId/jobs/:operationId/logs",
+      async ({ body, params, request, set }) => {
+        const token = bearerToken(request);
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "missing_agent_token", message: "Bearer token required" } };
+        }
+        try {
+          await agentService.appendJobLogs(
+            params.agentId,
+            token,
+            params.operationId,
+            body.cursor,
+            body.lines,
+          );
+          return { ok: true as const };
+        } catch (error) {
+          if (error instanceof AgentUnauthorizedError) {
+            set.status = 401;
+            return { error: { code: "invalid_agent_token", message: "Invalid agent token" } };
+          }
+          if (error instanceof OperationNotFoundError) {
+            set.status = 404;
+            return { error: { code: "operation_not_found", message: "Operation was not found" } };
+          }
+          if (error instanceof AgentPayloadError) {
+            set.status = 400;
+            return { error: { code: "invalid_agent_payload", message: error.message } };
+          }
+          if (error instanceof AgentUnavailableError) {
+            set.status = 503;
+            return {
+              error: { code: "agent_unavailable", message: "Operation logs were not accepted" },
+            };
+          }
+          set.status = 500;
+          return { error: { code: "agent_error", message: "Operation logs were not accepted" } };
+        }
+      },
+      {
+        params: Type.Object({
+          agentId: Type.String({ minLength: 1 }),
+          operationId: Type.String({ minLength: 1 }),
+        }),
+        body: agentJobLogRequestSchema,
+        response: {
+          200: agentJobCompleteResponseSchema,
+          400: agentOperationErrorResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          404: agentOperationErrorResponseSchema,
+          500: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
       },

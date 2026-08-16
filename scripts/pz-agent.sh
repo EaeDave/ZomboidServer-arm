@@ -307,6 +307,276 @@ retry_dead_letters() {
   done
 }
 
+active_job_file() {
+  local state_dir
+  state_dir="$(agent_state_dir)" || return $?
+  printf '%s/active-job\n' "$state_dir"
+}
+
+proc_start_time() {
+  local pid="$1"
+  [ -r "/proc/$pid/stat" ] || return 1
+  awk '{print $22}' "/proc/$pid/stat" 2>/dev/null
+}
+
+worker_alive() {
+  local pid="$1" expected_start state current_start
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$pid" -gt 0 ] 2>/dev/null || return 1
+  expected_start="$2"
+  [ -n "$expected_start" ] || return 1
+  current_start="$(proc_start_time "$pid")" || return 1
+  [ "$current_start" = "$expected_start" ] || return 1
+  state="$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)"
+  [ "$state" != Z ]
+}
+
+reconcile_dead_worker() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" active_file="$5" body rc
+  body='{"status":"failed","error":"host agent worker exited before reporting completion"}'
+  if post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$body"; then
+    rm -f "$active_file"
+    return 0
+  else
+    rc=$?
+  fi
+  if dead_letter_completion "$operation_id" "$body"; then
+    rm -f "$active_file"
+    [ "$rc" -eq 2 ] && return 2
+    return 0
+  fi
+  return 1
+}
+
+post_progress() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" message="$5"
+  local body
+  body="$(MESSAGE="$message" python3 -c 'import json, os; print(json.dumps({"message": os.environ["MESSAGE"]}, separators=(",", ":")))')"
+  curl -fsS --max-time 10 -H "authorization: Bearer $token" -H 'content-type: application/json' \
+    --data "$body" "$url/api/agents/$agent_id/jobs/$operation_id/progress" >/dev/null 2>&1
+}
+
+post_logs_body() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" body="$5"
+  curl -fsS --max-time 10 -H "authorization: Bearer $token" -H 'content-type: application/json' \
+    --data "$body" "$url/api/agents/$agent_id/jobs/$operation_id/logs" >/dev/null 2>&1
+}
+
+read_console_position() {
+  LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" python3 - <<'PY'
+import os
+
+base = os.path.realpath(os.environ["LOG_BASE"])
+path = os.path.realpath(os.environ["LOG_FILE"])
+if os.path.commonpath((base, path)) != base:
+    print("0 0")
+    raise SystemExit
+try:
+    stat = os.stat(path)
+    print(f"{stat.st_ino} {stat.st_size}")
+except OSError:
+    print("0 0")
+PY
+}
+
+read_console_delta() {
+  local cursor="$1" inode="$2" flush="$3"
+  LOG_FILE="$PZ_CONSOLE" LOG_BASE="$PZ_CACHEDIR" LOG_CURSOR="$cursor" LOG_INODE="$inode" LOG_FLUSH="$flush" python3 - <<'PY'
+import json
+import os
+
+MAX_BYTES = 64 * 1024
+MAX_LINES = 100
+MAX_LINE = 2048
+path = os.environ["LOG_FILE"]
+base = os.path.realpath(os.environ["LOG_BASE"])
+path = os.path.realpath(path)
+if os.path.commonpath((base, path)) != base:
+    print(json.dumps({"inode": 0, "cursor": 0, "lines": []}, separators=(",", ":")))
+    raise SystemExit
+try:
+    stat = os.stat(path)
+except OSError:
+    print(json.dumps({"inode": 0, "cursor": 0, "lines": []}, separators=(",", ":")))
+    raise SystemExit
+
+inode = str(stat.st_ino)
+offset = int(os.environ.get("LOG_CURSOR", "0"))
+if os.environ.get("LOG_INODE", "") != inode or offset > stat.st_size:
+    offset = 0
+
+try:
+    with open(path, "rb") as handle:
+        handle.seek(offset)
+        raw = handle.read(MAX_BYTES)
+except OSError:
+    print(json.dumps({"inode": inode, "cursor": offset, "lines": []}, separators=(",", ":")))
+    raise SystemExit
+
+if not raw:
+    print(json.dumps({"inode": inode, "cursor": offset, "lines": []}, separators=(",", ":")))
+    raise SystemExit
+
+flush = os.environ.get("LOG_FLUSH") == "1"
+last_newline = raw.rfind(b"\n")
+if flush:
+    complete_end = len(raw)
+elif last_newline >= 0:
+    complete_end = last_newline + 1
+elif len(raw) >= MAX_BYTES:
+    # A pathological line must not prevent the cursor from advancing forever.
+    complete_end = len(raw)
+else:
+    complete_end = 0
+
+pieces = raw[:complete_end].splitlines(keepends=True)
+selected = pieces[:MAX_LINES]
+consumed = sum(len(piece) for piece in selected)
+lines = [piece.rstrip(b"\r\n").decode("utf-8", "replace")[:MAX_LINE] for piece in selected]
+print(json.dumps({"inode": inode, "cursor": offset + consumed, "lines": lines}, separators=(",", ":")))
+PY
+}
+
+send_console_delta() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4"
+  local file_cursor="$5" inode="$6" event_cursor="$7" flush="$8"
+  local delta lines_json next_file_cursor next_inode line_count next_event_cursor body
+  delta="$(read_console_delta "$file_cursor" "$inode" "$flush")" || return 1
+  next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
+  next_inode="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["inode"])')"
+  lines_json="$(DELTA="$delta" python3 -c 'import json, os; print(json.dumps(json.loads(os.environ["DELTA"])["lines"], separators=(",", ":")))')"
+  line_count="$(LINES="$lines_json" python3 -c 'import json, os; print(len(json.loads(os.environ["LINES"])))')"
+  next_event_cursor=$((event_cursor + line_count))
+  if [ "$lines_json" != "[]" ]; then
+    body="$(CURSOR="$next_event_cursor" LINES="$lines_json" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"cursor": int(os.environ["CURSOR"]), "lines": json.loads(os.environ["LINES"])}, separators=(",", ":")))
+PY
+    )"
+    post_logs_body "$url" "$agent_id" "$token" "$operation_id" "$body" || return 1
+  fi
+  LOG_NEXT_CURSOR="$next_file_cursor"
+  LOG_NEXT_INODE="$next_inode"
+  LOG_NEXT_EVENT_CURSOR="$next_event_cursor"
+}
+
+post_result_logs() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" result="$5" body
+  while IFS= read -r body; do
+    [ -n "$body" ] || continue
+    post_logs_body "$url" "$agent_id" "$token" "$operation_id" "$body" || return 1
+  done < <(RESULT="$result" python3 - <<'PY'
+import json
+import os
+
+try:
+    raw_lines = json.loads(os.environ["RESULT"]).get("lines", [])
+except (TypeError, ValueError, json.JSONDecodeError):
+    raw_lines = []
+lines = [str(line)[:2048] for line in raw_lines if isinstance(line, str)]
+start = 0
+while start < len(lines):
+    end = start
+    encoded = 2
+    while end < len(lines) and end - start < 100:
+        candidate = lines[end]
+        candidate_bytes = len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) + 1
+        if end > start and encoded + candidate_bytes > 60 * 1024:
+            break
+        encoded += candidate_bytes
+        end += 1
+    chunk = lines[start:end]
+    print(json.dumps({"cursor": end, "lines": chunk}, ensure_ascii=False, separators=(",", ":")))
+    start = end
+PY
+  )
+}
+
+run_long_job() {
+  local url="$1" agent_id="$2" token="$3" operation_id="$4" kind="$5" active_file="$6"
+  local state_dir result_file
+  state_dir="$(agent_state_dir)" || return $?
+  case "$operation_id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  mkdir -p "$state_dir" || return 1
+  result_file="$state_dir/.${operation_id}.result.$$"
+  (
+    local result completion command_pid command_rc worker_pid worker_start
+    local log_inode log_file_cursor log_event_cursor log_flush=0 final_attempts
+    worker_pid="$BASHPID"
+    worker_start="$(proc_start_time "$worker_pid")"
+    if [ -z "$worker_start" ]; then
+      completion='{"status":"failed","error":"host agent worker could not be identified"}'
+      post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" ||
+        dead_letter_completion "$operation_id" "$completion" || true
+      exit 1
+    fi
+    if ! printf '%s %s %s\n' "$operation_id" "$worker_pid" "$worker_start" >"$active_file.tmp.$$" ||
+      ! mv -f "$active_file.tmp.$$" "$active_file"; then
+      rm -f "$active_file.tmp.$$"
+      completion='{"status":"failed","error":"host agent could not persist its worker lease"}'
+      post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" ||
+        dead_letter_completion "$operation_id" "$completion" || true
+      exit 1
+    fi
+    read -r log_inode log_file_cursor < <(read_console_position)
+    log_event_cursor=0
+    : >"$result_file" || exit 1
+
+    sudo -n "$PZ_AGENT_PRIV" "$kind" >"$result_file" 2>&1 &
+    command_pid="$!"
+    while kill -0 "$command_pid" 2>/dev/null; do
+      post_progress "$url" "$agent_id" "$token" "$operation_id" "Host operation is still running." || true
+      if send_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
+        log_file_cursor="$LOG_NEXT_CURSOR"
+        log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
+        log_inode="$LOG_NEXT_INODE"
+      fi
+      sleep 2
+    done
+    wait "$command_pid"
+    command_rc="$?"
+
+    # Retry the final flush so a transient API/network failure does not drop the tail.
+    log_flush=1
+    final_attempts=0
+    while [ "$final_attempts" -lt 5 ]; do
+      if send_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
+        log_file_cursor="$LOG_NEXT_CURSOR"
+        log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
+        log_inode="$LOG_NEXT_INODE"
+        break
+      fi
+      final_attempts=$((final_attempts + 1))
+      [ "$final_attempts" -ge 5 ] || sleep 1
+    done
+
+    result="$(cat "$result_file" 2>/dev/null || true)"
+    if [ "$command_rc" -eq 0 ] && completion="$(RESULT="$result" python3 - <<'PY'
+import json
+import os
+
+value = json.loads(os.environ["RESULT"])
+print(json.dumps({"status": "succeeded", "result": value}, separators=(",", ":")))
+PY
+    )"; then
+      :
+    else
+      completion="$(KIND="$kind" RC="$command_rc" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"status": "failed", "error": f"host operation {os.environ['KIND']} failed (exit {os.environ['RC']})"}, separators=(",", ":")))
+PY
+      )"
+    fi
+    post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$completion" ||
+      dead_letter_completion "$operation_id" "$completion" || true
+    rm -f "$result_file" "$active_file" "$active_file.tmp.$$"
+  ) &
+}
+
 poll_agent() {
   local url="${PZ_AGENT_URL:-}" agent_id="${PZ_AGENT_ID:-}" access_token="${PZ_AGENT_ACCESS_TOKEN:-}"
   local interval="${PZ_AGENT_INTERVAL:-15}" status payload completion_rc fallback_completion dead_letter_rc
@@ -322,7 +592,10 @@ poll_agent() {
     printf 'pz-agent: PZ_AGENT_PENDING_COMPLETION_RETRIES must be at least 1\n' >&2
     return 64
   }
+  local active_file active_id active_pid active_start dead_worker_rc
   agent_state_dir >/dev/null || return $?
+  active_file="$(active_job_file)" || return $?
+  mkdir -p "$(dirname "$active_file")" || return 1
   url="${url%/}"
   require_secure_url "$url" || return $?
 
@@ -372,6 +645,32 @@ poll_agent() {
       fi
     fi
 
+    if [ -f "$active_file" ]; then
+      read -r active_id active_pid active_start <"$active_file" || {
+        rm -f "$active_file"
+        active_id=""
+        active_pid=""
+        active_start=""
+      }
+      case "${active_id:-}" in
+        ''|*[!A-Za-z0-9._-]*)
+          rm -f "$active_file"
+          active_id=""
+          ;;
+      esac
+      if [ -n "${active_id:-}" ] && worker_alive "${active_pid:-}" "${active_start:-}"; then
+        post_progress "$url" "$agent_id" "$access_token" "$active_id" "Host operation is still running." || true
+      elif [ -n "${active_id:-}" ]; then
+        if reconcile_dead_worker "$url" "$agent_id" "$access_token" "$active_id" "$active_file"; then
+          :
+        else
+          dead_worker_rc=$?
+          [ "$dead_worker_rc" -eq 2 ] && return 1
+          printf 'pz-agent: could not reconcile dead worker %s; retrying\n' "$active_id" >&2
+        fi
+      fi
+    fi
+
     if status="$(agent_status_json 2>/dev/null)"; then
       payload="$(STATUS="$status" python3 - <<'PY'
 import json
@@ -388,9 +687,9 @@ PY
         printf 'pz-agent: heartbeat failed; retrying\n' >&2
       fi
 
-      local job_response job_id job_kind job_payload completion result_status lines workshop_id keep
+      local job_response job_id job_kind job_payload completion result_status lines workshop_id keep log_publish_rc
       local -a job_fields=()
-      if [ -z "$pending_job_id" ] && job_response="$(curl -fsS --max-time 20 -X POST \
+      if [ -z "$pending_job_id" ] && [ ! -f "$active_file" ] && job_response="$(curl -fsS --max-time 20 -X POST \
         -H "authorization: Bearer $access_token" \
         "$url/api/agents/$agent_id/jobs/claim" 2>/dev/null)"; then
         mapfile -t job_fields < <(JOB="$job_response" python3 - <<'PY'
@@ -414,7 +713,16 @@ PY
               if result_status="$(agent_status_json 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             start|stop|restart)
-              if result_status="$(sudo -n "$PZ_AGENT_PRIV" "$job_kind" 2>/dev/null)"; then :; else result_status=""; fi
+              if ! run_long_job "$url" "$agent_id" "$access_token" "$job_id" "$job_kind" "$active_file"; then
+                completion='{"status":"failed","error":"host agent could not start the background worker"}'
+                if post_completion "$url/api/agents/$agent_id/jobs/$job_id/complete" "$access_token" "$completion"; then
+                  :
+                else
+                  dead_letter_completion "$job_id" "$completion" || true
+                fi
+              fi
+              sleep "$interval"
+              continue
               ;;
             backup)
               keep="$(PAYLOAD="$job_payload" python3 - <<'PY'
@@ -464,6 +772,10 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
+            if [ "$job_kind" = logs ]; then
+              post_result_logs "$url" "$agent_id" "$access_token" "$job_id" "$result_status" ||
+                printf 'pz-agent: could not publish fetched log lines; retaining result only\n' >&2
+            fi
             if completion="$(RESULT="$result_status" python3 - <<'PY'
 import json
 import os
@@ -511,6 +823,10 @@ PY
     sleep "$interval"
   done
 }
+
+if [ "${PZ_AGENT_SOURCE_ONLY:-0}" = 1 ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 case "${1:-}" in
   --status)

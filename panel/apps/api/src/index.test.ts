@@ -95,10 +95,22 @@ describe("control-plane API", () => {
       async getOperation() {
         throw new Error("not used in enrollment test");
       },
+      async listOperations() {
+        throw new Error("not used in enrollment test");
+      },
+      async listEvents() {
+        throw new Error("not used in enrollment test");
+      },
       async claimNext() {
         throw new Error("not used in enrollment test");
       },
       async completeJob() {
+        throw new Error("not used in enrollment test");
+      },
+      async progressJob() {
+        throw new Error("not used in enrollment test");
+      },
+      async appendJobLogs() {
         throw new Error("not used in enrollment test");
       },
     };
@@ -210,6 +222,8 @@ describe("control-plane API", () => {
       async logout() {},
     };
     let completed = false;
+    let progressed = false;
+    let logged = false;
     const agentService: AgentService = {
       async enroll() {
         throw new Error("not used in operation test");
@@ -227,6 +241,12 @@ describe("control-plane API", () => {
       async getOperation() {
         return operation;
       },
+      async listOperations() {
+        return [operation];
+      },
+      async listEvents() {
+        return [];
+      },
       async claimNext(agentId, accessToken) {
         if (agentId !== "agent-1" || accessToken !== "agent-access") {
           throw new AgentUnauthorizedError();
@@ -238,6 +258,29 @@ describe("control-plane API", () => {
           throw new AgentUnauthorizedError();
         }
         completed = true;
+      },
+      async progressJob(agentId, accessToken, operationId, message) {
+        if (
+          agentId !== "agent-1" ||
+          accessToken !== "agent-access" ||
+          operationId !== "operation-1"
+        ) {
+          throw new AgentUnauthorizedError();
+        }
+        expect(message).toBe("booting");
+        progressed = true;
+      },
+      async appendJobLogs(agentId, accessToken, operationId, cursor, lines) {
+        if (
+          agentId !== "agent-1" ||
+          accessToken !== "agent-access" ||
+          operationId !== "operation-1"
+        ) {
+          throw new AgentUnauthorizedError();
+        }
+        expect(cursor).toBe(2);
+        expect(lines).toEqual(["line one", "line two"]);
+        logged = true;
       },
     };
     const operationApp = createApp(undefined, undefined, auth, agentService);
@@ -271,6 +314,65 @@ describe("control-plane API", () => {
     );
     expect(claimed.status).toBe(200);
     expect(await claimed.json()).toEqual({ job });
+
+    const progress = await operationApp.handle(
+      new Request("http://localhost/api/agents/agent-1/jobs/operation-1/progress", {
+        method: "POST",
+        headers: { authorization: "Bearer agent-access", "content-type": "application/json" },
+        body: JSON.stringify({ message: "booting" }),
+      }),
+    );
+    expect(progress.status).toBe(200);
+
+    const streamedLogs = await operationApp.handle(
+      new Request("http://localhost/api/agents/agent-1/jobs/operation-1/logs", {
+        method: "POST",
+        headers: { authorization: "Bearer agent-access", "content-type": "application/json" },
+        body: JSON.stringify({ cursor: 2, lines: ["line one", "line two"] }),
+      }),
+    );
+    expect(streamedLogs.status).toBe(200);
+    expect(progressed).toBe(true);
+    expect(logged).toBe(true);
+
+    const history = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(history.status).toBe(200);
+    expect(await history.json()).toEqual({ operations: [operation] });
+
+    const eventHistory = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/events?after=0", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(eventHistory.status).toBe(200);
+    expect(await eventHistory.json()).toEqual({ events: [], cursor: 0 });
+
+    const streamApp = createApp(
+      new FakeAgentAdapter(() => new Date("2026-08-16T00:00:00.000Z")),
+      undefined,
+      auth,
+      agentService,
+    );
+    const streamController = new AbortController();
+    const streamResponse = await streamApp.handle(
+      new Request("http://localhost/api/servers/production/events/stream?after=7", {
+        signal: streamController.signal,
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
+    const reader = streamResponse.body?.getReader();
+    expect(reader).toBeDefined();
+    const firstChunk = await reader!.read();
+    expect(new TextDecoder().decode(firstChunk.value)).toContain("event: ready");
+    expect(new TextDecoder().decode(firstChunk.value)).toContain('"cursor":7');
+    streamController.abort();
+    await reader!.cancel();
 
     const finished = await operationApp.handle(
       new Request("http://localhost/api/agents/agent-1/jobs/operation-1/complete", {
