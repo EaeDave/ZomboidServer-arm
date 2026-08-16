@@ -563,7 +563,7 @@ export function createApp(
       async ({ params, request, set }) => {
         let actorUserId: string | undefined;
         const devAuthBypass =
-          process.env.NODE_ENV !== "production" && process.env.PZ_DEV_AUTH_BYPASS === "1";
+          process.env.NODE_ENV === "development" && process.env.PZ_DEV_AUTH_BYPASS === "1";
         if (!devAuthBypass) {
           const token = readSessionToken(request.headers.get("cookie"));
           if (!token) {

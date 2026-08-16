@@ -527,7 +527,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
 
 export default function App() {
   const queryClient = useQueryClient();
-  const authEnabled = import.meta.env.VITE_DEV_AUTH_BYPASS !== "1";
+  const authEnabled = import.meta.env.PROD || import.meta.env.VITE_DEV_AUTH_BYPASS !== "1";
   const currentUser = useQuery({
     queryKey: ["auth", "me"],
     queryFn: getCurrentUser,

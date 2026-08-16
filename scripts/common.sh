@@ -392,6 +392,7 @@ backup_world() {  # backup_world DESTDIR PREFIX  -> echoes archive path
   [ -e "$sav" ] && paths+=("${sav#/}")
   [ "${#paths[@]}" -gt 0 ] || return 1
   ts="$(date +%Y%m%d_%H%M%S)"; mkdir -p "$dir"
+  fix_owner "$dir"
   out="$dir/${prefix}_$ts.tar.gz"
   # tar from / so this works no matter where the cachedir lives.
   as_user tar czf "$out" -C / "${paths[@]}" 2>/dev/null || {
