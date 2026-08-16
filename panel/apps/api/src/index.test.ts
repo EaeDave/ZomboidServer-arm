@@ -95,10 +95,22 @@ describe("control-plane API", () => {
       async getOperation() {
         throw new Error("not used in enrollment test");
       },
+      async listOperations() {
+        throw new Error("not used in enrollment test");
+      },
+      async listEvents() {
+        throw new Error("not used in enrollment test");
+      },
       async claimNext() {
         throw new Error("not used in enrollment test");
       },
       async completeJob() {
+        throw new Error("not used in enrollment test");
+      },
+      async progressJob() {
+        throw new Error("not used in enrollment test");
+      },
+      async appendJobLogs() {
         throw new Error("not used in enrollment test");
       },
     };
@@ -227,6 +239,12 @@ describe("control-plane API", () => {
       async getOperation() {
         return operation;
       },
+      async listOperations() {
+        return [operation];
+      },
+      async listEvents() {
+        return [];
+      },
       async claimNext(agentId, accessToken) {
         if (agentId !== "agent-1" || accessToken !== "agent-access") {
           throw new AgentUnauthorizedError();
@@ -239,6 +257,8 @@ describe("control-plane API", () => {
         }
         completed = true;
       },
+      async progressJob() {},
+      async appendJobLogs() {},
     };
     const operationApp = createApp(undefined, undefined, auth, agentService);
     const operationRequest = {

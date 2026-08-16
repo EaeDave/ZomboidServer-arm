@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  bigserial,
   jsonb,
   pgEnum,
   pgTable,
@@ -18,6 +19,14 @@ export const operationStatus = pgEnum("operation_status", [
   "succeeded",
   "failed",
   "cancelled",
+]);
+export const operationEventType = pgEnum("operation_event_type", [
+  "queued",
+  "claimed",
+  "progress",
+  "log",
+  "completed",
+  "recovered",
 ]);
 
 export const users = pgTable("users", {
@@ -88,6 +97,7 @@ export const operations = pgTable(
     payload: jsonb("payload"),
     result: jsonb("result"),
     error: text("error"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
@@ -95,6 +105,28 @@ export const operations = pgTable(
   (table) => ({
     queueIdx: index("operations_queue_idx").on(table.serverId, table.status, table.createdAt),
     actorIdx: index("operations_actor_user_id_idx").on(table.actorUserId),
+  }),
+);
+
+// A bounded append-only event stream. It is the sole source for browser SSE; the browser never
+// reads a host log or talks to the agent directly.
+export const operationEvents = pgTable(
+  "operation_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => serverInstances.id, { onDelete: "cascade" }),
+    operationId: uuid("operation_id")
+      .notNull()
+      .references(() => operations.id, { onDelete: "cascade" }),
+    type: operationEventType("type").notNull(),
+    data: jsonb("data").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    operationIdx: index("operation_events_operation_idx").on(table.operationId, table.id),
+    serverIdx: index("operation_events_server_idx").on(table.serverId, table.id),
   }),
 );
 

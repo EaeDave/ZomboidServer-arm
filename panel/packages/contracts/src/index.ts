@@ -511,6 +511,50 @@ export const operationRecordSchema = Type.Object({
 
 export type OperationRecord = Static<typeof operationRecordSchema>;
 
+export const operationEventTypeSchema = Type.Union([
+  Type.Literal("queued"),
+  Type.Literal("claimed"),
+  Type.Literal("progress"),
+  Type.Literal("log"),
+  Type.Literal("completed"),
+  Type.Literal("recovered"),
+]);
+
+export const operationEventSchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }),
+  serverId: Type.String({ minLength: 1 }),
+  operationId: Type.String({ minLength: 1 }),
+  type: operationEventTypeSchema,
+  data: Type.Unknown(),
+  createdAt: Type.String({ minLength: 1 }),
+});
+
+export type OperationEvent = Static<typeof operationEventSchema>;
+
+export const operationListResponseSchema = Type.Object({
+  operations: Type.Array(operationRecordSchema, { maxItems: 100 }),
+});
+
+export const operationEventListResponseSchema = Type.Object({
+  events: Type.Array(operationEventSchema, { maxItems: 500 }),
+  cursor: Type.Integer({ minimum: 0 }),
+});
+
+export const agentJobProgressRequestSchema = Type.Object(
+  {
+    message: Type.String({ minLength: 1, maxLength: 512 }),
+  },
+  closedObjectOptions,
+);
+
+export const agentJobLogRequestSchema = Type.Object(
+  {
+    cursor: Type.Integer({ minimum: 0 }),
+    lines: Type.Array(Type.String({ maxLength: 2048 }), { minItems: 1, maxItems: 200 }),
+  },
+  closedObjectOptions,
+);
+
 export const agentJobSchema = Type.Object({
   operationId: Type.String({ minLength: 1 }),
   request: agentOperationRequestSchema,

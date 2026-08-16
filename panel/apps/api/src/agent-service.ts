@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, ne } from "drizzle-orm";
 import type {
   AgentEnrollmentRequest,
   AgentJob,
@@ -9,7 +9,7 @@ import type {
   OperationCreateRequest,
   OperationRecord,
 } from "@zomboid/contracts";
-import { agents, auditEvents, operations, serverInstances } from "@zomboid/db";
+import { agents, auditEvents, operationEvents, operations, serverInstances } from "@zomboid/db";
 import { createDatabase, type Database } from "@zomboid/db/client";
 
 export interface AgentEnrollmentResult {
@@ -28,13 +28,37 @@ export interface AgentService {
   ): Promise<OperationRecord>;
   enqueueStatus(serverId: string, actorUserId: string): Promise<OperationRecord>;
   getOperation(operationId: string): Promise<OperationRecord>;
+  listOperations(serverId: string, limit?: number): Promise<OperationRecord[]>;
+  listEvents(serverId: string, after?: number): Promise<OperationEventRecord[]>;
   claimNext(agentId: string, accessToken: string): Promise<AgentJob | null>;
+  progressJob(
+    agentId: string,
+    accessToken: string,
+    operationId: string,
+    message: string,
+  ): Promise<void>;
+  appendJobLogs(
+    agentId: string,
+    accessToken: string,
+    operationId: string,
+    cursor: number,
+    lines: string[],
+  ): Promise<void>;
   completeJob(
     agentId: string,
     accessToken: string,
     operationId: string,
     result: AgentJobCompleteRequest,
   ): Promise<void>;
+}
+
+export interface OperationEventRecord {
+  id: number;
+  serverId: string;
+  operationId: string;
+  type: "queued" | "claimed" | "progress" | "log" | "completed" | "recovered";
+  data: unknown;
+  createdAt: string;
 }
 
 export class AgentUnavailableError extends Error {
@@ -147,6 +171,40 @@ export class DatabaseAgentService implements AgentService {
     private readonly getDatabase: () => Database,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  private leaseExpiry() {
+    return new Date(this.now().getTime() + 90_000);
+  }
+
+  private async recoverExpiredOperations(database: Database) {
+    const expired = await database
+      .select({ id: operations.id, serverId: operations.serverId })
+      .from(operations)
+      .where(and(eq(operations.status, "running"), lt(operations.leaseExpiresAt, this.now())));
+    if (expired.length === 0) return;
+    await database.transaction(async (transaction) => {
+      for (const operation of expired) {
+        const [recovered] = await transaction
+          .update(operations)
+          .set({
+            status: "failed",
+            error: "Agent lease expired before the operation completed.",
+            finishedAt: this.now(),
+            leaseExpiresAt: null,
+          })
+          .where(and(eq(operations.id, operation.id), eq(operations.status, "running")))
+          .returning({ id: operations.id });
+        if (recovered) {
+          await transaction.insert(operationEvents).values({
+            serverId: operation.serverId,
+            operationId: operation.id,
+            type: "recovered",
+            data: { message: "Agent lease expired before the operation completed." },
+          });
+        }
+      }
+    });
+  }
 
   private async authorizeAgent(agentId: string, accessToken: string) {
     const [agent] = await this.getDatabase()
@@ -298,6 +356,12 @@ export class DatabaseAgentService implements AgentService {
         serverId: server.serviceName,
         kind: request.kind,
       });
+      await transaction.insert(operationEvents).values({
+        serverId: server.id,
+        operationId: record.operationId,
+        type: "queued",
+        data: { kind: record.kind },
+      });
       await transaction.insert(auditEvents).values({
         actorUserId,
         action: "operation.queued",
@@ -315,6 +379,7 @@ export class DatabaseAgentService implements AgentService {
     const [row] = await this.getDatabase()
       .select({
         operationId: operations.id,
+        serverInstanceId: operations.serverId,
         serverId: serverInstances.serviceName,
         kind: operations.kind,
         status: operations.status,
@@ -333,12 +398,57 @@ export class DatabaseAgentService implements AgentService {
     return operationRecord(row);
   }
 
+  async listOperations(serverId: string, limit = 50): Promise<OperationRecord[]> {
+    const boundedLimit = Math.max(1, Math.min(limit, 100));
+    const rows = await this.getDatabase()
+      .select({
+        operationId: operations.id,
+        serverId: serverInstances.serviceName,
+        kind: operations.kind,
+        status: operations.status,
+        createdAt: operations.createdAt,
+        startedAt: operations.startedAt,
+        finishedAt: operations.finishedAt,
+        error: operations.error,
+        result: operations.result,
+      })
+      .from(operations)
+      .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
+      .where(eq(serverInstances.serviceName, serverId))
+      .orderBy(desc(operations.createdAt))
+      .limit(boundedLimit);
+    return rows.map(operationRecord);
+  }
+
+  async listEvents(serverId: string, after = 0): Promise<OperationEventRecord[]> {
+    const rows = await this.getDatabase()
+      .select({
+        id: operationEvents.id,
+        serverId: serverInstances.serviceName,
+        operationId: operationEvents.operationId,
+        type: operationEvents.type,
+        data: operationEvents.data,
+        createdAt: operationEvents.createdAt,
+      })
+      .from(operationEvents)
+      .innerJoin(serverInstances, eq(operationEvents.serverId, serverInstances.id))
+      .where(and(eq(serverInstances.serviceName, serverId), gt(operationEvents.id, after)))
+      .orderBy(asc(operationEvents.id))
+      .limit(500);
+    return rows.map((row) => ({
+      ...row,
+      createdAt: row.createdAt.toISOString(),
+    })) as OperationEventRecord[];
+  }
+
   async claimNext(agentId: string, accessToken: string): Promise<AgentJob | null> {
     const database = this.getDatabase();
     const agent = await this.authorizeAgent(agentId, accessToken);
+    await this.recoverExpiredOperations(database);
     const [candidate] = await database
       .select({
         operationId: operations.id,
+        serverInstanceId: operations.serverId,
         serverId: serverInstances.serviceName,
         kind: operations.kind,
         payload: operations.payload,
@@ -353,16 +463,84 @@ export class DatabaseAgentService implements AgentService {
 
     const [claimed] = await database
       .update(operations)
-      .set({ status: "running", startedAt: this.now() })
+      .set({ status: "running", startedAt: this.now(), leaseExpiresAt: this.leaseExpiry() })
       .where(and(eq(operations.id, candidate.operationId), eq(operations.status, "queued")))
       .returning({ id: operations.id });
 
     if (!claimed) return null;
 
+    await database.insert(operationEvents).values({
+      serverId: candidate.serverInstanceId,
+      operationId: claimed.id,
+      type: "claimed",
+      data: { message: "Agent claimed operation." },
+    });
+
     return {
       operationId: claimed.id,
       request: operationRequest(claimed.id, candidate.serverId, candidate.kind, candidate.payload),
     };
+  }
+
+  private async activeOperation(agentId: string, accessToken: string, operationId: string) {
+    const agent = await this.authorizeAgent(agentId, accessToken);
+    const [operation] = await this.getDatabase()
+      .select({ id: operations.id, serverId: operations.serverId })
+      .from(operations)
+      .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
+      .where(
+        and(
+          eq(operations.id, operationId),
+          eq(serverInstances.agentId, agent.id),
+          eq(operations.status, "running"),
+        ),
+      )
+      .limit(1);
+    if (!operation) throw new OperationNotFoundError();
+    return operation;
+  }
+
+  async progressJob(agentId: string, accessToken: string, operationId: string, message: string) {
+    const operation = await this.activeOperation(agentId, accessToken, operationId);
+    const database = this.getDatabase();
+    await database.transaction(async (transaction) => {
+      await transaction
+        .update(operations)
+        .set({ leaseExpiresAt: this.leaseExpiry() })
+        .where(eq(operations.id, operation.id));
+      await transaction.insert(operationEvents).values({
+        serverId: operation.serverId,
+        operationId: operation.id,
+        type: "progress",
+        data: { message },
+      });
+    });
+  }
+
+  async appendJobLogs(
+    agentId: string,
+    accessToken: string,
+    operationId: string,
+    cursor: number,
+    lines: string[],
+  ) {
+    if (lines.length === 0 || lines.length > 200 || lines.some((line) => line.length > 2048)) {
+      throw new Error("invalid bounded log payload");
+    }
+    const operation = await this.activeOperation(agentId, accessToken, operationId);
+    const database = this.getDatabase();
+    await database.transaction(async (transaction) => {
+      await transaction
+        .update(operations)
+        .set({ leaseExpiresAt: this.leaseExpiry() })
+        .where(eq(operations.id, operation.id));
+      await transaction.insert(operationEvents).values({
+        serverId: operation.serverId,
+        operationId: operation.id,
+        type: "log",
+        data: { cursor, lines },
+      });
+    });
   }
 
   async completeJob(
@@ -381,7 +559,7 @@ export class DatabaseAgentService implements AgentService {
     }
 
     const [operation] = await database
-      .select({ id: operations.id })
+      .select({ id: operations.id, serverId: operations.serverId })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
       .where(
@@ -403,6 +581,7 @@ export class DatabaseAgentService implements AgentService {
           result: result.status === "succeeded" ? result.result : null,
           error: result.status === "failed" ? result.error : null,
           finishedAt: this.now(),
+          leaseExpiresAt: null,
         })
         .where(and(eq(operations.id, operation.id), eq(operations.status, "running")))
         .returning({ id: operations.id });
@@ -412,6 +591,15 @@ export class DatabaseAgentService implements AgentService {
         agentId: agent.id,
         action: "operation.completed",
         metadata: { operationId, status: result.status },
+      });
+      await transaction.insert(operationEvents).values({
+        serverId: operation.serverId,
+        operationId,
+        type: "completed",
+        data: {
+          status: result.status,
+          error: result.status === "failed" ? result.error : undefined,
+        },
       });
     });
   }
