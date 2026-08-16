@@ -54,16 +54,27 @@ PY
 
 # Passive traffic is evidence only. It cannot prove a Steam/Relay session is unavailable.
 steam_evidence() {
-  local packets
+  local capture packets rc
   if ! command -v tcpdump >/dev/null; then
     steam_status not_checked "tcpdump is unavailable; Relay telemetry was not sampled."
     return 2
   fi
-  packets="$(sudo timeout "$STEAM_SAMPLE_SECONDS" tcpdump -ni any \
-    'net 162.254.0.0/16 or net 155.133.0.0/16 or net 205.196.0.0/16' -c 2 2>/dev/null | wc -l)"
+  capture="$(mktemp)" || return 2
+  if sudo timeout "$STEAM_SAMPLE_SECONDS" tcpdump -ni any \
+    'net 162.254.0.0/16 or net 155.133.0.0/16 or net 205.196.0.0/16' -c 2 >"$capture" 2>/dev/null; then
+    rc=0
+  else
+    rc=$?
+  fi
+  packets="$(wc -l < "$capture")"
+  rm -f "$capture"
   if [ "$packets" -gt 0 ]; then
     steam_status observed "Valve-range traffic was observed after the server became ready."
     return 0
+  fi
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+    steam_status not_checked "Passive Relay telemetry capture failed; no conclusion was recorded."
+    return 2
   fi
   steam_status not_observed "No Valve-range traffic was observed during the passive sample; this does not prove Relay is unavailable."
   return 1
@@ -72,6 +83,7 @@ steam_evidence() {
 for attempt in $(seq 1 6); do
   echo "=== ATTEMPT $attempt $(date -u +%H:%M:%S) ==="
   sudo systemctl restart "$SVC"
+  steam_status not_checked "Waiting for this boot to become ready before collecting Relay telemetry."
   for poll in $(seq 1 40); do
     sleep 15
     listen=$(sudo ss -uln 2>/dev/null | grep -cE ":$PORT\b")

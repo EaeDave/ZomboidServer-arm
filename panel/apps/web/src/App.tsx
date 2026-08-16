@@ -303,6 +303,14 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                       {server.data.steamSession.message}
                     </p>
                   ) : null}
+                  {server.data.steamSession?.checkedAt ? (
+                    <time
+                      className="mt-1 block text-xs font-normal text-zinc-500"
+                      dateTime={server.data.steamSession.checkedAt}
+                    >
+                      Last sampled: {new Date(server.data.steamSession.checkedAt).toLocaleString()}
+                    </time>
+                  ) : null}
                 </div>
               </dl>
             ) : (
