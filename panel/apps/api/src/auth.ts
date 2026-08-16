@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { and, eq, gt } from "drizzle-orm";
 import { auditEvents, sessions, users } from "@zomboid/db";
 import { createDatabase, type Database } from "@zomboid/db/client";
@@ -44,7 +44,8 @@ export function normalizeEmail(email: string): string {
 }
 
 export function hashSessionToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
+  const secret = process.env.SESSION_SECRET ?? "development-only-session-secret";
+  return createHmac("sha256", secret).update(token).digest("hex");
 }
 
 export function readSessionToken(cookieHeader: string | null): string | null {
@@ -154,6 +155,9 @@ export function createDatabaseAuthService(): AuthService {
 
   return new DatabaseAuthService(() => {
     if (!process.env.DATABASE_URL) throw new AuthUnavailableError();
+    if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+      throw new AuthUnavailableError();
+    }
     database ??= createDatabase().db;
     return database;
   });
