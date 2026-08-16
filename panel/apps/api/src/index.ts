@@ -567,6 +567,77 @@ export function createApp(
         },
       },
     )
+    .get("/api/servers/:serverId/events/stream", async ({ params, request, set }) => {
+      const token = readSessionToken(request.headers.get("cookie"));
+      if (!token) {
+        set.status = 401;
+        return { error: { code: "unauthenticated", message: "Login required" } };
+      }
+      try {
+        if (!(await auth.currentUser(token))) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+      } catch (error) {
+        set.status = error instanceof AuthUnavailableError ? 503 : 500;
+        return {
+          error: {
+            code: error instanceof AuthUnavailableError ? "auth_unavailable" : "auth_error",
+            message: "Event stream is temporarily unavailable",
+          },
+        };
+      }
+
+      const encoder = new TextEncoder();
+      let cursor = Number(request.headers.get("last-event-id") ?? 0);
+      if (!Number.isInteger(cursor) || cursor < 0) cursor = 0;
+      const write = (
+        controller: ReadableStreamDefaultController<Uint8Array>,
+        event: string,
+        data: unknown,
+        id?: number,
+      ) => {
+        const prefix = id === undefined ? "" : `id: ${id}\n`;
+        controller.enqueue(
+          encoder.encode(`${prefix}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
+      };
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          let closed = false;
+          request.signal.addEventListener("abort", () => {
+            closed = true;
+            controller.close();
+          });
+          write(controller, "ready", { cursor });
+          while (!closed) {
+            try {
+              const events = await agentService.listEvents(params.serverId, cursor);
+              for (const event of events) {
+                write(controller, "operation", event, event.id);
+                cursor = event.id;
+              }
+              const status = await agent.getStatus(params.serverId);
+              write(controller, "status", status);
+            } catch (error) {
+              if (!closed)
+                write(controller, "warning", {
+                  message: "Realtime update temporarily unavailable",
+                });
+            }
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no",
+        },
+      });
+    })
     .post(
       "/api/agents/:agentId/jobs/claim",
       async ({ params, request, set }) => {
