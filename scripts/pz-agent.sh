@@ -406,7 +406,8 @@ PY
         )
         job_id="${job_fields[0]:-}"
         job_kind="${job_fields[1]:-}"
-        job_payload="${job_fields[2]:-{}}"
+        job_payload="${job_fields[2]:-}"
+        [ -n "$job_payload" ] || job_payload='{}'
         if [ -n "$job_id" ]; then
           case "$job_kind" in
             status)
