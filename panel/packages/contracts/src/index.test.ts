@@ -4,6 +4,7 @@ import {
   agentOperationRequestSchema,
   agentOperationResponseSchema,
   agentJobCompleteRequestSchema,
+  agentConsoleLogRequestSchema,
   operationCreateRequestSchema,
   worldResetOperationRequestSchema,
 } from "./index";
@@ -114,6 +115,31 @@ describe("agent operation contracts", () => {
         }),
       ).toBe(true);
     }
+  });
+
+  it("accepts only bounded typed console deltas", () => {
+    expect(
+      Value.Check(agentConsoleLogRequestSchema, {
+        serverId: "production",
+        cursor: 2,
+        lines: ["line one", "line two"],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(agentConsoleLogRequestSchema, {
+        serverId: "production",
+        cursor: 0,
+        lines: ["line", "extra"],
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(agentConsoleLogRequestSchema, {
+        serverId: "production",
+        cursor: 1,
+        lines: ["line"],
+        command: "tail -f",
+      }),
+    ).toBe(false);
   });
 
   it("rejects a completion containing both result and error", () => {
