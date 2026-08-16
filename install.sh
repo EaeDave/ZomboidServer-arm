@@ -67,6 +67,7 @@ SERVERNAME=servertest
 ENVFILE="/etc/${SVC}.env"
 LIBDIR="/usr/local/lib/zomboid-arm${SFX}"
 BIN_PZCTL="/usr/local/bin/pzctl${SFX}"
+BIN_AGENT="/usr/local/sbin/pz-agent${SFX}"
 BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
 BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
 BIN_MODUPDATE="/usr/local/sbin/pz-modupdate${SFX}"
@@ -316,12 +317,14 @@ install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" "$BIN_WATCHDOG"
 install -m755 "$REPO_DIR/scripts/boot-retry.sh"       "$BIN_BOOTRETRY"
 install -m755 "$REPO_DIR/scripts/pz-modupdate.sh"     "$BIN_MODUPDATE"
 install -m755 "$REPO_DIR/pzctl"                       "$BIN_PZCTL"
+install -m755 "$REPO_DIR/scripts/pz-agent.sh"          "$BIN_AGENT"
 mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
 install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
 # namespaced installs: point the installed copies at their own env file
 if [ -n "$SFX" ]; then
-  sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE"
+  sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE" "$BIN_AGENT"
+  sed -i "s|/usr/local/lib/zomboid-arm/common.sh|$LIBDIR/common.sh|g; s|/usr/local/bin/pzctl|$BIN_PZCTL|g" "$BIN_AGENT"
 fi
 # let pzctl & friends know the environment on this host
 cat > "$ENVFILE" <<EOF
@@ -351,6 +354,7 @@ PZ_BOOTRETRY=$BIN_BOOTRETRY
 PZ_WATCHDOG=$BIN_WATCHDOG
 PZ_MODUPDATE=$BIN_MODUPDATE
 PZ_PZCTL=$BIN_PZCTL
+PZ_AGENT=$BIN_AGENT
 PZ_CONF=$CACHEDIR/pzctl.conf
 PZ_UPDATELOG=$CACHEDIR/mod-updates.log
 PZ_BACKUPS=$BACKUPS

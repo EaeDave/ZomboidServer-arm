@@ -12,6 +12,7 @@ pz_load_env() {
   local envfile="${PZCTL_ENV:-/etc/zomboid-b42.env}"
   [ -f "$envfile" ] && . "$envfile"
   PZ_SERVICE="${PZ_SERVICE:-zomboid-b42}"
+  PZ_SERVER_ID="${PZ_SERVER_ID:-$PZ_SERVICE}"
   PZ_USER="${PZ_USER:-ubuntu}"
   PZ_HOME="$(getent passwd "$PZ_USER" | cut -d: -f6)"
   PZ_INSTALL="${PZ_INSTALL:-/opt/zomboid-server}"
@@ -43,7 +44,7 @@ pz_load_env() {
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
   # keys that identify THIS host/world; import must never take these from a foreign ini
   PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
-  export PZ_SERVICE PZ_CONSOLE PZ_PORT PZ_RUNTIME
+  export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME
 }
 
 # ------------------------------------------------------------ small utils
@@ -62,6 +63,83 @@ as_user() {
 fix_owner()    { [ "$(id -u)" -eq 0 ] && chown -R "$PZ_USER":"$PZ_USER" "$@" 2>/dev/null || true; }
 is_listening() { sudo ss -uln 2>/dev/null | grep -qE ":$PZ_PORT\b"; }
 svc_active()   { [ "$(sudo systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = active ]; }
+
+# Machine-readable status for pzctl, the host agent and tests. The default path avoids RCON
+# so a status probe cannot block while the server is booting; set PZ_STATUS_RCON=1 when a
+# caller explicitly wants the player count as well.
+status_json() {
+  local active sub state listening version active_enter uptime_seconds players runtime checked_at
+  active="$(sudo -n systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
+  sub="$(sudo -n systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
+  case "$active" in
+    active) state=active ;;
+    inactive) state=inactive ;;
+    failed) state=failed ;;
+    *) state=unknown ;;
+  esac
+
+  listening=false
+  if sudo -n ss -H -uln 2>/dev/null | grep -qE ":${PZ_PORT}([[:space:]]|$)"; then
+    listening=true
+  fi
+
+  version="$(grep -am1 -oE 'version=[0-9][0-9.]*' "$PZ_CONSOLE" 2>/dev/null | cut -d= -f2 || true)"
+  active_enter="$(sudo -n systemctl show "$PZ_SERVICE" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  uptime_seconds=null
+  if [ "$active" = active ] && [ -n "$active_enter" ]; then
+    local entered now
+    entered="$(date -d "$active_enter" +%s 2>/dev/null || true)"
+    now="$(date +%s)"
+    if [ -n "$entered" ] && [ "$entered" -le "$now" ] 2>/dev/null; then
+      uptime_seconds=$((now - entered))
+    fi
+  fi
+
+  players=-1
+  [ "${PZ_STATUS_RCON:-0}" = 1 ] && players="$(player_count)"
+  case "$PZ_RUNTIME" in fex|box64) runtime="$PZ_RUNTIME" ;; *) runtime=unknown ;; esac
+  checked_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+  STATUS_SERVER_ID="$PZ_SERVER_ID" \
+  STATUS_SERVICE="$PZ_SERVICE" \
+  STATUS_STATE="$state" \
+  STATUS_SUBSTATE="$sub" \
+  STATUS_LISTENING="$listening" \
+  STATUS_RUNTIME="$runtime" \
+  STATUS_VERSION="$version" \
+  STATUS_UPTIME="$uptime_seconds" \
+  STATUS_PLAYERS="$players" \
+  STATUS_CHECKED_AT="$checked_at" \
+  python3 - <<'PY'
+import json
+import os
+
+
+def nullable(value):
+    return None if value in {"", "null"} else value
+
+
+uptime = nullable(os.environ["STATUS_UPTIME"])
+print(
+    json.dumps(
+        {
+            "protocolVersion": 1,
+            "serverId": os.environ["STATUS_SERVER_ID"],
+            "serviceName": os.environ["STATUS_SERVICE"],
+            "state": os.environ["STATUS_STATE"],
+            "substate": nullable(os.environ["STATUS_SUBSTATE"]),
+            "listening": os.environ["STATUS_LISTENING"] == "true",
+            "runtime": os.environ["STATUS_RUNTIME"],
+            "gameVersion": nullable(os.environ["STATUS_VERSION"]),
+            "uptimeSeconds": int(uptime) if uptime is not None else None,
+            "playerCount": int(os.environ["STATUS_PLAYERS"]),
+            "checkedAt": os.environ["STATUS_CHECKED_AT"],
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+}
 
 # ------------------------------------------------------------ ini / conf editing
 # awk with values passed through the environment: immune to sed/awk escaping issues

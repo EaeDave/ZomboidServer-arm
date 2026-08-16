@@ -16,6 +16,49 @@ ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"; [ -f "$ENVF" ] && . "$ENVF"
 pz_load_env
 PZ_MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 
+cli_help() {
+  cat <<'EOF'
+Usage: pzctl [status [--json] | --json status | --version | --help]
+
+The no-argument form opens the interactive control panel. The status command is
+non-interactive and emits the versioned JSON contract used by pz-agent.
+EOF
+}
+
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    status)
+      [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ "$2" = --json ]; } || {
+        printf 'pzctl: unsupported status arguments\n' >&2
+        exit 64
+      }
+      status_json
+      exit 0
+      ;;
+    --json)
+      [ "$#" -eq 2 ] && [ "$2" = status ] || {
+        printf 'pzctl: --json currently supports only status\n' >&2
+        exit 64
+      }
+      status_json
+      exit 0
+      ;;
+    --version|-V)
+      printf '%s\n' "$PZCTL_VERSION"
+      exit 0
+      ;;
+    --help|-h)
+      cli_help
+      exit 0
+      ;;
+    *)
+      printf 'pzctl: unknown command: %s\n' "$1" >&2
+      cli_help >&2
+      exit 64
+      ;;
+  esac
+fi
+
 pause() { printf '\n'; read -rp "$(bold 'Press Enter to continue...')" _ || true; }
 
 status_line() {

@@ -42,6 +42,7 @@ BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
 WATCHDOG="${PZ_WATCHDOG:-/usr/local/sbin/zomboid-watchdog.sh}"
 MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 PZCTL_BIN="${PZ_PZCTL:-/usr/local/bin/pzctl}"
+AGENT_BIN="${PZ_AGENT:-/usr/local/sbin/pz-agent}"
 RUNTIME="${PZ_RUNTIME:-box64}"
 FEXSTART="${PZ_FEX_START:-/usr/local/sbin/zomboid-fex-start.sh}"
 FEX_PREFIX="${PZ_FEX_PREFIX:-/opt/fex-a08}"
@@ -78,7 +79,7 @@ rm -f "/etc/systemd/system/$SVC.service" \
       "/etc/systemd/system/$SVC-watchdog.timer" \
       "/etc/systemd/system/$SVC-modupdate.service" \
       "/etc/systemd/system/$SVC-modupdate.timer"
-rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$ENVF" "$FEXSTART"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$ENVF" "$FEXSTART"
 case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
 systemctl reset-failed "$SVC.service" 2>/dev/null
