@@ -1,3 +1,4 @@
+LOCK TABLE operations IN ACCESS EXCLUSIVE MODE;--> statement-breakpoint
 WITH ranked AS (
   SELECT
     id,
@@ -15,7 +16,9 @@ WITH ranked AS (
     error = 'Superseded by a newer active operation during realtime-operation migration.',
     finished_at = now()
   FROM ranked
-  WHERE operations.id = ranked.id AND ranked.position > 1
+  WHERE operations.id = ranked.id
+    AND ranked.position > 1
+    AND operations.status IN ('queued', 'running')
   RETURNING operations.server_id, operations.id
 )
 INSERT INTO operation_events (server_id, operation_id, type, data)

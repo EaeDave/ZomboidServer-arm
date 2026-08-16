@@ -649,8 +649,10 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               {logsPaused ? "Resume" : "Pause"}
             </button>
             <button
-              className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+              className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!events.isFetched}
               onClick={() => {
+                if (!events.isFetched) return;
                 setLogClearBoundary(events.data?.at(-1)?.id ?? 0);
                 setLogLines([]);
               }}

@@ -226,51 +226,54 @@ export class DatabaseAgentService implements AgentService {
   }
 
   private async recoverExpiredOperations(database: Database, agentId: string) {
-    const expired = await database
-      .select({ id: operations.id, serverId: operations.serverId })
-      .from(operations)
-      .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
-      .where(
-        and(
-          eq(serverInstances.agentId, agentId),
-          eq(operations.status, "running"),
-          lt(operations.leaseExpiresAt, this.now()),
-        ),
-      )
-      .orderBy(asc(operations.leaseExpiresAt))
-      .limit(100);
-    if (expired.length === 0) return;
-    await database.transaction(async (transaction) => {
-      for (const operation of expired) {
-        const [recovered] = await transaction
-          .update(operations)
-          .set({
-            status: "failed",
-            error: "Agent lease expired before the operation completed.",
-            finishedAt: this.now(),
-            leaseExpiresAt: null,
-            progressMessage: "Recovered as failed after the host agent lease expired.",
-            progressUpdatedAt: this.now(),
-          })
-          .where(
-            and(
-              eq(operations.id, operation.id),
-              eq(operations.status, "running"),
-              lt(operations.leaseExpiresAt, this.now()),
-            ),
-          )
-          .returning({ id: operations.id });
-        if (recovered) {
-          await transaction.insert(operationEvents).values({
-            serverId: operation.serverId,
-            operationId: operation.id,
-            type: "recovered",
-            data: { message: "Agent lease expired before the operation completed." },
-          });
+    while (true) {
+      const expired = await database
+        .select({ id: operations.id, serverId: operations.serverId })
+        .from(operations)
+        .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
+        .where(
+          and(
+            eq(serverInstances.agentId, agentId),
+            eq(operations.status, "running"),
+            lt(operations.leaseExpiresAt, this.now()),
+          ),
+        )
+        .orderBy(asc(operations.leaseExpiresAt))
+        .limit(100);
+      if (expired.length === 0) return;
+
+      await database.transaction(async (transaction) => {
+        for (const operation of expired) {
+          const [recovered] = await transaction
+            .update(operations)
+            .set({
+              status: "failed",
+              error: "Agent lease expired before the operation completed.",
+              finishedAt: this.now(),
+              leaseExpiresAt: null,
+              progressMessage: "Recovered as failed after the host agent lease expired.",
+              progressUpdatedAt: this.now(),
+            })
+            .where(
+              and(
+                eq(operations.id, operation.id),
+                eq(operations.status, "running"),
+                lt(operations.leaseExpiresAt, this.now()),
+              ),
+            )
+            .returning({ id: operations.id });
+          if (recovered) {
+            await transaction.insert(operationEvents).values({
+              serverId: operation.serverId,
+              operationId: operation.id,
+              type: "recovered",
+              data: { message: "Agent lease expired before the operation completed." },
+            });
+          }
         }
-      }
-    });
-    for (const operation of expired) await this.trimEvents(database, operation.serverId);
+      });
+      for (const operation of expired) await this.trimEvents(database, operation.serverId);
+    }
   }
 
   private async authorizeAgent(agentId: string, accessToken: string) {

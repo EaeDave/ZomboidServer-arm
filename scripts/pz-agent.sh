@@ -337,8 +337,9 @@ reconcile_dead_worker() {
   if post_completion "$url/api/agents/$agent_id/jobs/$operation_id/complete" "$token" "$body"; then
     rm -f "$active_file"
     return 0
+  else
+    rc=$?
   fi
-  rc=$?
   if dead_letter_completion "$operation_id" "$body"; then
     rm -f "$active_file"
     [ "$rc" -eq 2 ] && return 2
