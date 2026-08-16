@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AgentStatus, AuthUser, HealthResponse } from "@zomboid/contracts";
+import type {
+  AgentStatus,
+  AuthUser,
+  HealthResponse,
+  OperationCreateRequest,
+  OperationRecord,
+} from "@zomboid/contracts";
+import { useState } from "react";
 
 async function getHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health");
@@ -41,6 +48,24 @@ async function getServerStatus(serverId: string): Promise<AgentStatus> {
   const response = await fetch(`/api/servers/${serverId}/status`);
   if (!response.ok) throw new Error(`Server status request failed: ${response.status}`);
   return response.json() as Promise<AgentStatus>;
+}
+
+async function queueOperation(requestBody: OperationCreateRequest): Promise<OperationRecord> {
+  const response = await fetch("/api/servers/production/operations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(requestBody),
+  });
+  const body = (await response.json()) as { error?: { message?: string } };
+  if (!response.ok) throw new Error(body.error?.message ?? "Operation could not be queued");
+  return body as OperationRecord;
+}
+
+async function getOperation(operationId: string): Promise<OperationRecord> {
+  const response = await fetch(`/api/operations/${operationId}`, { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Operation request failed: ${response.status}`);
+  return response.json() as Promise<OperationRecord>;
 }
 
 function StatusPill({ online }: { online: boolean }) {
@@ -120,12 +145,28 @@ function LoginScreen({
 }
 
 function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void }) {
+  const queryClient = useQueryClient();
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth });
   const server = useQuery({
     queryKey: ["server-status", "production"],
     queryFn: () => getServerStatus("production"),
     refetchInterval: 15_000,
   });
+  const [lastOperationId, setLastOperationId] = useState<string>();
+  const operationMutation = useMutation({
+    mutationFn: queueOperation,
+    onSuccess: (operation) => {
+      setLastOperationId(operation.operationId);
+      void queryClient.invalidateQueries({ queryKey: ["server-status", "production"] });
+    },
+  });
+  const lastOperation = useQuery({
+    queryKey: ["operation", lastOperationId],
+    queryFn: () => getOperation(lastOperationId!),
+    enabled: Boolean(lastOperationId),
+    refetchInterval: lastOperationId ? 2_000 : false,
+  });
+  const canOperate = user?.role === "admin" || user?.role === "operator";
 
   return (
     <main className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
@@ -210,6 +251,64 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
             )}
           </section>
         </div>
+
+        <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-medium">Operations</h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                Jobs are queued for the outbound host agent; the browser never calls systemd
+                directly.
+              </p>
+            </div>
+            {user ? (
+              <span className="text-xs uppercase tracking-[0.2em] text-zinc-500">{user.role}</span>
+            ) : null}
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            {[
+              ["status", "Queue status"],
+              ["start", "Start"],
+              ["stop", "Stop"],
+              ["restart", "Restart"],
+              ["backup", "Backup"],
+            ].map(([kind, label]) => {
+              const isStatus = kind === "status";
+              const disabled = operationMutation.isPending || (!isStatus && !canOperate);
+              return (
+                <button
+                  className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 hover:border-emerald-400 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={disabled}
+                  key={kind}
+                  onClick={() => {
+                    if (
+                      (kind === "stop" || kind === "restart") &&
+                      !window.confirm(`${label} production server?`)
+                    )
+                      return;
+                    operationMutation.mutate({
+                      kind: kind as OperationCreateRequest["kind"],
+                      payload: {},
+                    } as OperationCreateRequest);
+                  }}
+                  type="button"
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {operationMutation.error instanceof Error ? (
+            <p className="mt-4 text-sm text-rose-300">{operationMutation.error.message}</p>
+          ) : null}
+          {lastOperation.isSuccess ? (
+            <p className="mt-4 text-sm text-zinc-400">
+              Last operation:{" "}
+              <span className="font-medium text-zinc-200">{lastOperation.data.kind}</span>{" "}
+              <span className="text-emerald-300">{lastOperation.data.status}</span>
+            </p>
+          ) : null}
+        </section>
       </section>
     </main>
   );
