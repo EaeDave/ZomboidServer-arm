@@ -21,7 +21,8 @@
     "check": "bun run format:check && bun run lint && bun run typecheck",
     "test": "bun test",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "auth:bootstrap-admin": "bun apps/api/src/bootstrap-admin.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "1.4.2",

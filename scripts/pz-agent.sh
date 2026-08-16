@@ -2,9 +2,9 @@
 #
 # pz-agent — narrow stdio boundary for the host control plane.
 #
-# This first implementation intentionally supports status only. It is not a network listener;
-# an authenticated transport may invoke --stdio later. Mutating operations stay disabled until
-# their pzctl core functions and audit semantics are tested.
+# This first implementation supports status heartbeats and a local stdio protocol only. The
+# outbound --poll mode never opens a listening port on the VPS. Mutating operations stay disabled
+# until their pzctl core functions and audit semantics are tested.
 set -uo pipefail
 
 PZCTL_BIN="${PZCTL_BIN:-/usr/local/bin/pzctl}"
@@ -19,10 +19,12 @@ pz_load_env
 
 agent_help() {
   cat <<'EOF'
-Usage: pz-agent [--status | --stdio | --help]
+Usage: pz-agent [--status | --stdio | --enroll | --poll | --help]
 
 --status  emit the local pzctl status JSON and exit
 --stdio   read one versioned status request JSON object per line and emit one response per line
+--enroll  exchange AGENT_ENROLLMENT_TOKEN for a one-time access token (prints JSON)
+--poll    send authenticated status heartbeats to PZ_AGENT_URL until stopped
 EOF
 }
 
@@ -167,6 +169,121 @@ print(
 PY
 }
 
+enroll_agent() {
+  local url="${PZ_AGENT_URL:-}" token="${AGENT_ENROLLMENT_TOKEN:-}" name display_name
+  [ -n "$url" ] || { printf 'pz-agent: PZ_AGENT_URL is required\n' >&2; return 64; }
+  [ -n "$token" ] || { printf 'pz-agent: AGENT_ENROLLMENT_TOKEN is required\n' >&2; return 64; }
+  name="${PZ_AGENT_NAME:-$(hostname)}"
+  display_name="${PZ_AGENT_DISPLAY_NAME:-$PZ_SERVERNAME}"
+  url="${url%/}"
+
+  local payload response
+  payload="$(
+    AGENT_NAME="$name" \
+    AGENT_TOKEN="$token" \
+    AGENT_DISPLAY_NAME="$display_name" \
+    AGENT_SERVICE="$PZ_SERVICE" \
+    AGENT_PORT="$PZ_PORT" \
+    AGENT_RUNTIME="$PZ_RUNTIME" \
+    AGENT_DATA_DIR="$PZ_CACHEDIR" \
+    python3 - <<'PY'
+import json
+import os
+
+print(
+    json.dumps(
+        {
+            "name": os.environ["AGENT_NAME"],
+            "enrollmentToken": os.environ["AGENT_TOKEN"],
+            "server": {
+                "displayName": os.environ["AGENT_DISPLAY_NAME"],
+                "serviceName": os.environ["AGENT_SERVICE"],
+                "port": int(os.environ["AGENT_PORT"]),
+                "runtime": os.environ["AGENT_RUNTIME"],
+                "dataDir": os.environ["AGENT_DATA_DIR"],
+            },
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+  )"
+  if ! response="$(curl -fsS --max-time 20 -H 'content-type: application/json' --data "$payload" "$url/api/agents/enroll")"; then
+    printf 'pz-agent: enrollment request failed\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$response"
+}
+
+poll_agent() {
+  local url="${PZ_AGENT_URL:-}" agent_id="${PZ_AGENT_ID:-}" access_token="${PZ_AGENT_ACCESS_TOKEN:-}"
+  local interval="${PZ_AGENT_INTERVAL:-15}" status payload
+  [ -n "$url" ] || { printf 'pz-agent: PZ_AGENT_URL is required\n' >&2; return 64; }
+  [ -n "$agent_id" ] || { printf 'pz-agent: PZ_AGENT_ID is required\n' >&2; return 64; }
+  [ -n "$access_token" ] || { printf 'pz-agent: PZ_AGENT_ACCESS_TOKEN is required\n' >&2; return 64; }
+  case "$interval" in ''|*[!0-9]*) printf 'pz-agent: PZ_AGENT_INTERVAL must be an integer\n' >&2; return 64 ;; esac
+  [ "$interval" -ge 5 ] 2>/dev/null || { printf 'pz-agent: PZ_AGENT_INTERVAL must be at least 5 seconds\n' >&2; return 64; }
+  url="${url%/}"
+
+  while :; do
+    if status="$("$PZCTL_BIN" status --json 2>/dev/null)"; then
+      payload="$(STATUS="$status" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"status": json.loads(os.environ["STATUS"])}, separators=(",", ":")))
+PY
+      )"
+      if ! curl -fsS --max-time 20 \
+        -H "authorization: Bearer $access_token" \
+        -H 'content-type: application/json' \
+        --data "$payload" \
+        "$url/api/agents/$agent_id/heartbeat" >/dev/null; then
+        printf 'pz-agent: heartbeat failed; retrying\n' >&2
+      fi
+
+      local job_response job_id completion
+      if job_response="$(curl -fsS --max-time 20 -X POST \
+        -H "authorization: Bearer $access_token" \
+        "$url/api/agents/$agent_id/jobs/claim" 2>/dev/null)"; then
+        job_id="$(JOB="$job_response" python3 - <<'PY'
+import json
+import os
+
+job = json.loads(os.environ["JOB"]).get("job")
+print(job["operationId"] if job else "")
+PY
+        )"
+        if [ -n "$job_id" ]; then
+          if result_status="$("$PZCTL_BIN" status --json 2>/dev/null)"; then
+            completion="$(STATUS="$result_status" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({"status": "succeeded", "result": json.loads(os.environ["STATUS"])}, separators=(",", ":")))
+PY
+            )"
+          else
+            completion='{"status":"failed","error":"local status command failed"}'
+          fi
+          if ! curl -fsS --max-time 20 \
+            -H "authorization: Bearer $access_token" \
+            -H 'content-type: application/json' \
+            --data "$completion" \
+            "$url/api/agents/$agent_id/jobs/$job_id/complete" >/dev/null; then
+            printf 'pz-agent: job completion failed; retrying\n' >&2
+          fi
+        fi
+      else
+        printf 'pz-agent: job claim failed; retrying\n' >&2
+      fi
+    else
+      printf 'pz-agent: local status failed; retrying\n' >&2
+    fi
+    sleep "$interval"
+  done
+}
+
 case "${1:-}" in
   --status)
     [ "$#" -eq 1 ] || { printf 'pz-agent: --status takes no arguments\n' >&2; exit 64; }
@@ -178,6 +295,14 @@ case "${1:-}" in
       [ -n "$line" ] || continue
       respond_status "$line"
     done
+    ;;
+  --enroll)
+    [ "$#" -eq 1 ] || { printf 'pz-agent: --enroll takes no arguments\n' >&2; exit 64; }
+    enroll_agent
+    ;;
+  --poll)
+    [ "$#" -eq 1 ] || { printf 'pz-agent: --poll takes no arguments\n' >&2; exit 64; }
+    poll_agent
     ;;
   --help|-h)
     agent_help

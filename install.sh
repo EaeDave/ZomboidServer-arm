@@ -68,6 +68,7 @@ ENVFILE="/etc/${SVC}.env"
 LIBDIR="/usr/local/lib/zomboid-arm${SFX}"
 BIN_PZCTL="/usr/local/bin/pzctl${SFX}"
 BIN_AGENT="/usr/local/sbin/pz-agent${SFX}"
+AGENT_ENVFILE="/etc/${SVC}-agent.env"
 BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
 BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
 BIN_MODUPDATE="/usr/local/sbin/pz-modupdate${SFX}"
@@ -313,6 +314,9 @@ render "$REPO_DIR/templates/zomboid-watchdog.service"  > "/etc/systemd/system/$S
 render "$REPO_DIR/templates/zomboid-watchdog.timer"    > "/etc/systemd/system/$SVC-watchdog.timer"
 render "$REPO_DIR/templates/zomboid-modupdate.service" > "/etc/systemd/system/$SVC-modupdate.service"
 render "$REPO_DIR/templates/zomboid-modupdate.timer"   > "/etc/systemd/system/$SVC-modupdate.timer"
+sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" \
+    -e "s|__AGENT_ENVFILE__|$(esc "$AGENT_ENVFILE")|g" -e "s|__AGENT__|$(esc "$BIN_AGENT")|g" \
+    "$REPO_DIR/templates/zomboid-agent.service" > "/etc/systemd/system/$SVC-agent.service"
 install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" "$BIN_WATCHDOG"
 install -m755 "$REPO_DIR/scripts/boot-retry.sh"       "$BIN_BOOTRETRY"
 install -m755 "$REPO_DIR/scripts/pz-modupdate.sh"     "$BIN_MODUPDATE"
@@ -355,13 +359,24 @@ PZ_WATCHDOG=$BIN_WATCHDOG
 PZ_MODUPDATE=$BIN_MODUPDATE
 PZ_PZCTL=$BIN_PZCTL
 PZ_AGENT=$BIN_AGENT
+PZ_AGENT_ENVFILE=$AGENT_ENVFILE
 PZ_CONF=$CACHEDIR/pzctl.conf
 PZ_UPDATELOG=$CACHEDIR/mod-updates.log
 PZ_BACKUPS=$BACKUPS
 EOF
+install -o "$TARGET_USER" -g "$TARGET_USER" -m600 /dev/null "$AGENT_ENVFILE" 2>/dev/null || {
+  touch "$AGENT_ENVFILE"
+  chown "$TARGET_USER":"$TARGET_USER" "$AGENT_ENVFILE" 2>/dev/null || true
+  chmod 600 "$AGENT_ENVFILE"
+}
 systemctl daemon-reload
 systemctl enable "$SVC-ciopfs.service" "$SVC.service" "$SVC-watchdog.timer" "$SVC-modupdate.timer" >/dev/null 2>&1
 systemctl start  "$SVC-ciopfs.service"
+if [ "${PZ_AGENT_ENABLE:-0}" = 1 ]; then
+  systemctl enable --now "$SVC-agent.service"
+else
+  say "Host agent unit installed but disabled. Configure $AGENT_ENVFILE, then enable $SVC-agent.service."
+fi
 
 # ----------------------------------------------------------------- 6b. local firewall (iptables)
 # Oracle Ubuntu images ship a restrictive iptables that ends in a REJECT rule, so the game

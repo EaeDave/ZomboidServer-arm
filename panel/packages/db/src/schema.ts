@@ -18,11 +18,23 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const sessions = pgTable("sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const agents = pgTable("agents", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   status: agentStatus("status").notNull().default("pending"),
   enrollmentSecretHash: text("enrollment_secret_hash").notNull(),
+  accessTokenHash: text("access_token_hash").unique(),
+  lastStatus: jsonb("last_status"),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -49,6 +61,7 @@ export const operations = pgTable("operations", {
   kind: text("kind").notNull(),
   status: operationStatus("status").notNull().default("queued"),
   payload: jsonb("payload"),
+  result: jsonb("result"),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   startedAt: timestamp("started_at", { withTimezone: true }),

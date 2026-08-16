@@ -43,6 +43,7 @@ WATCHDOG="${PZ_WATCHDOG:-/usr/local/sbin/zomboid-watchdog.sh}"
 MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 PZCTL_BIN="${PZ_PZCTL:-/usr/local/bin/pzctl}"
 AGENT_BIN="${PZ_AGENT:-/usr/local/sbin/pz-agent}"
+AGENT_ENVFILE="${PZ_AGENT_ENVFILE:-/etc/${SVC}-agent.env}"
 RUNTIME="${PZ_RUNTIME:-box64}"
 FEXSTART="${PZ_FEX_START:-/usr/local/sbin/zomboid-fex-start.sh}"
 FEX_PREFIX="${PZ_FEX_PREFIX:-/opt/fex-a08}"
@@ -62,8 +63,8 @@ is_yes "$(ask 'Continue? (type y to proceed)' 'n')" || { echo "Aborted."; exit 0
 # ----------------------------------------------------------------- 1. services
 step "Stopping and disabling services"
 systemctl stop "$SVC.service" "$SVC-watchdog.timer" "$SVC-watchdog.service" \
-               "$SVC-modupdate.timer" "$SVC-modupdate.service" "$SVC-ciopfs.service" 2>/dev/null
-systemctl disable "$SVC.service" "$SVC-watchdog.timer" "$SVC-modupdate.timer" "$SVC-ciopfs.service" 2>/dev/null
+               "$SVC-modupdate.timer" "$SVC-modupdate.service" "$SVC-ciopfs.service" "$SVC-agent.service" 2>/dev/null
+systemctl disable "$SVC.service" "$SVC-watchdog.timer" "$SVC-modupdate.timer" "$SVC-ciopfs.service" "$SVC-agent.service" 2>/dev/null
 say "stopped."
 
 # ----------------------------------------------------------------- 2. ciopfs unmount
@@ -74,12 +75,13 @@ say "unmounted (if it was mounted)."
 # ----------------------------------------------------------------- 3. units + scripts + env
 step "Removing systemd units, scripts and pzctl"
 rm -f "/etc/systemd/system/$SVC.service" \
+      "/etc/systemd/system/$SVC-agent.service" \
       "/etc/systemd/system/$SVC-ciopfs.service" \
       "/etc/systemd/system/$SVC-watchdog.service" \
       "/etc/systemd/system/$SVC-watchdog.timer" \
       "/etc/systemd/system/$SVC-modupdate.service" \
       "/etc/systemd/system/$SVC-modupdate.timer"
-rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$ENVF" "$FEXSTART"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART"
 case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
 systemctl reset-failed "$SVC.service" 2>/dev/null

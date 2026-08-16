@@ -46,10 +46,23 @@ agent enrollment and the remaining operation/audit layers to be implemented and 
 6. Configure the health check as `GET /api/health` on port `3000` and use
    `GET /api/health/database` to verify PostgreSQL.
 7. Deploy one replica and verify `/api/health`, `/docs` and the browser bundle.
-8. Enroll the host agent using a short-lived token. Prefer an outbound agent connection or a
-   private Tailscale/network path; do not expose an unauthenticated systemd, RCON or shell port.
-9. Test `status` against a staging target before enabling any mutating operation for production.
-10. Enable production access only after the audit log, role checks and operation confirmations are
+8. Provision the first admin with the one-off `bun run auth:bootstrap-admin` task, using a long
+   password supplied only through Coolify secrets.
+9. Enroll the host agent using a short-lived token. The command prints an access token once; store
+   it only in the VPS agent environment file:
+
+   ```dotenv
+   PZ_AGENT_URL=https://panel.example.com
+   PZ_AGENT_ID=<returned-agent-id>
+   PZ_AGENT_ACCESS_TOKEN=<returned-access-token>
+   PZ_AGENT_INTERVAL=15
+   ```
+
+   Then enable the outbound-only unit: `sudo systemctl enable --now zomboid-b42-agent.service`.
+   Prefer this outbound transport or a private Tailscale path; do not expose an unauthenticated
+   systemd, RCON or shell port.
+10. Test `status` against a staging target before enabling any mutating operation for production.
+11. Enable production access only after the audit log, role checks and operation confirmations are
     passing.
 
 ## Access and credentials

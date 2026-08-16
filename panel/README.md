@@ -4,9 +4,10 @@ Initial control-plane workspace for the ZomboidServer-arm project.
 
 ## Local development
 
-Requires Bun 1.4+ and PostgreSQL for database-backed work. The foundation slice exposes health endpoints, a typed fake-agent status endpoint and the first
-Drizzle/PostgreSQL migration. Run `bun run db:migrate` only with a configured `DATABASE_URL`; real
-production access still waits for the host agent and authentication layers.
+Requires Bun 1.4+ and PostgreSQL for database-backed work. The foundation slice exposes health endpoints, a typed fake-agent status endpoint, PostgreSQL
+sessions/agent enrollment and the first Drizzle migrations. Run `bun run db:migrate` only with a
+configured `DATABASE_URL`; create the first account with `bun run auth:bootstrap-admin` using
+secrets supplied out of band.
 
 ```bash
 cp .env.example .env
@@ -20,6 +21,7 @@ bun run dev:web
 
 - API: <http://127.0.0.1:3000/api/health>
 - Fake server status: <http://127.0.0.1:3000/api/servers/production/status>
+- Agent enrollment: `POST /api/agents/enroll` (master enrollment token)
 - OpenAPI: <http://127.0.0.1:3000/docs>
 - Frontend: <http://127.0.0.1:5173>
 

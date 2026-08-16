@@ -15,6 +15,43 @@ export const databaseHealthResponseSchema = Type.Object({
 
 export type DatabaseHealthResponse = Static<typeof databaseHealthResponseSchema>;
 
+export const authUserSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  email: Type.String({ minLength: 3, maxLength: 320 }),
+  role: Type.Union([Type.Literal("admin"), Type.Literal("operator"), Type.Literal("viewer")]),
+});
+
+export type AuthUser = Static<typeof authUserSchema>;
+
+export const authLoginRequestSchema = Type.Object({
+  email: Type.String({ minLength: 3, maxLength: 320 }),
+  password: Type.String({ minLength: 1, maxLength: 256 }),
+});
+
+export type AuthLoginRequest = Static<typeof authLoginRequestSchema>;
+
+export const authSessionResponseSchema = Type.Object({
+  user: authUserSchema,
+  expiresAt: Type.String({ minLength: 1 }),
+});
+
+export const authMeResponseSchema = Type.Object({
+  user: authUserSchema,
+});
+
+export const authLogoutResponseSchema = Type.Object({
+  ok: Type.Literal(true),
+});
+
+export const authErrorResponseSchema = Type.Object({
+  error: Type.Object({
+    code: Type.String({ minLength: 1 }),
+    message: Type.String({ minLength: 1 }),
+  }),
+});
+
+export type AuthErrorResponse = Static<typeof authErrorResponseSchema>;
+
 export const operationKinds = [
   "status",
   "start",
@@ -73,6 +110,45 @@ export const agentStatusSchema = Type.Object({
 });
 
 export type AgentStatus = Static<typeof agentStatusSchema>;
+
+export const agentServerConfigSchema = Type.Object({
+  displayName: Type.String({ minLength: 1, maxLength: 128 }),
+  serviceName: Type.String({ minLength: 1, maxLength: 128 }),
+  port: Type.Integer({ minimum: 1024, maximum: 65535 }),
+  runtime: agentRuntimeSchema,
+  dataDir: Type.String({ minLength: 1, maxLength: 512 }),
+});
+
+export const agentEnrollmentRequestSchema = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  enrollmentToken: Type.String({ minLength: 1, maxLength: 512 }),
+  server: agentServerConfigSchema,
+});
+
+export type AgentServerConfig = Static<typeof agentServerConfigSchema>;
+export type AgentEnrollmentRequest = Static<typeof agentEnrollmentRequestSchema>;
+
+export const agentEnrollmentResponseSchema = Type.Object({
+  agentId: Type.String({ minLength: 1 }),
+  accessToken: Type.String({ minLength: 1 }),
+});
+
+export const agentHeartbeatRequestSchema = Type.Object({
+  status: agentStatusSchema,
+});
+
+export type AgentHeartbeatRequest = Static<typeof agentHeartbeatRequestSchema>;
+
+export const agentHeartbeatResponseSchema = Type.Object({
+  ok: Type.Literal(true),
+});
+
+export const agentOperationErrorResponseSchema = Type.Object({
+  error: Type.Object({
+    code: Type.String({ minLength: 1 }),
+    message: Type.String({ minLength: 1 }),
+  }),
+});
 
 const emptyPayloadSchema = Type.Object({});
 
@@ -211,6 +287,57 @@ export const agentOperationResponseSchema = Type.Union([
 ]);
 
 export type AgentOperationResponse = Static<typeof agentOperationResponseSchema>;
+
+export const operationStatusSchema = Type.Union([
+  Type.Literal("queued"),
+  Type.Literal("running"),
+  Type.Literal("succeeded"),
+  Type.Literal("failed"),
+  Type.Literal("cancelled"),
+]);
+
+export const operationCreateRequestSchema = Type.Object({
+  kind: Type.Literal("status"),
+  payload: emptyPayloadSchema,
+});
+
+export type OperationCreateRequest = Static<typeof operationCreateRequestSchema>;
+
+export const operationRecordSchema = Type.Object({
+  operationId: Type.String({ minLength: 1 }),
+  serverId: Type.String({ minLength: 1 }),
+  kind: operationKindSchema,
+  status: operationStatusSchema,
+  createdAt: Type.String({ minLength: 1 }),
+  startedAt: Type.Union([Type.String(), Type.Null()]),
+  finishedAt: Type.Union([Type.String(), Type.Null()]),
+  error: Type.Union([Type.String(), Type.Null()]),
+});
+
+export type OperationRecord = Static<typeof operationRecordSchema>;
+
+export const agentJobSchema = Type.Object({
+  operationId: Type.String({ minLength: 1 }),
+  request: statusOperationRequestSchema,
+});
+
+export type AgentJob = Static<typeof agentJobSchema>;
+
+export const agentJobResponseSchema = Type.Object({
+  job: Type.Union([Type.Null(), agentJobSchema]),
+});
+
+export const agentJobCompleteRequestSchema = Type.Object({
+  status: Type.Union([Type.Literal("succeeded"), Type.Literal("failed")]),
+  result: Type.Optional(agentStatusSchema),
+  error: Type.Optional(Type.String({ maxLength: 1000 })),
+});
+
+export type AgentJobCompleteRequest = Static<typeof agentJobCompleteRequestSchema>;
+
+export const agentJobCompleteResponseSchema = Type.Object({
+  ok: Type.Literal(true),
+});
 
 export const queuedOperationResponseSchema = Type.Object({
   operationId: Type.String({ minLength: 1 }),

@@ -46,7 +46,10 @@ become a general-purpose shell or Docker host controller.
 - [x] Add a fake agent adapter, status endpoint and React status card.
 - [x] Refactor one safe `pzctl` operation (`status`) into a non-interactive JSON command.
 - [x] Exercise that command through a local stdio host-agent boundary (status only).
-- [ ] Persist the status operation audit event once authentication and agent identity exist.
+- [x] Add cookie sessions, admin bootstrap and role-bearing authenticated API access.
+- [x] Add agent enrollment, hashed access tokens and outbound heartbeat transport.
+- [x] Add the first queued `status` operation, agent claim/complete endpoints and audit events.
+- [ ] Add role-checked start/stop/restart jobs and complete the remaining pzctl operations.
 
 ## Guardrails
 
@@ -60,8 +63,7 @@ become a general-purpose shell or Docker host controller.
 
 ## Next checkpoint
 
-The first typed status slice is now covered by the contract package, fake adapter, Elysia
-endpoint, React status card, non-interactive `pzctl status --json`, PostgreSQL migration/health
-check and a local stdio host-agent boundary. Next, add authenticated agent identity and persist
-audit events. No start/stop/restart action is enabled until that slice is tested against a real
-staging agent.
+The first typed status slice is now covered by the contract package, Elysia endpoint, React status card, non-interactive `pzctl status --json`, PostgreSQL migrations/health
+check, cookie sessions, agent enrollment, outbound heartbeats and the first queued status job.
+Next, add role-checked start/stop/restart jobs and complete the remaining pzctl operations. No
+mutating operation is enabled until it is tested against a real staging agent.

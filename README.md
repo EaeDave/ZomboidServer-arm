@@ -313,11 +313,13 @@ install.sh                one-shot installer (arch-checked, interactive, branch 
 uninstall.sh              removes everything; asks before deleting worlds (rm -rf inside)
 pzctl                     control panel (start/stop, mods, updates, console, reset, backup)
 pzctl status --json       non-interactive versioned status for the future host agent
-pz-agent --stdio          local allowlisted agent boundary (status only for now)
+pz-agent --stdio          local allowlisted agent boundary (status only)
+pz-agent --enroll          enroll this host with the private control plane
+pz-agent --poll            outbound status heartbeat (no VPS listener)
 templates/                JVM config, runtime launchers, systemd units (filled in at install)
 scripts/
   common.sh               shared library (env, status JSON, ini editing, workshop installs, manifest)
-  pz-agent.sh              stdio host-agent boundary; no network listener
+  pz-agent.sh              stdio/enrollment/outbound host-agent boundary
   pz-modupdate.sh         mod update checker/applier (manual + systemd timer)
   pz-rcon.py              tiny stdlib-only RCON client (console + player count)
   zomboid-watchdog.sh     hybrid boot-hang watchdog
