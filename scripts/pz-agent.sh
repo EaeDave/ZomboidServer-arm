@@ -520,8 +520,10 @@ except OSError:
 inode = str(stat.st_ino)
 offset = int(os.environ.get("LOG_CURSOR", "0"))
 saved_fingerprint = os.environ.get("LOG_FINGERPRINT", "")
+reset = False
 if os.environ.get("LOG_INODE", "") != inode or offset > stat.st_size:
     offset = 0
+    reset = True
 
 try:
     with open(path, "rb") as handle:
@@ -531,10 +533,11 @@ try:
             if current_fingerprint != saved_fingerprint:
                 # A same-inode truncate/rewrite can refill beyond the prior byte offset.
                 offset = 0
+                reset = True
         handle.seek(offset)
         raw = handle.read(MAX_BYTES)
 except OSError:
-    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": "-", "sourceFingerprint": source_fingerprint, "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": "-", "sourceFingerprint": source_fingerprint, "reset": reset, "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 if not raw:
@@ -544,7 +547,7 @@ if not raw:
             fingerprint = hashlib.sha256(handle.read(offset - max(0, offset - 64))).hexdigest()
     except OSError:
         fingerprint = "-"
-    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": fingerprint, "sourceFingerprint": source_fingerprint, "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": fingerprint, "sourceFingerprint": source_fingerprint, "reset": reset, "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 flush = os.environ.get("LOG_FLUSH") == "1"
@@ -580,7 +583,7 @@ try:
         fingerprint = hashlib.sha256(handle.read(next_offset - max(0, next_offset - 64))).hexdigest()
 except OSError:
     fingerprint = "-"
-print(json.dumps({"inode": inode, "cursor": next_offset, "fingerprint": fingerprint, "sourceFingerprint": source_fingerprint, "lines": lines}, separators=(",", ":")))
+print(json.dumps({"inode": inode, "cursor": next_offset, "fingerprint": fingerprint, "sourceFingerprint": source_fingerprint, "reset": reset, "lines": lines}, separators=(",", ":")))
 PY
 }
 
@@ -612,7 +615,7 @@ PY
 send_live_console_delta() {
   local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" resync="$7" fingerprint="$8" resync_id="$9" flush="${10}"
   local delta lines_json next_file_cursor next_inode next_fingerprint source_fingerprint line_count next_event_cursor body response accepted_cursor pending_file
-  local pending_body pending_inode pending_cursor pending_fingerprint pending_event_cursor
+  local pending_body pending_inode pending_cursor pending_fingerprint pending_event_cursor pending_delta pending_current_inode pending_reset
   local -a pending_fields=()
   pending_file="$(console_pending_file)" || return $?
   if [ -r "$pending_file" ]; then
@@ -634,8 +637,16 @@ PY
     pending_fingerprint="${pending_fields[3]:-}"
     pending_event_cursor="${pending_fields[4]:-}"
     [ -n "$pending_body" ] || return 1
-    response="$(post_console_body "$url" "$agent_id" "$token" "$pending_body")" || return 1
-    accepted_cursor="$(RESPONSE="$response" python3 - <<'PY'
+    pending_delta="$(read_console_delta "$pending_cursor" "$pending_inode" 0 "$pending_fingerprint")" || return 1
+    pending_current_inode="$(DELTA="$pending_delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["inode"])')"
+    pending_reset="$(DELTA="$pending_delta" python3 -c 'import json, os; print(int(bool(json.loads(os.environ["DELTA"]).get("reset", False))))')"
+    if [ "$pending_current_inode" != "$pending_inode" ] || [ "$pending_reset" = 1 ]; then
+      # Do not acknowledge output from an old generation after a truncate/rotation. The persisted
+      # state remains a rebase, so the normal path below creates a new bounded request.
+      rm -f "$pending_file"
+    else
+      response="$(post_console_body "$url" "$agent_id" "$token" "$pending_body")" || return 1
+      accepted_cursor="$(RESPONSE="$response" python3 - <<'PY'
 import json
 import os
 
@@ -644,16 +655,17 @@ if not isinstance(value, int) or value < 0:
     raise SystemExit(1)
 print(value)
 PY
-    )" || return 1
-    [ "$accepted_cursor" -ge "$pending_event_cursor" ] || return 1
-    rm -f "$pending_file"
-    LOG_NEXT_CURSOR="$pending_cursor"
-    LOG_NEXT_INODE="$pending_inode"
-    LOG_NEXT_EVENT_CURSOR="$accepted_cursor"
-    LOG_NEXT_RESYNC=0
-    LOG_NEXT_FINGERPRINT="$pending_fingerprint"
-    LOG_NEXT_RESYNC_ID="-"
-    return 0
+      )" || return 1
+      [ "$accepted_cursor" -ge "$pending_event_cursor" ] || return 1
+      rm -f "$pending_file"
+      LOG_NEXT_CURSOR="$pending_cursor"
+      LOG_NEXT_INODE="$pending_inode"
+      LOG_NEXT_EVENT_CURSOR="$accepted_cursor"
+      LOG_NEXT_RESYNC=0
+      LOG_NEXT_FINGERPRINT="$pending_fingerprint"
+      LOG_NEXT_RESYNC_ID="-"
+      return 0
+    fi
   fi
   delta="$(read_console_delta "$file_cursor" "$inode" "$flush" "$fingerprint")" || return 1
   next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
