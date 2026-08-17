@@ -390,6 +390,18 @@ describe("control-plane API", () => {
     );
     expect(updateApply.status).toBe(202);
     expect((await updateApply.json()).kind).toBe("mods.update.apply");
+    const buildUpdate = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "build.update", payload: {} }),
+      }),
+    );
+    expect(buildUpdate.status).toBe(202);
+    expect((await buildUpdate.json()).kind).toBe("build.update");
 
     const read = await operationApp.handle(
       new Request("http://localhost/api/operations/operation-1", {
@@ -586,6 +598,17 @@ describe("control-plane API", () => {
       }),
     );
     expect(viewerUpdateApply.status).toBe(403);
+    const viewerBuildUpdate = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "build.update", payload: {} }),
+      }),
+    );
+    expect(viewerBuildUpdate.status).toBe(403);
     const forbiddenConfig = await viewerApp.handle(
       new Request("http://localhost/api/servers/production/config", {
         headers: { cookie: "zomboid_session=session-token" },

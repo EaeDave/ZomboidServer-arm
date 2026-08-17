@@ -221,7 +221,7 @@ function operationRequest(
 }
 
 function targetStateFor(kind: string): "online" | "offline" | "ready" | "unknown" {
-  if (kind === "start" || kind === "restart") return "online";
+  if (kind === "start" || kind === "restart" || kind === "build.update") return "online";
   if (kind === "stop") return "offline";
   if (kind === "status") return "unknown";
   return "ready";

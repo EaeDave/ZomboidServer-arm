@@ -232,11 +232,21 @@ do_apply() {
   local keep backup_path=""
   keep="$(conf_get MODUPDATE_BACKUP_KEEP 2)"
   [[ "$keep" =~ ^[0-3]$ ]] || keep=2
+  if svc_active; then
+    if ! save_world >/dev/null 2>&1; then
+      if [ "$json_mode" = 1 ]; then
+        emit_apply_json blocked "" "" "" "$([ -z "$no_restart" ] && echo true || echo false)" false "$current_players" "Could not save the active world before updating Workshop files."
+        return 0
+      fi
+      echo "Could not save the active world before updating Workshop files."
+      return 75
+    fi
+  fi
   if [ "$keep" = 0 ]; then
     [ "$json_mode" = 1 ] || echo "Pre-update world backup disabled (backups kept = 0)."
   else
     [ "$json_mode" = 1 ] || echo "Backing up world before updating (${#rows[@]} item(s))..."
-    if ! backup_path="$(backup_world "$PZ_BACKUPS/mod-update" modup)"; then
+    if ! backup_path="$(backup_world "$PZ_BACKUPS/mod-update" modup 2>/dev/null)"; then
       if [ "$json_mode" = 1 ]; then emit_apply_json failed "" "" "" "$([ -z "$no_restart" ] && echo true || echo false)" false "$current_players" "Could not create the pre-update world backup."; return 0; fi
       echo "Could not create the pre-update world backup."; return 75
     fi
@@ -267,8 +277,12 @@ do_apply() {
   else
     [ "$json_mode" = 1 ] || echo "Restarting the server to load updated mods..."
     if [ "$json_mode" = 1 ]; then
-      if "$PZ_BOOTRETRY" >/dev/null 2>&1; then restarted=true; else restart_rc=$?; fi
-    elif "$PZ_BOOTRETRY"; then
+      if graceful_stop_service && "$PZ_BOOTRETRY" >/dev/null 2>&1; then
+        restarted=true
+      else
+        restart_rc=$?
+      fi
+    elif graceful_stop_service && "$PZ_BOOTRETRY"; then
       restarted=true
     else
       restart_rc=$?

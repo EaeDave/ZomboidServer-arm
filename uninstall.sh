@@ -42,6 +42,8 @@ PORT="${PZ_PORT:-16261}"
 BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
 WATCHDOG="${PZ_WATCHDOG:-/usr/local/sbin/zomboid-watchdog.sh}"
 MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
+BUILDUPDATE="${PZ_BUILDUPDATE:-/usr/local/sbin/pz-build-update}"
+SAVE_STOP="${PZ_SAVE_STOP:-/usr/local/sbin/zomboid-save-before-stop.sh}"
 PZCTL_BIN="${PZ_PZCTL:-/usr/local/bin/pzctl}"
 AGENT_BIN="${PZ_AGENT:-/usr/local/sbin/pz-agent}"
 AGENT_PRIV="${PZ_AGENT_PRIV:-/usr/local/sbin/pz-agent-priv}"
@@ -55,7 +57,7 @@ LIBDIR="$(dirname "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}")"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
 
 echo "This removes: the PZ B42 server in $INSTALL_DIR, its systemd services, pzctl,"
-echo "the watchdog + mod updater, the selected runtime launcher, and"
+echo "the watchdog + mod/build updaters, the selected runtime launcher, and"
 echo "the UDP $PORT-$((PORT+1)) firewall rules."
 echo
 echo "Your worlds/saves in $CACHEDIR are asked about separately below, and the"
@@ -85,7 +87,7 @@ rm -f "/etc/systemd/system/$SVC.service" \
       "/etc/systemd/system/$SVC-watchdog.timer" \
       "/etc/systemd/system/$SVC-modupdate.service" \
       "/etc/systemd/system/$SVC-modupdate.timer"
-rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$PZCTL_BIN" "$AGENT_BIN" "$AGENT_PRIV" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART" "$BOXSTART"
+rm -f "$WATCHDOG" "$BOOTRETRY" "$MODUPDATE" "$BUILDUPDATE" "$SAVE_STOP" "$PZCTL_BIN" "$AGENT_BIN" "$AGENT_PRIV" "$ENVF" "$AGENT_ENVFILE" "$FEXSTART" "$BOXSTART"
 case "$LIBDIR" in /usr/local/lib/zomboid-arm*) rm -rf "$LIBDIR" ;; esac
 systemctl daemon-reload 2>/dev/null
 systemctl reset-failed "$SVC.service" 2>/dev/null

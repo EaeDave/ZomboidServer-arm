@@ -39,6 +39,8 @@ pz_load_env() {
   PZ_COLLECTIONS="$PZ_MODS/.workshop-collections.tsv"
   PZ_DISABLED="$PZ_MODS/.disabled-mods"
   PZ_UPDATELOG="${PZ_UPDATELOG:-$PZ_CACHEDIR/mod-updates.log}"
+  PZ_BUILDUPDATE="${PZ_BUILDUPDATE:-/usr/local/sbin/pz-build-update}"
+  PZ_GAME_APP_ID="${PZ_GAME_APP_ID:-380870}"
   PZ_BACKUPS="${PZ_BACKUPS:-$PZ_HOME/pz_backups}"
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
   # This executable crosses the sudo boundary in pz-agent-priv. Resolve it from
@@ -533,6 +535,29 @@ player_count() {
   n="$(printf '%s\n' "$out" | grep -oE 'Players connected \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)"
   [ -n "$n" ] && echo "$n" || echo -1
 }
+save_world() {
+  local active
+  active="$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)"
+  [ "$active" = active ] || return 0
+  is_listening || return 0
+  if ! rcon_ready; then
+    printf 'pzctl: refusing to stop active server because RCON is unavailable; world was not saved\n' >&2
+    return 75
+  fi
+  if ! rcon_cmd save >/dev/null; then
+    printf 'pzctl: RCON save failed; refusing to stop active server\n' >&2
+    return 75
+  fi
+}
+
+graceful_stop_service() {
+  local active
+  active="$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)"
+  [ "$active" = active ] || return 0
+  save_world || return $?
+  sudo systemctl stop "$PZ_SERVICE"
+}
+
 
 # ------------------------------------------------------------ backups + update log
 backup_world() {  # backup_world DESTDIR PREFIX  -> echoes archive path

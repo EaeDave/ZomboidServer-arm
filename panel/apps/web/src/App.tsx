@@ -23,7 +23,7 @@ const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
 
 type LifecycleOperation = Extract<
   OperationCreateRequest["kind"],
-  "start" | "stop" | "restart" | "backup"
+  "start" | "stop" | "restart" | "build.update" | "backup"
 >;
 
 async function getHealth(): Promise<HealthResponse> {

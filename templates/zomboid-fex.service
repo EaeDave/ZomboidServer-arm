@@ -19,6 +19,7 @@ Environment=FEX_MULTIBLOCK=0
 Environment=PATH=__INSTALL_DIR__/jre64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=LD_LIBRARY_PATH=__INSTALL_DIR__/linux64:__INSTALL_DIR__:__INSTALL_DIR__/jre64/lib:__INSTALL_DIR__/jre64/lib/server
 ExecStart=__FEX_START__ -servername __SERVERNAME__ __EXTRA_ARGS__
+ExecStop=__SAVE_STOP__
 StandardOutput=append:__CONSOLE__
 StandardError=append:__CONSOLE__
 # The FEX launcher exits non-zero on a guest crash; always restart the service.

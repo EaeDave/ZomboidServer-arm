@@ -13,14 +13,15 @@ type Scalar = boolean | number | string;
 type Draft = Record<string, Scalar>;
 type ViewMode = "common" | "advanced";
 
-const COMMON_PATHS = new Set([
-  "SleepAllowed",
-  "SleepNeeded",
-  "FastForwardMultiplier",
-  "PauseEmpty",
-  "PVP",
-  "PvP",
-]);
+const COMMON_PATHS: Record<string, true> = {
+  SleepAllowed: true,
+  SleepNeeded: true,
+  FastForwardMultiplier: true,
+  PauseEmpty: true,
+  SaveWorldEveryMinutes: true,
+  PVP: true,
+  PvP: true,
+};
 
 function identity(field: Pick<ConfigField, "source" | "path">) {
   return `${field.source}:${field.path}`;
@@ -290,7 +291,7 @@ export function ServerConfiguration({
   const commonFields = useMemo(
     () =>
       fields
-        .filter((field) => COMMON_PATHS.has(field.path) && field.editable && !field.sensitive)
+        .filter((field) => COMMON_PATHS[field.path] && field.editable && !field.sensitive)
         .slice(0, 12),
     [fields],
   );

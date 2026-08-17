@@ -46,6 +46,39 @@ function playerSummary(server?: AgentStatus) {
   return `${server.playerCount} ${server.playerCount === 1 ? "player" : "players"}`;
 }
 
+function operationLabel(kind: OperationKind) {
+  const labels: Partial<Record<OperationKind, string>> = {
+    start: "Start server",
+    stop: "Stop server",
+    restart: "Restart server",
+    "build.update": "Update game build",
+    backup: "Create backup",
+  };
+  return labels[kind] ?? kind;
+}
+
+function operationDetail(operation: OperationRecord) {
+  if (operation.error) return operation.error;
+  if (operation.kind !== "build.update" || !operation.result || typeof operation.result !== "object") {
+    return undefined;
+  }
+  const result = operation.result as {
+    message?: unknown;
+    previousVersion?: unknown;
+    installedVersion?: unknown;
+    backupCreated?: unknown;
+  };
+  if (typeof result.message === "string") return result.message;
+  const previous =
+    typeof result.previousVersion === "string" ? result.previousVersion : undefined;
+  const installed =
+    typeof result.installedVersion === "string" ? result.installedVersion : undefined;
+  if (!previous && !installed) return undefined;
+  return `Build ${previous ?? "—"} → ${installed ?? "—"}${
+    result.backupCreated === true ? " · world backup created" : ""
+  }`;
+}
+
 function AccessEditor({
   settings,
   canAdmin,
@@ -245,7 +278,9 @@ export function OverviewPage({
   operationMessage?: string;
   operationPending: boolean;
   onRefresh: () => void;
-  onQueue: (kind: Extract<OperationKind, "start" | "stop" | "restart" | "backup">) => void;
+  onQueue: (
+    kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
+  ) => void;
   onRevealSettings: () => Promise<AgentSettingsReveal>;
   onUpdateSettings: (update: AccessUpdate) => Promise<void>;
 }) {
@@ -257,10 +292,16 @@ export function OverviewPage({
   const recentOperations =
     operations?.filter((operation) => operation.kind !== "status").slice(0, 3) ?? [];
 
-  const queue = (kind: Extract<OperationKind, "start" | "stop" | "restart" | "backup">) => {
+  const queue = (
+    kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
+  ) => {
     if (
-      (kind === "stop" || kind === "restart") &&
-      !window.confirm(`${kind} the production server?`)
+      (kind === "stop" || kind === "restart" || kind === "build.update") &&
+      !window.confirm(
+        kind === "build.update"
+          ? "Download and install the latest public Project Zomboid build, then restart the production server?"
+          : `${kind} the production server?`,
+      )
     )
       return;
     onQueue(kind);
@@ -345,6 +386,15 @@ export function OverviewPage({
             </button>
           )}
           <button
+            className="rounded-xl border border-amber-400/30 px-3.5 py-2 text-sm text-amber-200 hover:border-amber-300 hover:text-amber-100 disabled:opacity-40"
+            disabled={!canOperate || busy}
+            onClick={() => queue("build.update")}
+            title="Downloads the configured public branch, creates a world backup, and restarts safely."
+            type="button"
+          >
+            Update game build
+          </button>
+          <button
             className="rounded-xl border border-zinc-700 px-3.5 py-2 text-sm text-zinc-200 hover:border-emerald-400 hover:text-emerald-300 disabled:opacity-40"
             disabled={!canOperate || busy}
             onClick={() => queue("backup")}
@@ -381,7 +431,9 @@ export function OverviewPage({
         {activeOperation ? (
           <div className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="font-medium text-amber-200">{activeOperation.kind} in progress</p>
+              <p className="font-medium text-amber-200">
+                {operationLabel(activeOperation.kind)} in progress
+              </p>
               <span className="text-xs uppercase tracking-[0.15em] text-amber-300/70">
                 {activeOperation.targetState ?? "working"}
               </span>
@@ -489,24 +541,34 @@ export function OverviewPage({
             <span className="text-xs text-zinc-500">{recentOperations.length} recent</span>
           </div>
           <ul className="mt-4 divide-y divide-zinc-800">
-            {recentOperations.map((operation) => (
-              <li
-                className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
-                key={operation.operationId}
-              >
-                <span className="text-zinc-300">{operation.kind}</span>
-                <span
-                  className={
-                    operation.status === "succeeded" ? "text-emerald-300" : "text-zinc-400"
-                  }
+            {recentOperations.map((operation) => {
+              const detail = operationDetail(operation);
+              return (
+                <li
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
+                  key={operation.operationId}
                 >
-                  {operation.status}
-                </span>
-                <time className="text-xs text-zinc-500" dateTime={operation.createdAt}>
-                  {new Date(operation.createdAt).toLocaleString()}
-                </time>
-              </li>
-            ))}
+                  <div className="min-w-0">
+                    <span className="text-zinc-300">{operationLabel(operation.kind)}</span>
+                    {detail ? <p className="mt-1 max-w-xl text-xs text-zinc-500">{detail}</p> : null}
+                  </div>
+                  <span
+                    className={
+                      operation.status === "succeeded"
+                        ? "text-emerald-300"
+                        : operation.status === "failed"
+                          ? "text-rose-300"
+                          : "text-zinc-400"
+                    }
+                  >
+                    {operation.status}
+                  </span>
+                  <time className="text-xs text-zinc-500" dateTime={operation.createdAt}>
+                    {new Date(operation.createdAt).toLocaleString()}
+                  </time>
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : null}

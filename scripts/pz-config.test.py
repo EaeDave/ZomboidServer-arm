@@ -25,6 +25,7 @@ SleepAllowed=false
 SleepNeeded=false
 
 PublicName=My Server
+SaveWorldEveryMinutes=0
 
 # Maximum players Min: 1 Max: 100 Default: 32
 MaxPlayers=4
@@ -71,6 +72,9 @@ class ConfigTest(unittest.TestCase):
         fields = {(field["source"], field["path"]): field for field in result["fields"]}
         self.assertRegex(result["revision"], r"^[0-9a-f]{64}$")
         self.assertEqual(fields[("server", "SleepAllowed")]["value"], False)
+        self.assertEqual(fields[("server", "SaveWorldEveryMinutes")]["value"], 0)
+        self.assertEqual(fields[("server", "SaveWorldEveryMinutes")]["category"], "world")
+        self.assertEqual(fields[("server", "SaveWorldEveryMinutes")]["minimum"], 0.0)
         self.assertEqual(fields[("sandbox", "ZombieConfig.PopulationMultiplier")]["maximum"], 4.0)
         self.assertEqual(fields[("sandbox", "ExampleMod.Enabled")]["category"], "mods")
         self.assertIsNone(fields[("server", "Password")]["value"])

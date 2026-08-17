@@ -74,6 +74,7 @@ export const operationKinds = [
   "start",
   "stop",
   "restart",
+  "build.update",
   "backup",
   "mods.list",
   "mods.add",
@@ -93,6 +94,7 @@ export const operationKindSchema = Type.Union([
   Type.Literal("start"),
   Type.Literal("stop"),
   Type.Literal("restart"),
+  Type.Literal("build.update"),
   Type.Literal("backup"),
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
@@ -160,6 +162,7 @@ export const agentModsStatusSchema = Type.Object({
   ),
   inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
 });
+
 
 export const workshopUpdateSchema = Type.Object(
   {
@@ -232,6 +235,28 @@ export const modsUpdateApplyResultSchema = Type.Object(
 );
 
 export type ModsUpdateApplyResult = Static<typeof modsUpdateApplyResultSchema>;
+export const buildUpdateResultSchema = Type.Object(
+  {
+    status: Type.Union([
+      Type.Literal("updated"),
+      Type.Literal("blocked"),
+      Type.Literal("unavailable"),
+      Type.Literal("failed"),
+    ]),
+    appId: Type.String({ pattern: "^[0-9]+$" }),
+    branch: Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9._-]+$" }),
+    backupCreated: Type.Boolean(),
+    backupPath: Type.Union([Type.String({ maxLength: 1024 }), Type.Null()]),
+    restarted: Type.Boolean(),
+    previousVersion: Type.Union([Type.String({ maxLength: 128 }), Type.Null()]),
+    installedVersion: Type.Union([Type.String({ maxLength: 128 }), Type.Null()]),
+    message: Type.Optional(Type.String({ maxLength: 512 })),
+  },
+  closedObjectOptions,
+);
+
+export type BuildUpdateResult = Static<typeof buildUpdateResultSchema>;
+
 
 export const agentServerSettingsSchema = Type.Object({
   public: Type.Boolean(),
@@ -440,6 +465,15 @@ export const restartOperationRequestSchema = Type.Object(
   },
   closedObjectOptions,
 );
+export const buildUpdateOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("build.update"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
+
 
 export const settingsReadOperationRequestSchema = Type.Object(
   {
@@ -604,6 +638,7 @@ export const agentOperationRequestSchema = Type.Union([
   startOperationRequestSchema,
   stopOperationRequestSchema,
   restartOperationRequestSchema,
+  buildUpdateOperationRequestSchema,
   backupOperationRequestSchema,
   modsListOperationRequestSchema,
   modsAddOperationRequestSchema,
@@ -617,6 +652,7 @@ export const agentOperationRequestSchema = Type.Union([
   configUpdateOperationRequestSchema,
   worldResetOperationRequestSchema,
 ]);
+
 
 export type AgentOperationRequest = Static<typeof agentOperationRequestSchema>;
 
@@ -654,6 +690,7 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("start"),
   Type.Literal("stop"),
   Type.Literal("restart"),
+  Type.Literal("build.update"),
   Type.Literal("backup"),
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
@@ -667,6 +704,7 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("config.update"),
   Type.Literal("world.reset"),
 ]);
+
 
 export const agentOperationSuccessResponseSchema = Type.Object(
   {
@@ -708,6 +746,7 @@ export const operationCreateRequestSchema = Type.Union([
   Type.Object({ kind: Type.Literal("start"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("stop"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("restart"), payload: emptyPayloadSchema }, closedObjectOptions),
+  Type.Object({ kind: Type.Literal("build.update"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object(
     {
       kind: Type.Literal("backup"),

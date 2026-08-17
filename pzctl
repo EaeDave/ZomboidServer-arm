@@ -8,7 +8,7 @@
 #
 set -uo pipefail
 
-PZCTL_VERSION="2.2.0-fex"
+PZCTL_VERSION="2.3.0-fex"
 
 # ------------------------------------------------------------ config (from installer)
 ENVF="${PZCTL_ENV:-/etc/zomboid-b42.env}"
@@ -17,6 +17,7 @@ export PZCTL_ENV="$ENVF"
 . "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
 pz_load_env
 PZ_MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
+PZ_BUILDUPDATE="${PZ_BUILDUPDATE:-/usr/local/sbin/pz-build-update}"
 
 cli_mods_list_json() {
   local active disabled disk tracked
@@ -359,8 +360,8 @@ if not isinstance(create_backup, bool): raise SystemExit(64)
 print("1" if create_backup else "0")
 PY
   )" || return 64
+  graceful_stop_service || return 1
   if [ "$backup" = 1 ]; then backup_path="$(backup_world "$PZ_BACKUPS" prereset)" || return 1; fi
-  sudo -n systemctl stop "$PZ_SERVICE" >/dev/null 2>&1 || return 1
   rm -rf "$PZ_CACHEDIR/Saves/Multiplayer/${PZ_SERVERNAME}"* 2>/dev/null
   rm -f "$PZ_CACHEDIR/db/${PZ_SERVERNAME}.db" "${PZ_ADMIN_MARKER:-$PZ_CACHEDIR/.admin-bootstrap-complete}" 2>/dev/null
   ini_set ResetID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
@@ -381,10 +382,9 @@ cli_start_json() {
   status_json
   return "$rc"
 }
-
 cli_stop_json() {
   local rc=0
-  sudo -n systemctl stop "$PZ_SERVICE" >/dev/null 2>&1 || rc=$?
+  graceful_stop_service || rc=$?
   status_json
   return "$rc"
 }
@@ -400,6 +400,11 @@ cli_restart_json() {
       printf 'pzctl: workshop update check failed; continuing restart\n' >&2
     fi
   fi
+  graceful_stop_service || {
+    rc=$?
+    status_json
+    return "$rc"
+  }
   PZ_SERVICE="$PZ_SERVICE" PZ_PORT="$PZ_PORT" PZ_CONSOLE="$PZ_CONSOLE" "$PZ_BOOTRETRY" >/dev/null 2>&1 || rc=$?
   status_json
   return "$rc"
@@ -411,6 +416,7 @@ cli_backup_json() {
     case "$keep" in ''|*[!0-9]*) return 64 ;; esac
     [ "$keep" -ge 1 ] && [ "$keep" -le 100 ] || return 64
   fi
+  save_world || return 1
   out="$(backup_world "$PZ_BACKUPS" pzbackup)" || return 1
   cp "$PZ_JSON" "$PZ_BACKUPS/ProjectZomboid64_$(date +%Y%m%d_%H%M%S).json" 2>/dev/null || true
   [ -z "$keep" ] || rotate_backups "$PZ_BACKUPS" pzbackup "$keep"
@@ -422,6 +428,14 @@ import os
 print(json.dumps({"backupPath": os.environ["BACKUP_PATH"]}, separators=(",", ":")))
 PY
 }
+cli_build_update_json() {
+  [ -x "$PZ_BUILDUPDATE" ] || {
+    printf 'pzctl: build updater is not installed: %s\n' "$PZ_BUILDUPDATE" >&2
+    return 1
+  }
+  "$PZ_BUILDUPDATE" --json
+}
+
 
 cli_logs_json() {
   local lines="${1:-50}"
@@ -432,7 +446,7 @@ cli_logs_json() {
 
 cli_help() {
   cat <<'EOF'
-Usage: pzctl [status|start|stop|restart|backup|logs] [--json] [lines]
+Usage: pzctl [status|start|stop|restart|build-update|backup|logs] [--json] [lines]
        pzctl [mods-list|mods-add|mods-remove|mods-configure|mods-update-check|mods-update-apply|settings|settings-read|config-read|config-update|world-reset] --json [args]
        pzctl backup --json [keep]
        pzctl --version | --help
@@ -458,6 +472,14 @@ if [ "$#" -gt 0 ]; then
         exit 64
       }
       "cli_${1}_json"
+      exit $?
+      ;;
+    build-update)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || {
+        printf 'pzctl: build-update requires --json\n' >&2
+        exit 64
+      }
+      cli_build_update_json
       exit $?
       ;;
     backup)
@@ -532,6 +554,10 @@ if [ "$#" -gt 0 ]; then
         start|stop|restart)
           [ "$#" -eq 2 ] || exit 64
           "cli_${2}_json"
+          ;;
+        build-update)
+          [ "$#" -eq 2 ] || exit 64
+          cli_build_update_json
           ;;
         backup)
           [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 64
@@ -627,12 +653,24 @@ do_start() {
   run_boot_retry
   pause
 }
-do_stop() { sudo systemctl stop "$PZ_SERVICE"; echo "$(ylw Stopped)."; pause; }
+do_stop() {
+  if graceful_stop_service; then
+    echo "$(ylw Stopped)."
+  else
+    echo "$(red 'Stop refused: the world could not be saved safely.')"
+  fi
+  pause
+}
 do_restart() {
   if [ "$(conf_get MODUPDATE_ON_RESTART 0)" = 1 ]; then
     echo "Checking workshop mods for updates first (toggle in menu 12)..."
     "$PZ_MODUPDATE" check; rc=$?
     if [ "$rc" -eq 10 ]; then "$PZ_MODUPDATE" apply --no-restart; fi
+  fi
+  if ! graceful_stop_service; then
+    echo "$(red 'Restart refused: the world could not be saved safely.')"
+    pause
+    return
   fi
   echo "Restarting..."
   run_boot_retry

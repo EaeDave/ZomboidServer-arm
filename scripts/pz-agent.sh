@@ -832,14 +832,19 @@ PY
 
 run_long_job() {
   local url="$1" agent_id="$2" token="$3" operation_id="$4" kind="$5" active_file="$6"
-  local state_dir result_file
+  local state_dir result_file host_kind
   state_dir="$(agent_state_dir)" || return $?
   case "$operation_id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   mkdir -p "$state_dir" || return 1
   result_file="$state_dir/.${operation_id}.result.$$"
+  host_kind="$kind"
+  [ "$kind" = "build.update" ] && host_kind=build-update
   (
     local result completion command_pid command_rc worker_pid worker_start
-    local log_inode log_file_cursor log_event_cursor log_flush=0 final_attempts
+    local log_inode log_file_cursor log_event_cursor log_flush=0 final_attempts progress_message
+    progress_message="Host operation is still running."
+    [ "$kind" = "build.update" ] &&
+      progress_message="Saving the world, creating a backup, and downloading the configured game build."
     worker_pid="$BASHPID"
     worker_start="$(proc_start_time "$worker_pid")"
     if [ -z "$worker_start" ]; then
@@ -860,10 +865,10 @@ run_long_job() {
     log_event_cursor=0
     : >"$result_file" || exit 1
 
-    sudo -n "$PZ_AGENT_PRIV" "$kind" >"$result_file" 2>&1 &
-    command_pid="$!"
+    sudo -n "$PZ_AGENT_PRIV" "$host_kind" >"$result_file" 2>&1 &
+    command_pid=$!
     while kill -0 "$command_pid" 2>/dev/null; do
-      post_progress "$url" "$agent_id" "$token" "$operation_id" "Host operation is still running." || true
+      post_progress "$url" "$agent_id" "$token" "$operation_id" "$progress_message" || true
       if send_operation_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
         log_file_cursor="$LOG_NEXT_CURSOR"
         log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
@@ -889,12 +894,19 @@ run_long_job() {
     done
 
     result="$(cat "$result_file" 2>/dev/null || true)"
-    if [ "$command_rc" -eq 0 ] && completion="$(RESULT="$result" python3 - <<'PY'
+    if [ "$command_rc" -eq 0 ] && completion="$(RESULT="$result" KIND="$kind" python3 - <<'PY'
 import json
 import os
 
 value = json.loads(os.environ["RESULT"])
-print(json.dumps({"status": "succeeded", "result": value}, separators=(",", ":")))
+if os.environ["KIND"] == "build.update" and value.get("status") in {"blocked", "unavailable", "failed"}:
+    print(json.dumps({
+        "status": "failed",
+        "error": value.get("message") or "Host build update failed",
+        "result": value,
+    }, separators=(",", ":")))
+else:
+    print(json.dumps({"status": "succeeded", "result": value}, separators=(",", ":")))
 PY
     )"; then
       :
@@ -1081,6 +1093,18 @@ PY
               sleep "$interval"
               continue
               ;;
+            build.update)
+              if ! run_long_job "$url" "$agent_id" "$access_token" "$job_id" "$job_kind" "$active_file"; then
+                completion='{"status":"failed","error":"host agent could not start the background worker"}'
+                if post_completion "$url/api/agents/$agent_id/jobs/$job_id/complete" "$access_token" "$completion"; then
+                  :
+                else
+                  dead_letter_completion "$job_id" "$completion" || true
+                fi
+              fi
+              sleep "$interval"
+              continue
+              ;;
             backup)
               keep="$(PAYLOAD="$job_payload" python3 - <<'PY'
 import json
@@ -1137,7 +1161,7 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
-            if [ "$job_kind" = "mods.update.apply" ]; then
+            if [ "$job_kind" = "mods.update.apply" ] || [ "$job_kind" = "build.update" ]; then
               if completion="$(printf '%s' "$result_status" | python3 -c '
 import json
 import sys
@@ -1147,7 +1171,7 @@ try:
 except json.JSONDecodeError:
     raise SystemExit(1)
 if result.get("status") in {"blocked", "unavailable", "failed"}:
-    print(json.dumps({"status": "failed", "error": result.get("message") or "Workshop mod update failed"}, separators=(",", ":")))
+    print(json.dumps({"status": "failed", "error": result.get("message") or "Host update failed"}, separators=(",", ":")))
 else:
     print(json.dumps({"status": "succeeded", "result": result}, separators=(",", ":")))
 ')"; then

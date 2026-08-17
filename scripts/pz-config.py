@@ -90,6 +90,7 @@ FRIENDLY_LABELS = {
     "WaterShut": "Water shutoff",
     "ElecShut": "Electricity shutoff",
     "HoursForLootRespawn": "Hours until loot respawn",
+    "SaveWorldEveryMinutes": "World save interval",
     "ZombieConfig.PopulationMultiplier": "Population multiplier",
 }
 
@@ -97,6 +98,7 @@ SERVER_CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("sleep", ("Sleep", "FastForward", "PauseEmpty")),
     ("pvp", ("PVP", "Safety", "War", "Sledgehammer", "Destruction")),
     ("safehouse", ("Safehouse", "SafeHouse", "Faction")),
+    ("world", ("SaveWorld",)),
     ("communication", ("Chat", "Voice", "Discord", "Webhook", "Radio", "Message")),
     ("security", ("AntiCheat", "DoLuaChecksum", "Ban", "Kick", "Checksum")),
     ("network", ("Port", "Steam", "UPnP", "Ping", "LoginQueue", "server_browser")),
@@ -262,6 +264,11 @@ def parse_ini(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]
             continue
         value_type = scalar_type(value)
         description, minimum, maximum, default, options = metadata_from_comments(comments, value_type, value)
+        if key == "SaveWorldEveryMinutes":
+            description = "Save loaded world areas at this real-world interval. Set 0 to disable periodic saves."
+            minimum = 0.0
+            maximum = 2_147_483_647.0
+            default = 0
         validation_minimum, validation_maximum = minimum, maximum
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             if minimum is not None and value < minimum:

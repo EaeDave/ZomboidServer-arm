@@ -60,6 +60,12 @@ this branch is approved and the migration/agent rollout is explicitly scheduled.
 - [x] Validate local tests, large snapshots, real production reads and reversible staging writes.
 - [ ] Deploy the branch to the full staging control plane and run browser-to-host acceptance.
 
+## Follow-up: Workshop update observability
+
+- [ ] Persist a per-run Workshop update audit with each mod's old/new metadata, outcome, error and restart/readiness timeline.
+- [ ] Show a concise Mods-page summary that distinguishes queued, checking, updating, restarting, ready, partial and failed states without requiring manual refresh.
+- [ ] Add a server-side background check worker with a configurable cadence, cached results and stale/error indicators; prevent duplicate checks and preserve history across reloads.
+
 ## Current milestone: foundation
 
 - [x] Choose PostgreSQL instead of SQLite.

@@ -66,22 +66,23 @@ const host = process.env.HOST ?? "127.0.0.1";
 const version = process.env.npm_package_version ?? "0.1.0";
 const webDist = `${import.meta.dir}/../../web/dist`;
 // These operations are routed through the root-owned pz-agent-priv allowlist on the VPS.
-const supportedOperationKinds = new Set([
-  "status",
-  "start",
-  "stop",
-  "restart",
-  "backup",
-  "mods.list",
-  "mods.add",
-  "mods.remove",
-  "mods.configure",
-  "mods.update.check",
-  "mods.update.apply",
-  "settings.update",
-  "config.update",
-  "world.reset",
-]);
+const supportedOperationKinds: Record<string, true> = {
+  status: true,
+  start: true,
+  stop: true,
+  restart: true,
+  "build.update": true,
+  backup: true,
+  "mods.list": true,
+  "mods.add": true,
+  "mods.remove": true,
+  "mods.configure": true,
+  "mods.update.check": true,
+  "mods.update.apply": true,
+  "settings.update": true,
+  "config.update": true,
+  "world.reset": true,
+};
 type DatabaseCheck = () => Promise<void>;
 type AppOptions = { serveFrontend?: boolean };
 
@@ -491,7 +492,7 @@ export function createApp(
           set.status = 401;
           return { error: { code: "unauthenticated", message: "Login required" } };
         }
-        if (!supportedOperationKinds.has(body.kind)) {
+        if (!supportedOperationKinds[body.kind]) {
           set.status = 400;
           return {
             error: { code: "operation_disabled", message: "This operation is not enabled yet" },

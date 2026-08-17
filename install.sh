@@ -20,7 +20,7 @@
 #    PZ_FEX_COMMIT / PZ_FEX_PREFIX / PZ_FEX_ROOTFS     pinned FEX settings
 #    PZ_FEX_SOURCE / PZ_FEX_JOBS                       isolated source/build controls
 #    PZ_ANNOUNCED_IP=x.x.x.x                            public IP advertised to PZ/Steam
-#    PZ_BRANCH / PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB   preseed the prompts
+#    PZ_BRANCH / PZ_SAVE_WORLD_EVERY_MINUTES / PZ_ADMIN_PW / PZ_JOIN_PW / PZ_RAM_GB
 #
 set -euo pipefail
 
@@ -67,6 +67,7 @@ BACKUPS="${PZ_BACKUPS:-$TARGET_HOME/pz_backups}"
 SERVERNAME=servertest
 ENVFILE="/etc/${SVC}.env"
 LIBDIR="/usr/local/lib/zomboid-arm${SFX}"
+SAVE_STOP="$LIBDIR/zomboid-save-before-stop.sh"
 BIN_PZCTL="/usr/local/bin/pzctl${SFX}"
 BIN_AGENT="/usr/local/sbin/pz-agent${SFX}"
 BIN_AGENT_PRIV="/usr/local/sbin/pz-agent-priv${SFX}"
@@ -74,6 +75,7 @@ AGENT_ENVFILE="/etc/${SVC}-agent.env"
 BIN_BOOTRETRY="/usr/local/sbin/pz-boot-retry${SFX}"
 BIN_WATCHDOG="/usr/local/sbin/zomboid-watchdog${SFX}.sh"
 BIN_MODUPDATE="/usr/local/sbin/pz-modupdate${SFX}"
+BIN_BUILDUPDATE="/usr/local/sbin/pz-build-update${SFX}"
 BIN_FEXSTART="/usr/local/sbin/zomboid-fex-start${SFX}.sh"
 BIN_BOXSTART="/usr/local/sbin/zomboid-b42-start${SFX}.sh"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
@@ -310,7 +312,8 @@ render() { sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__INSTALL_DIR__|$(e
                -e "s|__WATCHDOG__|$(esc "$BIN_WATCHDOG")|g" -e "s|__LIBDIR__|$(esc "$LIBDIR")|g" \
                -e "s|__FEX_PREFIX__|$(esc "$FEX_PREFIX")|g" -e "s|__FEX_ROOTFS__|$(esc "$FEX_ROOTFS")|g" \
                -e "s|__FEX_DATA_HOME__|$(esc "$FEX_DATA_HOME")|g" -e "s|__FEX_SOCKET__|$(esc "$FEX_SOCKET")|g" \
-               -e "s|__FEX_START__|$(esc "$BIN_FEXSTART")|g" -e "s|__BOX_START__|$(esc "$BIN_BOXSTART")|g" "$1"; }
+               -e "s|__FEX_START__|$(esc "$BIN_FEXSTART")|g" -e "s|__BOX_START__|$(esc "$BIN_BOXSTART")|g" \
+               -e "s|__SAVE_STOP__|$(esc "$SAVE_STOP")|g" "$1"; }
 if [ "$RUNTIME" = fex ]; then
   render "$REPO_DIR/templates/zomboid-fex.service" > "/etc/systemd/system/$SVC.service"
   render "$REPO_DIR/templates/zomboid-fex-start.sh" > "$BIN_FEXSTART"
@@ -331,6 +334,7 @@ sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__ENVFILE__|$(esc "$ENVFILE")|
     "$REPO_DIR/templates/zomboid-agent.service" > "/etc/systemd/system/$SVC-agent.service"
 install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" "$BIN_WATCHDOG"
 install -m755 "$REPO_DIR/scripts/boot-retry.sh"       "$BIN_BOOTRETRY"
+install -m755 "$REPO_DIR/scripts/pz-build-update.sh" "$BIN_BUILDUPDATE"
 install -m755 "$REPO_DIR/scripts/pz-modupdate.sh"     "$BIN_MODUPDATE"
 install -m755 "$REPO_DIR/pzctl"                       "$BIN_PZCTL"
 install -m755 "$REPO_DIR/scripts/pz-agent.sh"          "$BIN_AGENT"
@@ -339,10 +343,11 @@ mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
 install -m755 "$REPO_DIR/scripts/zomboid-admin-bootstrap.sh" "$LIBDIR/zomboid-admin-bootstrap.sh"
 install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
+install -m755 "$REPO_DIR/scripts/zomboid-save-before-stop.sh" "$SAVE_STOP"
 install -m755 "$REPO_DIR/scripts/pz-config.py" "$LIBDIR/pz-config.py"
 # namespaced installs: point the installed copies at their own env file
 if [ -n "$SFX" ]; then
-  sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE" "$BIN_AGENT"
+  sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE" "$BIN_BUILDUPDATE" "$BIN_AGENT"
   sed -i "s|/usr/local/lib/zomboid-arm/common.sh|$LIBDIR/common.sh|g; s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/usr/local/sbin/pz-agent-priv|$BIN_AGENT_PRIV|g" "$BIN_AGENT"
   sed -i "s|/usr/local/bin/pzctl|$BIN_PZCTL|g; s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_AGENT_PRIV"
 fi
@@ -372,7 +377,7 @@ PZ_ADMIN_MARKER=$CACHEDIR/.admin-bootstrap-complete
 PZ_CONSOLE=$CACHEDIR/server-console.txt
 PZ_INI=$CACHEDIR/Server/$SERVERNAME.ini
 PZ_MODS=$CACHEDIR/mods
-PZ_DD=$DD
+PZ_DD=$(printf '%q' "$DD")
 PZ_PORT=$PORT
 PZ_RCONPORT=$RCONPORT
 PZ_BRANCH=$BRANCH
@@ -392,6 +397,8 @@ PZ_CONFIG=$LIBDIR/pz-config.py
 PZ_BOOTRETRY=$BIN_BOOTRETRY
 PZ_WATCHDOG=$BIN_WATCHDOG
 PZ_MODUPDATE=$BIN_MODUPDATE
+PZ_BUILDUPDATE=$BIN_BUILDUPDATE
+PZ_SAVE_STOP=$SAVE_STOP
 PZ_PZCTL=$BIN_PZCTL
 PZ_AGENT=$BIN_AGENT
 PZ_AGENT_PRIV=$BIN_AGENT_PRIV
@@ -464,8 +471,16 @@ INI="$CACHEDIR/Server/$SERVERNAME.ini"
 # safe key=value editing (no sed escaping pitfalls) via the shared lib
 . "$REPO_DIR/scripts/common.sh"
 CHANGED=0
+SAVE_WORLD_MINUTES="${PZ_SAVE_WORLD_EVERY_MINUTES:-10}"
+if ! [[ "$SAVE_WORLD_MINUTES" =~ ^[0-9]+$ ]] || [ "$SAVE_WORLD_MINUTES" -gt 2147483647 ]; then
+  SAVE_WORLD_MINUTES=10
+fi
 if [ -f "$INI" ]; then
   if [ -n "$JOIN_PW" ]; then ini_set Password "$JOIN_PW" "$INI"; CHANGED=1; fi
+  if [ -z "$(ini_get SaveWorldEveryMinutes "$INI")" ]; then
+    ini_set SaveWorldEveryMinutes "$SAVE_WORLD_MINUTES" "$INI"
+    CHANGED=1
+  fi
   if [ "$RCONPORT" != 27015 ]; then ini_set RCONPort "$RCONPORT" "$INI"; CHANGED=1; fi
   if [ -z "$ANNOUNCED_IP" ] && [ "${PZ_SKIP_ANNOUNCED_IP:-0}" != 1 ]; then
     ANNOUNCED_IP="$(curl -4fsSL --max-time 8 https://api.ipify.org 2>/dev/null || true)"
