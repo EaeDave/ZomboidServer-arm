@@ -307,6 +307,8 @@ class ConfigTest(unittest.TestCase):
         )
         self.assertIn("server:SleepAllowed", result["changed"])
         self.assertIn("Computed = getValue(),", self.sandbox.read_text(encoding="utf-8"))
+        after, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        self.assertEqual(after["warnings"], before["warnings"])
 
 
 if __name__ == "__main__":
