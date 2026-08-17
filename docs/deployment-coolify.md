@@ -67,10 +67,16 @@ log events. The browser never opens a host-log or agent connection.
    PZ_AGENT_ID=<returned-agent-id>
    PZ_AGENT_ACCESS_TOKEN=<returned-access-token>
    PZ_AGENT_INTERVAL=15
+   # The first connection publishes this bounded tail; later requests publish only new lines.
+   PZ_AGENT_CONSOLE_INITIAL_LINES=200
    PZ_AGENT_PENDING_COMPLETION_RETRIES=3
    # Optional durable dead-letter subdirectory under PZ_CACHEDIR (systemd permits this path).
    PZ_AGENT_STATE_DIR=agent-state
    ```
+
+   The agent stores its console file cursor under `PZ_AGENT_STATE_DIR` and sends only bounded
+   deltas. The API retains the newest 2,000 lines per server and exposes them through a separate,
+   authenticated SSE stream; a browser never reads the host file directly.
 
    Rerun the host installer with `PZ_AGENT_ENABLE=1` after configuring this file; that validated
    path installs the narrow sudoers rule and enables the outbound-only unit. Prefer this outbound

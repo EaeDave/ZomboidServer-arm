@@ -6,10 +6,19 @@ import type {
   AgentJobCompleteRequest,
   AgentOperationRequest,
   AgentStatus,
+  ConsoleLogEntry,
   OperationCreateRequest,
   OperationRecord,
 } from "@zomboid/contracts";
-import { agents, auditEvents, operationEvents, operations, serverInstances } from "@zomboid/db";
+import {
+  agents,
+  auditEvents,
+  consoleLogEntries,
+  consoleLogResyncs,
+  operationEvents,
+  operations,
+  serverInstances,
+} from "@zomboid/db";
 import { createDatabase, type Database } from "@zomboid/db/client";
 
 export interface AgentEnrollmentResult {
@@ -30,6 +39,7 @@ export interface AgentService {
   getOperation(operationId: string): Promise<OperationRecord>;
   listOperations(serverId: string, limit?: number): Promise<OperationRecord[]>;
   listEvents(serverId: string, after?: number): Promise<OperationEventRecord[]>;
+  listConsoleLogs(serverId: string, after?: number): Promise<ConsoleLogEntry[]>;
   claimNext(agentId: string, accessToken: string): Promise<AgentJob | null>;
   progressJob(
     agentId: string,
@@ -44,6 +54,15 @@ export interface AgentService {
     cursor: number,
     lines: string[],
   ): Promise<void>;
+  appendConsoleLogs(
+    agentId: string,
+    accessToken: string,
+    serverId: string,
+    cursor: number,
+    lines: string[],
+    resync: boolean,
+    resyncId?: string,
+  ): Promise<number>;
   completeJob(
     agentId: string,
     accessToken: string,
@@ -100,6 +119,13 @@ export class AgentPayloadError extends Error {
   constructor() {
     super("agent payload exceeds the bounded operation event limits");
     this.name = "AgentPayloadError";
+  }
+}
+
+export class AgentCursorMismatchError extends Error {
+  constructor() {
+    super("console cursor does not continue the persisted stream");
+    this.name = "AgentCursorMismatchError";
   }
 }
 
@@ -221,6 +247,38 @@ export class DatabaseAgentService implements AgentService {
         .delete(operationEvents)
         .where(
           and(eq(operationEvents.serverId, serverId), lt(operationEvents.id, oldestRetained.id)),
+        );
+    }
+  }
+
+  private async trimConsoleResyncs(database: Database, serverId: string) {
+    await database
+      .delete(consoleLogResyncs)
+      .where(
+        and(
+          eq(consoleLogResyncs.serverId, serverId),
+          lt(consoleLogResyncs.createdAt, new Date(this.now().getTime() - 24 * 60 * 60 * 1000)),
+        ),
+      );
+  }
+
+  private async trimConsoleLogs(database: Database, serverId: string) {
+    const maxLogs = 2_000;
+    const retained = await database
+      .select({ id: consoleLogEntries.id })
+      .from(consoleLogEntries)
+      .where(eq(consoleLogEntries.serverId, serverId))
+      .orderBy(desc(consoleLogEntries.id))
+      .limit(maxLogs + 1);
+    const oldestRetained = retained[maxLogs - 1];
+    if (retained.length > maxLogs && oldestRetained) {
+      await database
+        .delete(consoleLogEntries)
+        .where(
+          and(
+            eq(consoleLogEntries.serverId, serverId),
+            lt(consoleLogEntries.id, oldestRetained.id),
+          ),
         );
     }
   }
@@ -549,6 +607,31 @@ export class DatabaseAgentService implements AgentService {
     })) as OperationEventRecord[];
   }
 
+  async listConsoleLogs(serverId: string, after = 0): Promise<ConsoleLogEntry[]> {
+    const rows = await this.getDatabase()
+      .select({
+        id: consoleLogEntries.id,
+        serverId: serverInstances.serviceName,
+        line: consoleLogEntries.line,
+        createdAt: consoleLogEntries.createdAt,
+      })
+      .from(consoleLogEntries)
+      .innerJoin(serverInstances, eq(consoleLogEntries.serverId, serverInstances.id))
+      .where(and(eq(serverInstances.serviceName, serverId), gt(consoleLogEntries.id, after)))
+      .orderBy(after === 0 ? desc(consoleLogEntries.id) : asc(consoleLogEntries.id))
+      .limit(500);
+    const orderedRows = after === 0 ? rows.reverse() : rows;
+    if (after === 0 && orderedRows.length === 0) {
+      const [server] = await this.getDatabase()
+        .select({ id: serverInstances.id })
+        .from(serverInstances)
+        .where(eq(serverInstances.serviceName, serverId))
+        .limit(1);
+      if (!server) throw new ServerNotFoundError();
+    }
+    return orderedRows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+  }
+
   async claimNext(agentId: string, accessToken: string): Promise<AgentJob | null> {
     const database = this.getDatabase();
     const agent = await this.authorizeAgent(agentId, accessToken);
@@ -688,6 +771,102 @@ export class DatabaseAgentService implements AgentService {
       });
     });
     await this.trimEvents(database, operation.serverId);
+  }
+
+  async appendConsoleLogs(
+    agentId: string,
+    accessToken: string,
+    serverId: string,
+    cursor: number,
+    lines: string[],
+    resync: boolean,
+    resyncId?: string,
+  ): Promise<number> {
+    const encodedBytes = Buffer.byteLength(JSON.stringify(lines), "utf8");
+    if (
+      !Number.isSafeInteger(cursor) ||
+      cursor < lines.length ||
+      lines.length === 0 ||
+      lines.length > 200 ||
+      encodedBytes > 64 * 1024 ||
+      lines.some((line) => line.length > 2048) ||
+      (resync && !/^[0-9a-f]{64}$/.test(resyncId ?? ""))
+    ) {
+      throw new AgentPayloadError();
+    }
+    const agent = await this.authorizeAgent(agentId, accessToken);
+    const database = this.getDatabase();
+    const [server] = await database
+      .select({ id: serverInstances.id })
+      .from(serverInstances)
+      .where(and(eq(serverInstances.agentId, agent.id), eq(serverInstances.serviceName, serverId)))
+      .limit(1);
+    if (!server) throw new ServerNotFoundError();
+
+    const acceptedCursor = await database.transaction(async (transaction) => {
+      const [current] = await transaction
+        .select({ consoleLogCursor: serverInstances.consoleLogCursor })
+        .from(serverInstances)
+        .where(eq(serverInstances.id, server.id))
+        .for("update");
+      if (!current) throw new ServerNotFoundError();
+
+      const storedCursor = current.consoleLogCursor;
+      const incomingStart = cursor - lines.length + 1;
+      if (!resync && cursor <= storedCursor) return storedCursor;
+      if (!resync && incomingStart > storedCursor + 1) throw new AgentCursorMismatchError();
+
+      let firstLine = Math.max(0, storedCursor - incomingStart + 1);
+      if (resync) {
+        const [existingResync] = await transaction
+          .select({ cursor: consoleLogResyncs.cursor })
+          .from(consoleLogResyncs)
+          .where(
+            and(
+              eq(consoleLogResyncs.serverId, server.id),
+              eq(consoleLogResyncs.resyncId, resyncId!),
+            ),
+          )
+          .limit(1);
+        if (existingResync) return existingResync.cursor;
+
+        // The request key identifies the source range. Never infer physical overlap from text:
+        // identical lines are valid after a rotation or at the beginning of a new log file.
+        firstLine = 0;
+      }
+
+      const appendedLines = lines.slice(firstLine);
+      const nextCursor = resync ? storedCursor + appendedLines.length : cursor;
+      if (appendedLines.length) {
+        await transaction
+          .update(serverInstances)
+          .set({ consoleLogCursor: nextCursor })
+          .where(
+            and(
+              eq(serverInstances.id, server.id),
+              eq(serverInstances.consoleLogCursor, storedCursor),
+            ),
+          );
+        await transaction.insert(consoleLogEntries).values(
+          appendedLines.map((line, index) => ({
+            serverId: server.id,
+            agentCursor: resync ? storedCursor + index + 1 : incomingStart + firstLine + index,
+            line,
+          })),
+        );
+      }
+      if (resync) {
+        await transaction.insert(consoleLogResyncs).values({
+          serverId: server.id,
+          resyncId: resyncId!,
+          cursor: nextCursor,
+        });
+      }
+      return nextCursor;
+    });
+    await this.trimConsoleLogs(database, server.id);
+    await this.trimConsoleResyncs(database, server.id);
+    return acceptedCursor;
   }
 
   async completeJob(

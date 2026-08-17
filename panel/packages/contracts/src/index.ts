@@ -550,6 +550,20 @@ export const operationEventListResponseSchema = Type.Object({
   cursor: Type.Integer({ minimum: 0 }),
 });
 
+export const consoleLogEntrySchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }),
+  serverId: Type.String({ minLength: 1 }),
+  line: Type.String({ maxLength: 2048 }),
+  createdAt: Type.String({ minLength: 1 }),
+});
+
+export type ConsoleLogEntry = Static<typeof consoleLogEntrySchema>;
+
+export const consoleLogListResponseSchema = Type.Object({
+  logs: Type.Array(consoleLogEntrySchema, { maxItems: 500 }),
+  cursor: Type.Integer({ minimum: 0 }),
+});
+
 export const agentJobProgressRequestSchema = Type.Object(
   {
     message: Type.String({ minLength: 1, maxLength: 512 }),
@@ -564,6 +578,22 @@ export const agentJobLogRequestSchema = Type.Object(
   },
   closedObjectOptions,
 );
+
+export const agentConsoleLogRequestSchema = Type.Object(
+  {
+    serverId: Type.String({ minLength: 1, maxLength: 128 }),
+    cursor: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    resync: Type.Optional(Type.Boolean()),
+    resyncId: Type.Optional(Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" })),
+    lines: Type.Array(Type.String({ maxLength: 2048 }), { minItems: 1, maxItems: 200 }),
+  },
+  closedObjectOptions,
+);
+
+export const agentConsoleLogResponseSchema = Type.Object({
+  ok: Type.Literal(true),
+  cursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+});
 
 export const agentJobSchema = Type.Object({
   operationId: Type.String({ minLength: 1 }),

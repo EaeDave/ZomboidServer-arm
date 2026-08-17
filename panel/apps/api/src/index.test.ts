@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AuthService } from "./auth";
 import type { AuditService } from "./audit";
-import { AgentUnauthorizedError, type AgentService } from "./agent-service";
+import { AgentUnauthorizedError, ServerNotFoundError, type AgentService } from "./agent-service";
 import { FakeAgentAdapter } from "./agent";
 import { createApp } from "./index";
 
@@ -101,6 +101,9 @@ describe("control-plane API", () => {
       async listEvents() {
         throw new Error("not used in enrollment test");
       },
+      async listConsoleLogs() {
+        throw new Error("not used in enrollment test");
+      },
       async claimNext() {
         throw new Error("not used in enrollment test");
       },
@@ -111,6 +114,9 @@ describe("control-plane API", () => {
         throw new Error("not used in enrollment test");
       },
       async appendJobLogs() {
+        throw new Error("not used in enrollment test");
+      },
+      async appendConsoleLogs() {
         throw new Error("not used in enrollment test");
       },
     };
@@ -224,6 +230,16 @@ describe("control-plane API", () => {
     let completed = false;
     let progressed = false;
     let logged = false;
+    let consoleLogged = false;
+    const consoleLogs = [
+      {
+        id: 11,
+        serverId: "production",
+        line: "LOG  : General, console line",
+        createdAt: "2026-08-16T00:00:00.000Z",
+      },
+    ];
+
     const agentService: AgentService = {
       async enroll() {
         throw new Error("not used in operation test");
@@ -246,6 +262,10 @@ describe("control-plane API", () => {
       },
       async listEvents() {
         return [];
+      },
+      async listConsoleLogs(serverId, after) {
+        if (serverId !== "production") throw new ServerNotFoundError();
+        return after ? consoleLogs.filter((entry) => entry.id > after) : consoleLogs;
       },
       async claimNext(agentId, accessToken) {
         if (agentId !== "agent-1" || accessToken !== "agent-access") {
@@ -281,6 +301,16 @@ describe("control-plane API", () => {
         expect(cursor).toBe(2);
         expect(lines).toEqual(["line one", "line two"]);
         logged = true;
+      },
+      async appendConsoleLogs(agentId, accessToken, serverId, cursor, lines, resync) {
+        if (agentId !== "agent-1" || accessToken !== "agent-access" || serverId !== "production") {
+          throw new AgentUnauthorizedError();
+        }
+        expect(cursor).toBe(2);
+        expect(lines).toEqual(["console one", "console two"]);
+        expect(resync).toBe(false);
+        consoleLogged = true;
+        return cursor;
       },
     };
     const operationApp = createApp(undefined, undefined, auth, agentService);
@@ -335,6 +365,42 @@ describe("control-plane API", () => {
     expect(progressed).toBe(true);
     expect(logged).toBe(true);
 
+    const consolePush = await operationApp.handle(
+      new Request("http://localhost/api/agents/agent-1/console", {
+        method: "POST",
+        headers: { authorization: "Bearer agent-access", "content-type": "application/json" },
+        body: JSON.stringify({
+          serverId: "production",
+          cursor: 2,
+          lines: ["console one", "console two"],
+        }),
+      }),
+    );
+    expect(consolePush.status).toBe(200);
+    expect(await consolePush.json()).toEqual({ ok: true, cursor: 2 });
+    expect(consoleLogged).toBe(true);
+
+    const consoleHistory = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/console?after=0", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(consoleHistory.status).toBe(200);
+    expect(await consoleHistory.json()).toEqual({ logs: consoleLogs, cursor: 11 });
+
+    const unknownConsole = await operationApp.handle(
+      new Request("http://localhost/api/servers/unknown/console?after=0", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(unknownConsole.status).toBe(404);
+    const unknownConsoleStream = await operationApp.handle(
+      new Request("http://localhost/api/servers/unknown/console/stream?after=0", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(unknownConsoleStream.status).toBe(404);
+
     const history = await operationApp.handle(
       new Request("http://localhost/api/servers/production/operations", {
         headers: { cookie: "zomboid_session=session-token" },
@@ -373,6 +439,22 @@ describe("control-plane API", () => {
     expect(new TextDecoder().decode(firstChunk.value)).toContain('"cursor":7');
     streamController.abort();
     await reader!.cancel();
+
+    const consoleStreamController = new AbortController();
+    const consoleStreamResponse = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/console/stream?after=11", {
+        signal: consoleStreamController.signal,
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(consoleStreamResponse.status).toBe(200);
+    const consoleReader = consoleStreamResponse.body?.getReader();
+    expect(consoleReader).toBeDefined();
+    const consoleFirstChunk = await consoleReader!.read();
+    expect(new TextDecoder().decode(consoleFirstChunk.value)).toContain("event: ready");
+    expect(new TextDecoder().decode(consoleFirstChunk.value)).toContain('"cursor":11');
+    consoleStreamController.abort();
+    await consoleReader!.cancel();
 
     const finished = await operationApp.handle(
       new Request("http://localhost/api/agents/agent-1/jobs/operation-1/complete", {

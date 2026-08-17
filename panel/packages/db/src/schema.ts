@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   index,
   integer,
+  bigint,
   bigserial,
   jsonb,
   pgEnum,
@@ -77,6 +78,7 @@ export const serverInstances = pgTable(
     port: integer("port").notNull(),
     runtime: text("runtime").notNull(),
     dataDir: text("data_dir").notNull(),
+    consoleLogCursor: bigint("console_log_cursor", { mode: "number" }).default(0).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
@@ -138,6 +140,49 @@ export const operationEvents = pgTable(
   (table) => ({
     operationIdx: index("operation_events_operation_idx").on(table.operationId, table.id),
     serverIdx: index("operation_events_server_idx").on(table.serverId, table.id),
+  }),
+);
+
+// The server console is deliberately independent of an operation. The bounded history lets a
+// newly connected browser receive recent output while the agent only sends incremental deltas.
+export const consoleLogEntries = pgTable(
+  "console_log_entries",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => serverInstances.id, { onDelete: "cascade" }),
+    agentCursor: bigint("agent_cursor", { mode: "number" }).notNull(),
+    line: text("line").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    serverIdx: index("console_log_entries_server_idx").on(table.serverId, table.id),
+    agentCursorUnique: uniqueIndex("console_log_entries_server_cursor_idx").on(
+      table.serverId,
+      table.agentCursor,
+    ),
+  }),
+);
+
+// Rebase identifiers make an initial tail upload safe to retry if the API commits it but the
+// response is lost. They are derived from the host file position and retained independently from
+// the bounded display history.
+export const consoleLogResyncs = pgTable(
+  "console_log_resyncs",
+  {
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => serverInstances.id, { onDelete: "cascade" }),
+    resyncId: text("resync_id").notNull(),
+    cursor: bigint("cursor", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    serverResyncUnique: uniqueIndex("console_log_resyncs_server_resync_idx").on(
+      table.serverId,
+      table.resyncId,
+    ),
   }),
 );
 
