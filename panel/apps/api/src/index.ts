@@ -26,6 +26,7 @@ import {
   authMeResponseSchema,
   authSessionResponseSchema,
   consoleLogListResponseSchema,
+  configSnapshotSchema,
   databaseHealthResponseSchema,
   healthResponseSchema,
   operationCreateRequestSchema,
@@ -75,6 +76,7 @@ const supportedOperationKinds = new Set([
   "mods.add",
   "mods.remove",
   "settings.update",
+  "config.update",
   "world.reset",
 ]);
 type DatabaseCheck = () => Promise<void>;
@@ -490,6 +492,20 @@ export function createApp(
           set.status = 400;
           return {
             error: { code: "operation_disabled", message: "This operation is not enabled yet" },
+          };
+        }
+        if (
+          body.kind === "config.update" &&
+          body.payload.changes.some((change) =>
+            /(password|token|secret|webhook)/i.test(change.path),
+          )
+        ) {
+          set.status = 400;
+          return {
+            error: {
+              code: "sensitive_config",
+              message: "Sensitive settings must use a dedicated audited workflow",
+            },
           };
         }
         const requiredRole =
@@ -1053,6 +1069,62 @@ export function createApp(
           404: agentOperationErrorResponseSchema,
           409: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .get(
+      "/api/servers/:serverId/config",
+      async ({ params, request, set }) => {
+        set.headers["cache-control"] = "no-store";
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        let user;
+        try {
+          user = await auth.currentUser(token);
+        } catch {
+          set.status = 503;
+          return { error: { code: "auth_unavailable", message: "Authentication is unavailable" } };
+        }
+        if (!user) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        if (!agentService.readConfig) {
+          set.status = 503;
+          return { error: { code: "agent_unavailable", message: "Configuration is unavailable" } };
+        }
+        try {
+          const snapshot = await agentService.readConfig(params.serverId, user.id);
+          await audit.record({
+            action: "server.config.read",
+            actorUserId: user.id,
+            metadata: { serverId: params.serverId, revision: snapshot.revision },
+          });
+          return snapshot;
+        } catch (error) {
+          if (error instanceof ServerNotFoundError) {
+            set.status = 404;
+            return { error: { code: "server_not_found", message: "Server was not found" } };
+          }
+          if (error instanceof OperationConflictError) {
+            set.status = 409;
+            return { error: { code: "operation_conflict", message: error.message } };
+          }
+          set.status = 503;
+          return { error: { code: "agent_unavailable", message: "Configuration is unavailable" } };
+        }
+      },
+      {
+        params: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+        response: {
+          200: configSnapshotSchema,
+          401: agentOperationErrorResponseSchema,
+          404: agentOperationErrorResponseSchema,
+          409: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
       },

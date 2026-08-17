@@ -330,8 +330,11 @@ def revision_for(ini: Path, sandbox: Path) -> str:
 
 
 def field_payload(field: ParsedField) -> dict[str, Any]:
-    sensitive = field.source == SOURCE_SERVER and field.path in SENSITIVE_SERVER_KEYS
-    protected = (
+    leaf = field.path.rsplit(".", 1)[-1].lower()
+    sensitive = (
+        field.source == SOURCE_SERVER and field.path in SENSITIVE_SERVER_KEYS
+    ) or any(marker in leaf for marker in ("password", "token", "secret", "webhook"))
+    protected = sensitive or (
         field.source == SOURCE_SERVER and field.path in PROTECTED_SERVER_KEYS
     ) or (field.source == SOURCE_SANDBOX and field.path in PROTECTED_SANDBOX_PATHS)
     payload: dict[str, Any] = {

@@ -77,6 +77,7 @@ export const operationKinds = [
   "mods.add",
   "mods.remove",
   "settings.update",
+  "config.update",
   "world.reset",
 ] as const;
 
@@ -92,6 +93,7 @@ export const operationKindSchema = Type.Union([
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
   Type.Literal("settings.update"),
+  Type.Literal("config.update"),
   Type.Literal("world.reset"),
 ]);
 
@@ -171,6 +173,10 @@ export const agentStatusSchema = Type.Object({
   gameVersion: Type.Union([Type.String(), Type.Null()]),
   uptimeSeconds: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
   playerCount: Type.Integer({ minimum: -1 }),
+  onlinePlayers: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 100 }),
+  ),
+  rconAvailable: Type.Optional(Type.Boolean()),
   checkedAt: Type.String({ minLength: 1 }),
   steamSession: Type.Optional(steamSessionStatusSchema),
   mods: Type.Optional(agentModsStatusSchema),
@@ -189,6 +195,79 @@ export const agentSettingsRevealSchema = Type.Object({
 });
 
 export type AgentSettingsReveal = Static<typeof agentSettingsRevealSchema>;
+
+export const configScalarSchema = Type.Union([
+  Type.Boolean(),
+  Type.Integer(),
+  Type.Number(),
+  Type.String({ maxLength: 4096 }),
+]);
+
+export const configFieldSchema = Type.Object({
+  source: Type.Union([Type.Literal("server"), Type.Literal("sandbox")]),
+  path: Type.String({ minLength: 1, maxLength: 256, pattern: "^[A-Za-z_][A-Za-z0-9_.]*$" }),
+  label: Type.String({ minLength: 1, maxLength: 256 }),
+  category: Type.String({ minLength: 1, maxLength: 64 }),
+  categoryLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  type: Type.Union([
+    Type.Literal("boolean"),
+    Type.Literal("integer"),
+    Type.Literal("number"),
+    Type.Literal("string"),
+  ]),
+  value: Type.Union([configScalarSchema, Type.Null()]),
+  configured: Type.Boolean(),
+  description: Type.String({ maxLength: 2000 }),
+  editable: Type.Boolean(),
+  sensitive: Type.Boolean(),
+  requiresRestart: Type.Boolean(),
+  minimum: Type.Optional(Type.Number()),
+  maximum: Type.Optional(Type.Number()),
+  defaultValue: Type.Optional(configScalarSchema),
+  options: Type.Optional(
+    Type.Array(Type.Object({ value: configScalarSchema, label: Type.String({ maxLength: 256 }) }), {
+      maxItems: 100,
+    }),
+  ),
+});
+
+export const configSnapshotSchema = Type.Object({
+  revision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" }),
+  generatedAt: Type.String({ minLength: 1 }),
+  fields: Type.Array(configFieldSchema, { maxItems: 2_000 }),
+  warnings: Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 100 }),
+});
+
+export type ConfigField = Static<typeof configFieldSchema>;
+export type ConfigSnapshot = Static<typeof configSnapshotSchema>;
+
+export const configChangeSchema = Type.Object(
+  {
+    source: Type.Union([Type.Literal("server"), Type.Literal("sandbox")]),
+    path: Type.String({ minLength: 1, maxLength: 256, pattern: "^[A-Za-z_][A-Za-z0-9_.]*$" }),
+    value: configScalarSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const configUpdatePayloadSchema = Type.Object(
+  {
+    expectedRevision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" }),
+    createBackup: Type.Optional(Type.Boolean()),
+    changes: Type.Array(configChangeSchema, { minItems: 1, maxItems: 200 }),
+  },
+  { additionalProperties: false },
+);
+
+export const configUpdateResultSchema = Type.Object({
+  changed: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 200 }),
+  backupPaths: Type.Array(Type.String({ maxLength: 1024 }), { maxItems: 2 }),
+  revision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" }),
+  requiresRestart: Type.Boolean(),
+});
+
+export type ConfigUpdatePayload = Static<typeof configUpdatePayloadSchema>;
+export type ConfigUpdateResult = Static<typeof configUpdateResultSchema>;
 
 export const agentServerConfigSchema = Type.Object({
   displayName: Type.String({ minLength: 1, maxLength: 128 }),
@@ -283,6 +362,15 @@ export const settingsReadOperationRequestSchema = Type.Object(
   closedObjectOptions,
 );
 
+export const configReadOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("config.read"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
+
 export const backupOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
@@ -353,6 +441,15 @@ export const settingsUpdateOperationRequestSchema = Type.Object(
   closedObjectOptions,
 );
 
+export const configUpdateOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("config.update"),
+    payload: configUpdatePayloadSchema,
+  },
+  closedObjectOptions,
+);
+
 export const worldResetOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
@@ -376,6 +473,8 @@ export const agentOperationRequestSchema = Type.Union([
   modsRemoveOperationRequestSchema,
   settingsReadOperationRequestSchema,
   settingsUpdateOperationRequestSchema,
+  configReadOperationRequestSchema,
+  configUpdateOperationRequestSchema,
   worldResetOperationRequestSchema,
 ]);
 
@@ -421,6 +520,8 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("mods.remove"),
   Type.Literal("settings.read"),
   Type.Literal("settings.update"),
+  Type.Literal("config.read"),
+  Type.Literal("config.update"),
   Type.Literal("world.reset"),
 ]);
 
@@ -518,6 +619,13 @@ export const operationCreateRequestSchema = Type.Union([
         },
         closedObjectOptions,
       ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("config.update"),
+      payload: configUpdatePayloadSchema,
     },
     closedObjectOptions,
   ),

@@ -7,11 +7,16 @@ set -uo pipefail
 PZCTL_BIN="/usr/local/bin/pzctl"
 
 usage() {
-  printf 'Usage: pz-agent-priv {status|start|stop|restart|backup|logs|mods-list|mods-add|mods-remove|settings|settings-read|world-reset} [args]\n' >&2
+  printf 'Usage: pz-agent-priv {status|start|stop|restart|backup|logs|mods-list|mods-add|mods-remove|settings|settings-read|config-read|config-update|world-reset} [args]\n' >&2
 }
 
 case "${1:-}" in
-  status|start|stop|restart)
+  status)
+    [ "$#" -eq 1 ] || { usage; exit 64; }
+    export PZ_STATUS_RCON=1
+    exec "$PZCTL_BIN" status --json
+    ;;
+  start|stop|restart)
     [ "$#" -eq 1 ] || { usage; exit 64; }
     exec "$PZCTL_BIN" "$1" --json
     ;;
@@ -48,6 +53,14 @@ case "${1:-}" in
   settings-read)
     [ "$#" -eq 1 ] || { usage; exit 64; }
     exec "$PZCTL_BIN" settings-read --json
+    ;;
+  config-read)
+    [ "$#" -eq 1 ] || { usage; exit 64; }
+    exec "$PZCTL_BIN" config-read --json
+    ;;
+  config-update)
+    [ "$#" -eq 1 ] || { usage; exit 64; }
+    exec "$PZCTL_BIN" config-update --json
     ;;
   world-reset)
     [ "$#" -eq 1 ] || { usage; exit 64; }

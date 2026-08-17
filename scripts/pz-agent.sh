@@ -1112,6 +1112,12 @@ PY
             settings.read)
               if result_status="$(sudo -n "$PZ_AGENT_PRIV" settings-read 2>/dev/null)"; then :; else result_status=""; fi
               ;;
+            config.read)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" config-read 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            config.update)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" config-update 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
             world.reset)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" world-reset 2>/dev/null)"; then :; else result_status=""; fi
               ;;

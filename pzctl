@@ -235,6 +235,21 @@ print(json.dumps({
 PY
 }
 
+cli_config_read_json() {
+  local sandbox="$PZ_CACHEDIR/Server/${PZ_SERVERNAME}_SandboxVars.lua"
+  [ -x "$PZ_CONFIG" ] || return 1
+  "$PZ_CONFIG" read --ini "$PZ_INI" --sandbox "$sandbox"
+}
+
+cli_config_update_json() {
+  local sandbox="$PZ_CACHEDIR/Server/${PZ_SERVERNAME}_SandboxVars.lua" rc
+  [ -x "$PZ_CONFIG" ] || return 1
+  "$PZ_CONFIG" update --ini "$PZ_INI" --sandbox "$sandbox"
+  rc=$?
+  [ "$rc" -eq 0 ] && fix_owner "$PZ_INI" "$sandbox" "$PZ_INI".bak.* "$sandbox".bak.*
+  return "$rc"
+}
+
 cli_world_reset_json() {
   local payload backup backup_path=""
   payload="$(cat)"
@@ -323,7 +338,7 @@ cli_logs_json() {
 cli_help() {
   cat <<'EOF'
 Usage: pzctl [status|start|stop|restart|backup|logs] [--json] [lines]
-       pzctl [mods-list|mods-add|mods-remove|settings|settings-read|world-reset] --json [args]
+       pzctl [mods-list|mods-add|mods-remove|settings|settings-read|config-read|config-update|world-reset] --json [args]
        pzctl backup --json [keep]
        pzctl --version | --help
 
@@ -385,6 +400,14 @@ if [ "$#" -gt 0 ]; then
       [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
       cli_settings_read_json; exit $?
       ;;
+    config-read)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_config_read_json; exit $?
+      ;;
+    config-update)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_config_update_json; exit $?
+      ;;
     world-reset)
       [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
       cli_world_reset_json; exit $?
@@ -430,6 +453,14 @@ if [ "$#" -gt 0 ]; then
         settings-read)
           [ "$#" -eq 2 ] || exit 64
           cli_settings_read_json
+          ;;
+        config-read)
+          [ "$#" -eq 2 ] || exit 64
+          cli_config_read_json
+          ;;
+        config-update)
+          [ "$#" -eq 2 ] || exit 64
+          cli_config_update_json
           ;;
         world-reset)
           [ "$#" -eq 2 ] || exit 64

@@ -100,7 +100,7 @@ svc_active() { [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = activ
 # so a status probe cannot block while the server is booting; set PZ_STATUS_RCON=1 when a
 # caller explicitly wants the player count as well.
 status_json() {
-  local active sub state listening version active_enter uptime_seconds players runtime checked_at
+  local active sub state listening version active_enter uptime_seconds players runtime checked_at players_raw
   active="$(read_systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
   sub="$(read_systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
   case "$active" in
@@ -128,7 +128,12 @@ status_json() {
   fi
 
   players=-1
-  [ "${PZ_STATUS_RCON:-0}" = 1 ] && players="$(player_count)"
+  players_raw=""
+  if [ "${PZ_STATUS_RCON:-0}" = 1 ] && [ "$active" = active ] && [ "$listening" = true ] && rcon_ready; then
+    players_raw="$(rcon_cmd_quick players 2>/dev/null || true)"
+    players="$(printf '%s\n' "$players_raw" | grep -oE 'Players connected \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)"
+    players="${players:--1}"
+  fi
   case "$PZ_RUNTIME" in fex|box64) runtime="$PZ_RUNTIME" ;; *) runtime=unknown ;; esac
   checked_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
@@ -141,6 +146,7 @@ status_json() {
   STATUS_VERSION="$version" \
   STATUS_UPTIME="$uptime_seconds" \
   STATUS_PLAYERS="$players" \
+  STATUS_PLAYERS_RAW="$players_raw" \
   STATUS_CHECKED_AT="$checked_at" \
   STATUS_STEAM_CHECK="$PZ_STEAM_SESSION_CHECK" \
   STATUS_STEAM_FILE="$PZ_STEAM_SESSION_STATUS" \
@@ -148,6 +154,7 @@ status_json() {
   python3 - <<'PY'
 import json
 import os
+import re
 
 
 def nullable(value):
@@ -155,6 +162,22 @@ def nullable(value):
 
 
 uptime = nullable(os.environ["STATUS_UPTIME"])
+
+
+def online_players():
+    raw = os.environ.get("STATUS_PLAYERS_RAW", "")
+    if not raw:
+        return []
+    names = []
+    for line in raw.splitlines():
+        candidate = re.sub(r"^\s*[-*]\s*", "", line).strip()
+        if not candidate or candidate.startswith("Players connected"):
+            continue
+        # PZ commonly emits '-username'; keep only bounded display text.
+        candidate = candidate[:128]
+        if candidate not in names:
+            names.append(candidate)
+    return names[:100]
 
 
 def steam_session():
@@ -206,6 +229,8 @@ print(
             "gameVersion": nullable(os.environ["STATUS_VERSION"]),
             "uptimeSeconds": int(uptime) if uptime is not None else None,
             "playerCount": int(os.environ["STATUS_PLAYERS"]),
+            "onlinePlayers": online_players(),
+            "rconAvailable": bool(os.environ.get("STATUS_PLAYERS_RAW")),
             "checkedAt": os.environ["STATUS_CHECKED_AT"],
             "steamSession": steam_session(),
         },
@@ -434,6 +459,13 @@ install_workshop_item() {
 
 # ------------------------------------------------------------ RCON
 rcon_ready() { [ -n "$(ini_get RCONPassword)" ]; }
+rcon_cmd_quick() {  # bounded read-only telemetry path; no retry
+  local port pw
+  port="$(ini_get RCONPort)"; port="${port:-$PZ_RCONPORT}"
+  pw="$(ini_get RCONPassword)"
+  [ -z "$pw" ] && return 3
+  RCON_PASSWORD="$pw" python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" --timeout 2 -- "$1" 2>/dev/null
+}
 rcon_cmd() {  # rcon_cmd "command with args"  -> stdout; rc!=0 on failure
   local port pw rc
   port="$(ini_get RCONPort)"; port="${port:-$PZ_RCONPORT}"

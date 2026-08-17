@@ -258,6 +258,29 @@ describe("control-plane API", () => {
           publicAddress: "198.51.100.10",
         };
       },
+      async readConfig() {
+        return {
+          revision: "a".repeat(64),
+          generatedAt: "2026-08-17T00:00:00Z",
+          warnings: [],
+          fields: [
+            {
+              source: "server",
+              path: "SleepAllowed",
+              label: "Permitir dormir",
+              category: "sleep",
+              categoryLabel: "Sono e passagem do tempo",
+              type: "boolean",
+              value: false,
+              configured: true,
+              description: "Permite dormir no multiplayer.",
+              editable: true,
+              sensitive: false,
+              requiresRestart: true,
+            },
+          ],
+        };
+      },
       async enqueueOperation() {
         return operation;
       },
@@ -537,6 +560,33 @@ describe("control-plane API", () => {
     expect(revealed.status).toBe(200);
     expect(await revealed.json()).toMatchObject({ password: "join-secret" });
     expect(revealed.headers.get("cache-control")).toBe("no-store");
+
+    const configResponse = await revealApp.handle(
+      new Request("http://localhost/api/servers/production/config", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(configResponse.status).toBe(200);
+    expect(await configResponse.json()).toMatchObject({ revision: "a".repeat(64) });
+    expect(configResponse.headers.get("cache-control")).toBe("no-store");
+
+    const sensitiveUpdate = await revealApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "config.update",
+          payload: {
+            expectedRevision: "a".repeat(64),
+            changes: [{ source: "server", path: "DiscordToken", value: "secret" }],
+          },
+        }),
+      }),
+    );
+    expect(sensitiveUpdate.status).toBe(400);
   });
 
   it("protects sessions with an HttpOnly cookie", async () => {
