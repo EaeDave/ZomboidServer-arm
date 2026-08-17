@@ -360,7 +360,7 @@ if not isinstance(create_backup, bool): raise SystemExit(64)
 print("1" if create_backup else "0")
 PY
   )" || return 64
-  graceful_stop_service || return 1
+  graceful_stop_service "The world is being reset. Please wait." || return 1
   if [ "$backup" = 1 ]; then backup_path="$(backup_world "$PZ_BACKUPS" prereset)" || return 1; fi
   rm -rf "$PZ_CACHEDIR/Saves/Multiplayer/${PZ_SERVERNAME}"* 2>/dev/null
   rm -f "$PZ_CACHEDIR/db/${PZ_SERVERNAME}.db" "${PZ_ADMIN_MARKER:-$PZ_CACHEDIR/.admin-bootstrap-complete}" 2>/dev/null
@@ -400,7 +400,7 @@ cli_restart_json() {
       printf 'pzctl: workshop update check failed; continuing restart\n' >&2
     fi
   fi
-  graceful_stop_service || {
+  graceful_stop_service "Server is restarting for maintenance. Please wait." || {
     rc=$?
     status_json
     return "$rc"
@@ -667,7 +667,7 @@ do_restart() {
     "$PZ_MODUPDATE" check; rc=$?
     if [ "$rc" -eq 10 ]; then "$PZ_MODUPDATE" apply --no-restart; fi
   fi
-  if ! graceful_stop_service; then
+  if ! graceful_stop_service "Server is restarting for maintenance. Please wait."; then
     echo "$(red 'Restart refused: the world could not be saved safely.')"
     pause
     return

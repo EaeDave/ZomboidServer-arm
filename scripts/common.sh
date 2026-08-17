@@ -550,11 +550,20 @@ save_world() {
   fi
 }
 
+announce_server_message() {
+  local message="${1:-Server maintenance is starting. Please wait.}"
+  is_listening || return 0
+  rcon_ready || return 0
+  rcon_cmd "servermsg \"$message\"" >/dev/null 2>&1 || true
+}
+
 graceful_stop_service() {
-  local active
+  local active message="${1:-Server maintenance is starting. Please wait.}"
   active="$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)"
   [ "$active" = active ] || return 0
+  announce_server_message "$message"
   save_world || return $?
+  rcon_cmd quit >/dev/null 2>&1 || true
   sudo systemctl stop "$PZ_SERVICE"
 }
 

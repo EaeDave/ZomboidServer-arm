@@ -5,5 +5,7 @@ set -u
 
 . "${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}" 2>/dev/null || exit 0
 pz_load_env 2>/dev/null || exit 0
-save_world >/dev/null 2>&1 || true
+if save_world >/dev/null 2>&1; then
+  rcon_cmd quit >/dev/null 2>&1 || true
+fi
 exit 0

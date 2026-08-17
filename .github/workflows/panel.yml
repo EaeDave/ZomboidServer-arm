@@ -8,6 +8,7 @@ on:
       - "scripts/boot-retry.test.sh"
       - "scripts/common.sh"
       - "scripts/pz-agent*.sh"
+      - "scripts/common-lifecycle.test.sh"
       - "scripts/pz-build-update.sh"
       - "scripts/pz-build-update.test.sh"
       - "scripts/pzctl-lifecycle.test.sh"
@@ -33,6 +34,7 @@ on:
       - "scripts/common.sh"
       - "scripts/pz-agent*.sh"
       - "scripts/pz-build-update.sh"
+      - "scripts/common-lifecycle.test.sh"
       - "scripts/pz-build-update.test.sh"
       - "scripts/pzctl-lifecycle.test.sh"
       - "scripts/zomboid-save-before-stop.sh"
@@ -58,10 +60,11 @@ jobs:
           persist-credentials: false
       - name: Verify host boot telemetry scripts
         run: |
-          bash -n scripts/common.sh scripts/boot-retry.sh scripts/boot-retry.test.sh scripts/pz-agent.sh scripts/pz-agent-log.test.sh scripts/pz-agent-worker.test.sh scripts/pz-agent-large-result.test.sh scripts/pz-agent-priv.sh scripts/pz-modupdate.sh scripts/pz-modupdate.test.sh scripts/pz-build-update.sh scripts/pz-build-update.test.sh scripts/pzctl-lifecycle.test.sh scripts/zomboid-save-before-stop.sh install.sh uninstall.sh pzctl
+          bash -n scripts/common.sh scripts/common-lifecycle.test.sh scripts/boot-retry.sh scripts/boot-retry.test.sh scripts/pz-agent.sh scripts/pz-agent-log.test.sh scripts/pz-agent-worker.test.sh scripts/pz-agent-large-result.test.sh scripts/pz-agent-priv.sh scripts/pz-modupdate.sh scripts/pz-modupdate.test.sh scripts/pz-build-update.sh scripts/pz-build-update.test.sh scripts/pzctl-lifecycle.test.sh scripts/zomboid-save-before-stop.sh install.sh uninstall.sh pzctl
           python3 -m py_compile scripts/pz-config.py
           python3 scripts/pz-config.test.py
           bash scripts/pz-modupdate.test.sh
+          bash scripts/common-lifecycle.test.sh
           bash scripts/pz-build-update.test.sh
           bash scripts/pzctl-lifecycle.test.sh
           bash scripts/boot-retry.test.sh

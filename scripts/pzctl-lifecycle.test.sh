@@ -18,7 +18,7 @@ pz_load_env() {
   export PZ_SERVICE PZ_BOOTRETRY PZ_CACHEDIR PZ_CONSOLE PZ_RUNTIME PZ_PORT PZ_BUILDUPDATE
 }
 conf_get() { printf '0\n'; }
-graceful_stop_service() { printf 'graceful-stop\n' >>"$TEST_EVENTS"; }
+graceful_stop_service() { printf 'graceful-stop:%s\n' "${1:-default}" >>"$TEST_EVENTS"; }
 status_json() { printf '%s\n' '{"state":"inactive","listening":false}'; }
 COMMON
 cat >"$TMP_DIR/boot" <<'BOOT'
@@ -39,8 +39,8 @@ PZCTL_ENV="$TMP_DIR/missing.env" bash "$ROOT_DIR/pzctl" restart --json >"$restar
 python3 - "$EVENTS" <<'PY'
 import sys
 assert open(sys.argv[1], encoding="utf-8").read().splitlines() == [
-    "graceful-stop",
-    "graceful-stop",
+    "graceful-stop:default",
+    "graceful-stop:Server is restarting for maintenance. Please wait.",
     "boot",
 ]
 PY
