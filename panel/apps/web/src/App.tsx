@@ -316,7 +316,10 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   const settingsHydratedRef = useRef(false);
   const settingsReveal = useMutation({
     mutationFn: () => revealServerSettings(SERVER_ID),
-    onSuccess: (settings) => setRevealedPassword(settings.password),
+    onSuccess: (settings) => {
+      setRevealedPassword(settings.password);
+      window.setTimeout(() => setRevealedPassword(undefined), 30_000);
+    },
   });
   useEffect(() => {
     const settings = server.data?.settings;
@@ -672,7 +675,10 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                       disabled={settingsReveal.isPending || Boolean(activeOperation)}
                       onClick={() => {
                         if (revealedPassword) setRevealedPassword(undefined);
-                        else settingsReveal.mutate();
+                        else if (
+                          window.confirm("Reveal the server join password? This action is audited.")
+                        )
+                          settingsReveal.mutate();
                       }}
                       type="button"
                     >
