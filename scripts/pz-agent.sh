@@ -7,7 +7,7 @@
 set -uo pipefail
 
 PZCTL_BIN="${PZCTL_BIN:-/usr/local/bin/pzctl}"
-PZ_AGENT_PRIV="/usr/local/sbin/pz-agent-priv"
+PZ_AGENT_PRIV="${PZ_AGENT_PRIV:-/usr/local/sbin/pz-agent-priv}"
 PZ_COMMON="${PZ_COMMON:-/usr/local/lib/zomboid-arm/common.sh}"
 
 [ -r "$PZ_COMMON" ] || {
