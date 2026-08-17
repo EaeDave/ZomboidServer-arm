@@ -375,6 +375,33 @@ console_state_file() {
   printf '%s/console-cursor\n' "$state_dir"
 }
 
+console_pending_file() {
+  local state_dir
+  state_dir="$(agent_state_dir)" || return $?
+  printf '%s/console-pending.json\n' "$state_dir"
+}
+
+save_console_pending() {
+  local file="$1" body="$2" inode="$3" cursor="$4" fingerprint="$5" event_cursor="$6" tmp
+  mkdir -p "$(dirname "$file")" || return 1
+  chmod 700 "$(dirname "$file")" || return 1
+  tmp="$file.tmp.$$"
+  umask 077
+  BODY="$body" INODE="$inode" CURSOR="$cursor" FINGERPRINT="$fingerprint" EVENT_CURSOR="$event_cursor" python3 - <<'PY' >"$tmp" || return 1
+import json
+import os
+
+print(json.dumps({
+    "body": json.loads(os.environ["BODY"]),
+    "inode": os.environ["INODE"],
+    "cursor": int(os.environ["CURSOR"]),
+    "fingerprint": os.environ["FINGERPRINT"],
+    "eventCursor": int(os.environ["EVENT_CURSOR"]),
+}, separators=(",", ":")))
+PY
+  mv -f "$tmp" "$file"
+}
+
 initial_console_position() {
   local initial_lines="${PZ_AGENT_CONSOLE_INITIAL_LINES:-200}"
   case "$initial_lines" in ''|*[!0-9]*) return 64 ;; esac
@@ -394,12 +421,6 @@ try:
 except OSError:
     print(f"0 0 0 1 - {MISSING_RESYNC_ID}")
     raise SystemExit
-try:
-    with open(path, "rb") as handle:
-        source_fingerprint = hashlib.sha256(handle.read(64)).hexdigest()
-except OSError:
-    source_fingerprint = "-"
-
 start = max(0, stat.st_size - 256 * 1024)
 try:
     with open(path, "rb") as handle:
@@ -590,7 +611,50 @@ PY
 
 send_live_console_delta() {
   local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" resync="$7" fingerprint="$8" resync_id="$9" flush="${10}"
-  local delta lines_json next_file_cursor next_inode next_fingerprint source_fingerprint line_count next_event_cursor body response accepted_cursor
+  local delta lines_json next_file_cursor next_inode next_fingerprint source_fingerprint line_count next_event_cursor body response accepted_cursor pending_file
+  local pending_body pending_inode pending_cursor pending_fingerprint pending_event_cursor
+  local -a pending_fields=()
+  pending_file="$(console_pending_file)" || return $?
+  if [ -r "$pending_file" ]; then
+    mapfile -t pending_fields < <(PENDING="$(cat "$pending_file")" python3 - <<'PY'
+import json
+import os
+
+pending = json.loads(os.environ["PENDING"])
+print(json.dumps(pending["body"], separators=(",", ":")))
+print(pending["inode"])
+print(pending["cursor"])
+print(pending["fingerprint"])
+print(pending["eventCursor"])
+PY
+    ) || return 1
+    pending_body="${pending_fields[0]:-}"
+    pending_inode="${pending_fields[1]:-}"
+    pending_cursor="${pending_fields[2]:-}"
+    pending_fingerprint="${pending_fields[3]:-}"
+    pending_event_cursor="${pending_fields[4]:-}"
+    [ -n "$pending_body" ] || return 1
+    response="$(post_console_body "$url" "$agent_id" "$token" "$pending_body")" || return 1
+    accepted_cursor="$(RESPONSE="$response" python3 - <<'PY'
+import json
+import os
+
+value = json.loads(os.environ["RESPONSE"]).get("cursor")
+if not isinstance(value, int) or value < 0:
+    raise SystemExit(1)
+print(value)
+PY
+    )" || return 1
+    [ "$accepted_cursor" -ge "$pending_event_cursor" ] || return 1
+    rm -f "$pending_file"
+    LOG_NEXT_CURSOR="$pending_cursor"
+    LOG_NEXT_INODE="$pending_inode"
+    LOG_NEXT_EVENT_CURSOR="$accepted_cursor"
+    LOG_NEXT_RESYNC=0
+    LOG_NEXT_FINGERPRINT="$pending_fingerprint"
+    LOG_NEXT_RESYNC_ID="-"
+    return 0
+  fi
   delta="$(read_console_delta "$file_cursor" "$inode" "$flush" "$fingerprint")" || return 1
   next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
   next_inode="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["inode"])')"
@@ -618,6 +682,10 @@ if body["resync"]:
 print(json.dumps(body, separators=(",", ":")))
 PY
     )"
+    if [ "$resync" = 1 ]; then
+      save_console_pending "$pending_file" "$body" "$next_inode" "$next_file_cursor" \
+        "$next_fingerprint" "$next_event_cursor" || return 1
+    fi
     response="$(post_console_body "$url" "$agent_id" "$token" "$body")" || return 1
     accepted_cursor="$(RESPONSE="$response" python3 - <<'PY'
 import json
@@ -635,6 +703,7 @@ PY
     next_event_cursor="$accepted_cursor"
     resync=0
     resync_id="-"
+    rm -f "$pending_file"
   fi
   LOG_NEXT_CURSOR="$next_file_cursor"
   LOG_NEXT_INODE="$next_inode"

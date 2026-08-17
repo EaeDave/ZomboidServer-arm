@@ -99,6 +99,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.endswith("/logs"):
             record({"type": "logs", "data": payload})
             response = {"ok": True}
+        elif self.path.endswith("/console"):
+            record({"type": "console", "data": payload})
+            response = {"ok": True, "cursor": payload.get("cursor", 0)}
         elif self.path.endswith("/complete"):
             record({"type": "complete", "data": payload})
             response = {"ok": True}
@@ -145,12 +148,15 @@ progress = [item for item in records if item["type"] == "progress"]
 logs = [item for item in records if item["type"] == "logs"]
 completed = [item for item in records if item["type"] == "complete"]
 claims = [item for item in records if item["type"] == "claim"]
+console = [item for item in records if item["type"] == "console"]
 if len(heartbeats) < 2:
     raise SystemExit(f"expected heartbeat during long operation, got {len(heartbeats)}")
 if not progress:
     raise SystemExit("expected worker progress event")
 if not logs or not any("booting" in line for item in logs for line in item["data"].get("lines", [])):
     raise SystemExit("expected incremental console log event")
+if not console or not any("booting" in line for item in console for line in item["data"].get("lines", [])):
+    raise SystemExit("expected independent live console event")
 if len(completed) != 1 or completed[0]["data"].get("status") != "succeeded":
     raise SystemExit(f"expected one successful completion, got {completed}")
 if not claims:
