@@ -27,6 +27,9 @@ describe("agent operation contracts", () => {
 
   it("accepts only allowlisted operation payloads", () => {
     expect(Value.Check(operationCreateRequestSchema, { kind: "start", payload: {} })).toBe(true);
+    expect(Value.Check(operationCreateRequestSchema, { kind: "settings.read", payload: {} })).toBe(
+      false,
+    );
     expect(
       Value.Check(operationCreateRequestSchema, { kind: "logs", payload: { lines: 100 } }),
     ).toBe(false);

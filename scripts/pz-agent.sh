@@ -184,8 +184,46 @@ print(json.dumps({"collections": collections[:50], "configuredItems": items[:500
 PY
 }
 
+agent_settings_status_json() {
+  PZ_INI_PATH="${PZ_INI:-}" PZ_PUBLIC_IP="${PZ_PUBLIC_IP:-}" PZ_DEFAULT_PORT="${PZ_PORT:-16261}" python3 - <<'PY'
+import json
+import os
+
+def value(path, key):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as source:
+            for line in source:
+                if line.startswith(f"{key}="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+ini = os.environ["PZ_INI_PATH"]
+default_port = value(ini, "DefaultPort") or os.environ["PZ_DEFAULT_PORT"]
+udp_port = value(ini, "UDPPort") or "16262"
+try:
+    default_port = int(default_port)
+except ValueError:
+    default_port = 16261
+try:
+    udp_port = int(udp_port)
+except ValueError:
+    udp_port = 16262
+public_address = value(ini, "server_browser_announced_ip") or os.environ["PZ_PUBLIC_IP"] or None
+print(json.dumps({
+    "public": value(ini, "Public").lower() != "false",
+    "publicName": value(ini, "PublicName") or None,
+    "passwordConfigured": bool(value(ini, "Password")),
+    "defaultPort": default_port,
+    "udpPort": udp_port,
+    "publicAddress": public_address,
+}, separators=(",", ":")))
+PY
+}
+
 agent_status_json() {
-  local status="" mods
+  local status="" mods settings
   if [ -x "$PZ_AGENT_PRIV" ] && command -v sudo >/dev/null 2>&1; then
     if status="$(sudo -n "$PZ_AGENT_PRIV" status 2>/dev/null)"; then
       :
@@ -195,12 +233,14 @@ agent_status_json() {
   fi
   [ -n "$status" ] || status="$("$PZCTL_BIN" status --json)" || return 1
   mods="$(agent_mods_status_json)" || return 1
-  STATUS="$status" MODS="$mods" python3 - <<'PY'
+  settings="$(agent_settings_status_json)" || return 1
+  STATUS="$status" MODS="$mods" SETTINGS="$settings" python3 - <<'PY'
 import json
 import os
 
 status = json.loads(os.environ["STATUS"])
 status["mods"] = json.loads(os.environ["MODS"])
+status["settings"] = json.loads(os.environ["SETTINGS"])
 print(json.dumps(status, separators=(",", ":")))
 PY
 }
@@ -1068,6 +1108,9 @@ PY
               ;;
             settings.update)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" settings 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            settings.read)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" settings-read 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             world.reset)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" world-reset 2>/dev/null)"; then :; else result_status=""; fi

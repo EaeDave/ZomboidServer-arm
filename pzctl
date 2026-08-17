@@ -203,6 +203,38 @@ print(json.dumps({"updated": [item for item in os.environ["SETTINGS_UPDATED"].sp
 PY
 }
 
+cli_settings_read_json() {
+  local public public_name password default_port udp_port public_address
+  public="$(ini_get Public)"
+  public_name="$(ini_get PublicName)"
+  password="$(ini_get Password)"
+  default_port="$(ini_get DefaultPort)"
+  udp_port="$(ini_get UDPPort)"
+  public_address="$(ini_get server_browser_announced_ip)"
+  SETTINGS_PUBLIC="$public" SETTINGS_NAME="$public_name" SETTINGS_PASSWORD="$password" \
+    SETTINGS_DEFAULT_PORT="${default_port:-16261}" SETTINGS_UDP_PORT="${udp_port:-16262}" \
+    SETTINGS_ADDRESS="$public_address" python3 - <<'PY'
+import json
+import os
+
+def integer(value, fallback):
+    try:
+        parsed = int(value)
+        return parsed if 1024 <= parsed <= 65535 else fallback
+    except ValueError:
+        return fallback
+
+print(json.dumps({
+    "public": os.environ["SETTINGS_PUBLIC"].lower() == "true",
+    "publicName": os.environ["SETTINGS_NAME"] or None,
+    "password": os.environ["SETTINGS_PASSWORD"],
+    "defaultPort": integer(os.environ["SETTINGS_DEFAULT_PORT"], 16261),
+    "udpPort": integer(os.environ["SETTINGS_UDP_PORT"], 16262),
+    "publicAddress": os.environ["SETTINGS_ADDRESS"] or None,
+}, separators=(",", ":")))
+PY
+}
+
 cli_world_reset_json() {
   local payload backup backup_path=""
   payload="$(cat)"
@@ -349,6 +381,10 @@ if [ "$#" -gt 0 ]; then
       [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
       cli_settings_json; exit $?
       ;;
+    settings-read)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_settings_read_json; exit $?
+      ;;
     world-reset)
       [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
       cli_world_reset_json; exit $?
@@ -390,6 +426,10 @@ if [ "$#" -gt 0 ]; then
         settings)
           [ "$#" -eq 2 ] || exit 64
           cli_settings_json
+          ;;
+        settings-read)
+          [ "$#" -eq 2 ] || exit 64
+          cli_settings_read_json
           ;;
         world-reset)
           [ "$#" -eq 2 ] || exit 64

@@ -151,6 +151,15 @@ export const agentModsStatusSchema = Type.Object({
   inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
 });
 
+export const agentServerSettingsSchema = Type.Object({
+  public: Type.Boolean(),
+  publicName: Type.Union([Type.String({ maxLength: 128 }), Type.Null()]),
+  passwordConfigured: Type.Boolean(),
+  defaultPort: Type.Integer({ minimum: 1024, maximum: 65535 }),
+  udpPort: Type.Integer({ minimum: 1024, maximum: 65535 }),
+  publicAddress: Type.Union([Type.String({ maxLength: 255 }), Type.Null()]),
+});
+
 export const agentStatusSchema = Type.Object({
   protocolVersion: Type.Literal(1),
   serverId: Type.String({ minLength: 1 }),
@@ -165,9 +174,21 @@ export const agentStatusSchema = Type.Object({
   checkedAt: Type.String({ minLength: 1 }),
   steamSession: Type.Optional(steamSessionStatusSchema),
   mods: Type.Optional(agentModsStatusSchema),
+  settings: Type.Optional(agentServerSettingsSchema),
 });
 
 export type AgentStatus = Static<typeof agentStatusSchema>;
+
+export const agentSettingsRevealSchema = Type.Object({
+  public: Type.Boolean(),
+  publicName: Type.Union([Type.String({ maxLength: 128 }), Type.Null()]),
+  password: Type.String({ maxLength: 128 }),
+  defaultPort: Type.Integer({ minimum: 1024, maximum: 65535 }),
+  udpPort: Type.Integer({ minimum: 1024, maximum: 65535 }),
+  publicAddress: Type.Union([Type.String({ maxLength: 255 }), Type.Null()]),
+});
+
+export type AgentSettingsReveal = Static<typeof agentSettingsRevealSchema>;
 
 export const agentServerConfigSchema = Type.Object({
   displayName: Type.String({ minLength: 1, maxLength: 128 }),
@@ -248,6 +269,15 @@ export const restartOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
     kind: Type.Literal("restart"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
+
+export const settingsReadOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("settings.read"),
     payload: emptyPayloadSchema,
   },
   closedObjectOptions,
@@ -344,6 +374,7 @@ export const agentOperationRequestSchema = Type.Union([
   modsListOperationRequestSchema,
   modsAddOperationRequestSchema,
   modsRemoveOperationRequestSchema,
+  settingsReadOperationRequestSchema,
   settingsUpdateOperationRequestSchema,
   worldResetOperationRequestSchema,
 ]);
@@ -388,6 +419,7 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
+  Type.Literal("settings.read"),
   Type.Literal("settings.update"),
   Type.Literal("world.reset"),
 ]);

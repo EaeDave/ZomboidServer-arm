@@ -18,6 +18,7 @@ import {
   agentJobResponseSchema,
   agentOperationErrorResponseSchema,
   agentStatusSchema,
+  agentSettingsRevealSchema,
   auditListResponseSchema,
   authErrorResponseSchema,
   authLoginRequestSchema,
@@ -1057,9 +1058,71 @@ export function createApp(
       },
     )
     .get(
+      "/api/servers/:serverId/settings/reveal",
+      async ({ params, request, set }) => {
+        set.headers["cache-control"] = "no-store";
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        let user;
+        try {
+          user = await auth.currentUser(token);
+        } catch {
+          set.status = 503;
+          return { error: { code: "auth_unavailable", message: "Authentication is unavailable" } };
+        }
+        if (!user) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        if (user.role !== "admin") {
+          set.status = 403;
+          return { error: { code: "forbidden", message: "Admin role required" } };
+        }
+        if (!agentService.readSettings) {
+          set.status = 503;
+          return { error: { code: "agent_unavailable", message: "Settings are unavailable" } };
+        }
+        try {
+          const settings = await agentService.readSettings(params.serverId, user.id);
+          await audit.record({
+            action: "server.settings.revealed",
+            actorUserId: user.id,
+            metadata: { serverId: params.serverId },
+          });
+          return settings;
+        } catch (error) {
+          if (error instanceof ServerNotFoundError) {
+            set.status = 404;
+            return { error: { code: "server_not_found", message: "Server was not found" } };
+          }
+          if (error instanceof OperationConflictError) {
+            set.status = 409;
+            return { error: { code: "operation_conflict", message: error.message } };
+          }
+          set.status = 503;
+          return { error: { code: "agent_unavailable", message: "Settings are unavailable" } };
+        }
+      },
+      {
+        params: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+        response: {
+          200: agentSettingsRevealSchema,
+          401: agentOperationErrorResponseSchema,
+          403: agentOperationErrorResponseSchema,
+          404: agentOperationErrorResponseSchema,
+          409: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .get(
       "/api/servers/:serverId/status",
       async ({ params, request, set }) => {
         let actorUserId: string | undefined;
+        let actorRole: "admin" | "operator" | "viewer" | undefined;
         const devAuthBypass =
           process.env.NODE_ENV === "development" && process.env.PZ_DEV_AUTH_BYPASS === "1";
         if (!devAuthBypass) {
@@ -1076,6 +1139,7 @@ export function createApp(
               return { error: { code: "unauthenticated", message: "Login required" } };
             }
             actorUserId = user.id;
+            actorRole = user.role;
           } catch {
             set.status = 503;
             return {
@@ -1111,6 +1175,12 @@ export function createApp(
           } catch (error) {
             console.error("failed to record server.status audit event", error);
           }
+        }
+        if (actorRole !== "admin" && status.settings?.publicAddress) {
+          status = {
+            ...status,
+            settings: { ...status.settings, publicAddress: null },
+          };
         }
         return status;
       },

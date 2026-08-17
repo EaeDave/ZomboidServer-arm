@@ -5,6 +5,7 @@ import type {
   AgentJob,
   AgentJobCompleteRequest,
   AgentOperationRequest,
+  AgentSettingsReveal,
   AgentStatus,
   ConsoleLogEntry,
   OperationCreateRequest,
@@ -30,6 +31,7 @@ export interface AgentService {
   enroll(input: AgentEnrollmentRequest): Promise<AgentEnrollmentResult>;
   heartbeat(agentId: string, accessToken: string, status: AgentStatus): Promise<void>;
   getStatus(serverId: string): Promise<AgentStatus>;
+  readSettings?(serverId: string, actorUserId: string): Promise<AgentSettingsReveal>;
   enqueueOperation(
     serverId: string,
     actorUserId: string,
@@ -224,6 +226,15 @@ function targetStateFor(kind: string): "online" | "offline" | "ready" | "unknown
 }
 
 export class DatabaseAgentService implements AgentService {
+  private readonly settingsReadWaiters = new Map<
+    string,
+    { resolve: (settings: AgentSettingsReveal) => void; reject: (error: Error) => void }
+  >();
+  private readonly settingsReadResults = new Map<
+    string,
+    { settings: AgentSettingsReveal; expiresAt: number }
+  >();
+
   constructor(
     private readonly getDatabase: () => Database,
     private readonly now: () => Date = () => new Date(),
@@ -231,6 +242,48 @@ export class DatabaseAgentService implements AgentService {
 
   private leaseExpiry() {
     return new Date(this.now().getTime() + 90_000);
+  }
+
+  private clearExpiredSettingsReads() {
+    const now = this.now().getTime();
+    for (const [operationId, result] of this.settingsReadResults) {
+      if (result.expiresAt <= now) this.settingsReadResults.delete(operationId);
+    }
+  }
+
+  async readSettings(serverId: string, actorUserId: string): Promise<AgentSettingsReveal> {
+    this.clearExpiredSettingsReads();
+    const operation = await this.enqueueOperation(serverId, actorUserId, {
+      kind: "settings.read",
+      payload: {},
+    } as unknown as OperationCreateRequest);
+    return await new Promise<AgentSettingsReveal>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.settingsReadWaiters.delete(operation.operationId);
+        reject(new AgentUnavailableError());
+      }, 30_000);
+      const finish = (
+        callback: (value: AgentSettingsReveal) => void,
+        value: AgentSettingsReveal,
+      ) => {
+        clearTimeout(timer);
+        this.settingsReadWaiters.delete(operation.operationId);
+        callback(value);
+      };
+      this.settingsReadWaiters.set(operation.operationId, {
+        resolve: (settings) => finish(resolve, settings),
+        reject: (error) => {
+          clearTimeout(timer);
+          this.settingsReadWaiters.delete(operation.operationId);
+          reject(error);
+        },
+      });
+      const cached = this.settingsReadResults.get(operation.operationId);
+      if (cached) {
+        this.settingsReadResults.delete(operation.operationId);
+        finish(resolve, cached.settings);
+      }
+    });
   }
 
   private async trimEvents(database: Database, serverId: string) {
@@ -553,7 +606,7 @@ export class DatabaseAgentService implements AgentService {
       })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
-      .where(eq(operations.id, operationId))
+      .where(and(eq(operations.id, operationId), ne(operations.kind, "settings.read")))
       .limit(1);
 
     if (!row) throw new OperationNotFoundError();
@@ -579,7 +632,7 @@ export class DatabaseAgentService implements AgentService {
       })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
-      .where(eq(serverInstances.serviceName, serverId))
+      .where(and(eq(serverInstances.serviceName, serverId), ne(operations.kind, "settings.read")))
       .orderBy(desc(operations.createdAt))
       .limit(boundedLimit);
     return rows.map(operationRecord);
@@ -885,7 +938,7 @@ export class DatabaseAgentService implements AgentService {
     }
 
     const [operation] = await database
-      .select({ id: operations.id, serverId: operations.serverId })
+      .select({ id: operations.id, serverId: operations.serverId, kind: operations.kind })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
       .where(
@@ -899,12 +952,31 @@ export class DatabaseAgentService implements AgentService {
 
     if (!operation) throw new OperationNotFoundError();
 
+    if (operation.kind === "settings.read" && result.status === "succeeded") {
+      const settings = result.result as AgentSettingsReveal;
+      this.clearExpiredSettingsReads();
+      const waiter = this.settingsReadWaiters.get(operation.id);
+      if (waiter) waiter.resolve(settings);
+      else
+        this.settingsReadResults.set(operation.id, {
+          settings,
+          expiresAt: this.now().getTime() + 30_000,
+        });
+    } else if (operation.kind === "settings.read") {
+      this.settingsReadWaiters.get(operation.id)?.reject(new AgentUnavailableError());
+    }
+
     await database.transaction(async (transaction) => {
       const [completed] = await transaction
         .update(operations)
         .set({
           status: result.status,
-          result: result.status === "succeeded" ? result.result : null,
+          result:
+            operation.kind === "settings.read"
+              ? null
+              : result.status === "succeeded"
+                ? result.result
+                : null,
           error: result.status === "failed" ? result.error : null,
           finishedAt: this.now(),
           leaseExpiresAt: null,

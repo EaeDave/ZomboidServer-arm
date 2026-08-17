@@ -7,7 +7,7 @@ set -uo pipefail
 PZCTL_BIN="/usr/local/bin/pzctl"
 
 usage() {
-  printf 'Usage: pz-agent-priv {status|start|stop|restart|backup|logs|mods-list|mods-add|mods-remove|settings|world-reset} [args]\n' >&2
+  printf 'Usage: pz-agent-priv {status|start|stop|restart|backup|logs|mods-list|mods-add|mods-remove|settings|settings-read|world-reset} [args]\n' >&2
 }
 
 case "${1:-}" in
@@ -44,6 +44,10 @@ case "${1:-}" in
   settings)
     [ "$#" -eq 1 ] || { usage; exit 64; }
     exec "$PZCTL_BIN" settings --json
+    ;;
+  settings-read)
+    [ "$#" -eq 1 ] || { usage; exit 64; }
+    exec "$PZCTL_BIN" settings-read --json
     ;;
   world-reset)
     [ "$#" -eq 1 ] || { usage; exit 64; }

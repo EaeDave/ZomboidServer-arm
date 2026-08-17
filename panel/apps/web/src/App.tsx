@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AgentSettingsReveal,
   AgentStatus,
   AuditEvent,
   AuthUser,
@@ -8,7 +9,7 @@ import type {
   OperationEvent,
   OperationRecord,
 } from "@zomboid/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ServerConsole } from "./ServerConsole";
 
 const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
@@ -68,6 +69,14 @@ async function getServerStatus(serverId: string): Promise<AgentStatus> {
   const response = await fetch(`/api/servers/${serverId}/status`);
   if (!response.ok) throwApiError(response, `Server status request failed: ${response.status}`);
   return response.json() as Promise<AgentStatus>;
+}
+
+async function revealServerSettings(serverId: string): Promise<AgentSettingsReveal> {
+  const response = await fetch(`/api/servers/${serverId}/settings/reveal`, {
+    credentials: "same-origin",
+  });
+  if (!response.ok) throwApiError(response, `Settings request failed: ${response.status}`);
+  return response.json() as Promise<AgentSettingsReveal>;
 }
 
 async function queueOperation(requestBody: OperationCreateRequest): Promise<OperationRecord> {
@@ -302,7 +311,20 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   const [publicName, setPublicName] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [serverPublic, setServerPublic] = useState(true);
+  const [revealedPassword, setRevealedPassword] = useState<string>();
   const [resetBackup, setResetBackup] = useState(true);
+  const settingsHydratedRef = useRef(false);
+  const settingsReveal = useMutation({
+    mutationFn: () => revealServerSettings(SERVER_ID),
+    onSuccess: (settings) => setRevealedPassword(settings.password),
+  });
+  useEffect(() => {
+    const settings = server.data?.settings;
+    if (!settings || settingsHydratedRef.current) return;
+    settingsHydratedRef.current = true;
+    setPublicName(settings.publicName ?? "");
+    setServerPublic(settings.public);
+  }, [server.data?.settings]);
 
   return (
     <main className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
@@ -629,12 +651,79 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               }}
             >
               <p className="text-sm text-zinc-400">Settings</p>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+                <p>
+                  Current public name:{" "}
+                  <strong className="font-medium text-zinc-200">
+                    {server.data?.settings?.publicName ?? "Not set"}
+                  </strong>
+                </p>
+                <p className="mt-2">
+                  Join password:{" "}
+                  <strong className="font-medium text-zinc-200">
+                    {revealedPassword ??
+                      (server.data?.settings?.passwordConfigured ? "Configured" : "Not configured")}
+                  </strong>
+                </p>
+                {canAdmin && server.data?.settings?.passwordConfigured ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
+                      disabled={settingsReveal.isPending || Boolean(activeOperation)}
+                      onClick={() => {
+                        if (revealedPassword) setRevealedPassword(undefined);
+                        else settingsReveal.mutate();
+                      }}
+                      type="button"
+                    >
+                      {settingsReveal.isPending
+                        ? "Reading..."
+                        : revealedPassword
+                          ? "Hide password"
+                          : "Reveal password"}
+                    </button>
+                    {revealedPassword ? (
+                      <button
+                        className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
+                        onClick={() => void navigator.clipboard?.writeText(revealedPassword)}
+                        type="button"
+                      >
+                        Copy
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {settingsReveal.error instanceof Error ? (
+                  <p className="mt-2 text-rose-300">{settingsReveal.error.message}</p>
+                ) : null}
+              </div>
+              {canAdmin && server.data?.settings?.publicAddress ? (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+                  <p className="text-zinc-500">Server address</p>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <code className="text-zinc-200">
+                      {server.data.settings.publicAddress}:{server.data.settings.defaultPort}
+                    </code>
+                    <button
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
+                      onClick={() =>
+                        void navigator.clipboard?.writeText(
+                          `${server.data?.settings?.publicAddress}:${server.data?.settings?.defaultPort}`,
+                        )
+                      }
+                      type="button"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <input
                 className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
                 id="public-name"
                 name="publicName"
-                aria-label="Public name (optional)"
-                placeholder="Public name (optional)"
+                aria-label="New public name (optional)"
+                placeholder="New public name (optional)"
                 value={publicName}
                 onChange={(event) => setPublicName(event.target.value)}
               />
@@ -657,12 +746,16 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                 />
                 Public server
               </label>
+              <p className="text-xs leading-5 text-zinc-500">
+                Changes are saved to the server configuration. Restart the server to ensure they
+                take effect.
+              </p>
               <button
                 className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
                 disabled={!canOperate || Boolean(activeOperation) || operationMutation.isPending}
                 type="submit"
               >
-                Queue settings
+                Save settings
               </button>
             </form>
           </div>

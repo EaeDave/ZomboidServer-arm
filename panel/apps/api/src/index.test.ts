@@ -248,6 +248,16 @@ describe("control-plane API", () => {
       async getStatus() {
         throw new Error("not used in operation test");
       },
+      async readSettings() {
+        return {
+          public: true,
+          publicName: "Production",
+          password: "join-secret",
+          defaultPort: 16261,
+          udpPort: 16262,
+          publicAddress: "198.51.100.10",
+        };
+      },
       async enqueueOperation() {
         return operation;
       },
@@ -502,6 +512,31 @@ describe("control-plane API", () => {
       }),
     );
     expect(forbidden.status).toBe(403);
+
+    const adminAuth: AuthService = {
+      async login() {
+        return null;
+      },
+      async currentUser() {
+        return { id: "admin-1", email: "admin@example.com", role: "admin" };
+      },
+      async logout() {},
+    };
+    const audit: AuditService = {
+      async record() {},
+      async list() {
+        return [];
+      },
+    };
+    const revealApp = createApp(undefined, undefined, adminAuth, agentService, audit);
+    const revealed = await revealApp.handle(
+      new Request("http://localhost/api/servers/production/settings/reveal", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(revealed.status).toBe(200);
+    expect(await revealed.json()).toMatchObject({ password: "join-secret" });
+    expect(revealed.headers.get("cache-control")).toBe("no-store");
   });
 
   it("protects sessions with an HttpOnly cookie", async () => {

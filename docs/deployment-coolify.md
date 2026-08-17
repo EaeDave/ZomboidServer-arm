@@ -67,6 +67,8 @@ log events. The browser never opens a host-log or agent connection.
    PZ_AGENT_ID=<returned-agent-id>
    PZ_AGENT_ACCESS_TOKEN=<returned-access-token>
    PZ_AGENT_INTERVAL=15
+   # Optional public address shown to admins; never use this for authentication.
+   PZ_PUBLIC_IP=203.0.113.10
    # The first connection publishes this bounded tail; later requests publish only new lines.
    PZ_AGENT_CONSOLE_INITIAL_LINES=200
    PZ_AGENT_PENDING_COMPLETION_RETRIES=3
