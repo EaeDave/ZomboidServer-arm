@@ -152,10 +152,16 @@ export function ServerConfiguration({
   useEffect(() => {
     if (operation.data?.status === "succeeded") {
       setDraft({});
-      setSuccessMessage(
-        "Configuration saved and re-read from the host. Restart the server when ready.",
-      );
-      void config.refetch();
+      void (async () => {
+        const refreshed = await config.refetch();
+        if (refreshed.isSuccess) {
+          setSuccessMessage(
+            "Configuration saved and re-read from the host. Restart the server when ready.",
+          );
+        } else {
+          setSubmitError("Configuration was saved, but the host snapshot could not be re-read.");
+        }
+      })();
     }
   }, [operation.data?.status]);
 
@@ -201,6 +207,7 @@ export function ServerConfiguration({
     setDraft((current) => ({ ...current, [identity(field)]: value }));
   };
   const applySleepPreset = (allowed: boolean, needed: boolean) => {
+    setSuccessMessage(undefined);
     const next = { ...draft };
     for (const field of fields) {
       if (field.source === "server" && field.path === "SleepAllowed")

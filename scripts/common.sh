@@ -41,7 +41,9 @@ pz_load_env() {
   PZ_UPDATELOG="${PZ_UPDATELOG:-$PZ_CACHEDIR/mod-updates.log}"
   PZ_BACKUPS="${PZ_BACKUPS:-$PZ_HOME/pz_backups}"
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
-  PZ_CONFIG="${PZ_CONFIG:-/usr/local/lib/zomboid-arm/pz-config.py}"
+  # This executable crosses the sudo boundary in pz-agent-priv. Resolve it from
+  # this root-owned installed library, never from the user-editable env file.
+  PZ_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pz-config.py"
   PZ_BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
   # Steam Relay is a client connectivity requirement on Oracle/cloud NAT.  This setting only
@@ -100,7 +102,7 @@ svc_active() { [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = activ
 # while the server is booting. PZ_STATUS_RCON=1 enables player telemetry behind a strict
 # outer deadline and a 15-second cache, bounding both latency and query frequency.
 status_json() {
-  local active sub state listening version active_enter uptime_seconds players runtime checked_at players_raw
+  local active sub state listening version active_enter uptime_seconds players runtime checked_at players_raw rcon_available
   active="$(read_systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
   sub="$(read_systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
   case "$active" in
@@ -129,24 +131,48 @@ status_json() {
 
   players=-1
   players_raw=""
+  rcon_available=false
   if [ "${PZ_STATUS_RCON:-0}" = 1 ] && [ "$active" = active ] && [ "$listening" = true ] && rcon_ready; then
-    local players_cache cache_mtime now
+    local players_cache players_meta cache_mtime now cached_active cached_ok players_lock_fd
     players_cache="${PZ_STATUS_RCON_CACHE:-${PZ_CACHEDIR}/status-rcon-players.cache}"
-    cache_mtime="$(stat -c %Y "$players_cache" 2>/dev/null || printf 0)"
-    now="$(date +%s)"
-    if [ $((now - cache_mtime)) -lt 15 ]; then
-      players_raw="$(cat "$players_cache" 2>/dev/null || true)"
-    else
-      players_raw="$(rcon_cmd_quick players 2>/dev/null || true)"
-      if mkdir -p "$(dirname "$players_cache")" 2>/dev/null; then
-        printf '%s' "$players_raw" > "${players_cache}.pztmp" 2>/dev/null \
-          && chmod 600 "${players_cache}.pztmp" 2>/dev/null \
-          && mv "${players_cache}.pztmp" "$players_cache" 2>/dev/null \
-          || rm -f "${players_cache}.pztmp"
+    players_meta="${players_cache}.meta"
+    if mkdir -p "$(dirname "$players_cache")" 2>/dev/null; then
+      exec {players_lock_fd}>"${players_cache}.lock"
+      if flock -w 3 "$players_lock_fd"; then
+        # Re-check freshness only after taking the lock so concurrent status
+        # probes cannot issue duplicate RCON requests or race cache writes.
+        cache_mtime="$(stat -c %Y "$players_cache" 2>/dev/null || printf 0)"
+        now="$(date +%s)"
+        cached_active="$(head -1 "$players_meta" 2>/dev/null || true)"
+        cached_ok="$(tail -n 1 "$players_meta" 2>/dev/null || true)"
+        if [ $((now - cache_mtime)) -lt 15 ] && [ "$cached_active" = "$active_enter" ] && [ "$cached_ok" = 1 ]; then
+          players_raw="$(head -c 32768 "$players_cache" 2>/dev/null || true)"
+          rcon_available=true
+        elif players_raw="$(rcon_cmd_quick players 2>/dev/null)"; then
+          players_raw="$(printf '%s' "$players_raw" | head -c 32768)"
+          if printf '%s\n' "$players_raw" | grep -qE 'Players connected \([0-9]+\)|^[[:space:]]*[-*][[:space:]]*[^[:space:]]'; then
+            rcon_available=true
+            printf '%s' "$players_raw" > "${players_cache}.pztmp"
+            printf '%s\n1\n' "$active_enter" > "${players_meta}.pztmp"
+            chmod 600 "${players_cache}.pztmp" "${players_meta}.pztmp"
+            mv "${players_cache}.pztmp" "$players_cache"
+            mv "${players_meta}.pztmp" "$players_meta"
+          else
+            players_raw=""
+            rm -f "$players_cache" "$players_meta"
+          fi
+        else
+          players_raw=""
+          rm -f "$players_cache" "$players_meta"
+        fi
+        flock -u "$players_lock_fd"
       fi
+      exec {players_lock_fd}>&-
     fi
-    players="$(printf '%s\n' "$players_raw" | grep -oE 'Players connected \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)"
-    players="${players:--1}"
+    if [ "$rcon_available" = true ]; then
+      players="$(printf '%s\n' "$players_raw" | grep -oE 'Players connected \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)"
+      players="${players:--1}"
+    fi
   fi
   case "$PZ_RUNTIME" in fex|box64) runtime="$PZ_RUNTIME" ;; *) runtime=unknown ;; esac
   checked_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -161,6 +187,7 @@ status_json() {
   STATUS_UPTIME="$uptime_seconds" \
   STATUS_PLAYERS="$players" \
   STATUS_PLAYERS_RAW="$players_raw" \
+  STATUS_RCON_AVAILABLE="$rcon_available" \
   STATUS_CHECKED_AT="$checked_at" \
   STATUS_STEAM_CHECK="$PZ_STEAM_SESSION_CHECK" \
   STATUS_STEAM_FILE="$PZ_STEAM_SESSION_STATUS" \
@@ -192,6 +219,8 @@ def online_players():
         candidate = candidate[:128]
         if candidate not in names:
             names.append(candidate)
+            if len(names) == 100:
+                break
     return names[:100]
 
 
@@ -245,7 +274,7 @@ print(
             "uptimeSeconds": int(uptime) if uptime is not None else None,
             "playerCount": int(os.environ["STATUS_PLAYERS"]),
             "onlinePlayers": online_players(),
-            "rconAvailable": bool(os.environ.get("STATUS_PLAYERS_RAW")),
+            "rconAvailable": os.environ["STATUS_RCON_AVAILABLE"] == "true",
             "checkedAt": os.environ["STATUS_CHECKED_AT"],
             "steamSession": steam_session(),
         },
