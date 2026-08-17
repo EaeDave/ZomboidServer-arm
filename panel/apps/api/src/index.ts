@@ -76,6 +76,8 @@ const supportedOperationKinds = new Set([
   "mods.add",
   "mods.remove",
   "mods.configure",
+  "mods.update.check",
+  "mods.update.apply",
   "settings.update",
   "config.update",
   "world.reset",
@@ -525,7 +527,7 @@ export function createApp(
           };
         }
         const requiredRole =
-          body.kind === "status" || body.kind === "mods.list"
+          body.kind === "status" || body.kind === "mods.list" || body.kind === "mods.update.check"
             ? "viewer"
             : body.kind === "world.reset"
               ? "admin"

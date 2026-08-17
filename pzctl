@@ -199,6 +199,56 @@ print(json.dumps({
 PY
 }
 
+cli_mods_update_check_json() {
+  local output rc
+  output="$("$PZ_MODUPDATE" check --json)"; rc=$?
+  [ -n "$output" ] && printf '%s\n' "$output"
+  case "$rc" in
+    0|10) return 0 ;;
+    *) return "$rc" ;;
+  esac
+}
+
+cli_mods_update_apply_json() {
+  local payload output rc tmp
+  payload="$(cat)"
+  tmp="$(mktemp)"
+  if ! MODS_UPDATE_PAYLOAD="$payload" python3 - >"$tmp" <<'PY'
+import json
+import os
+
+try:
+    value = json.loads(os.environ["MODS_UPDATE_PAYLOAD"])
+    if not isinstance(value, dict) or set(value) - {"restart", "requireEmpty"}:
+        raise ValueError
+    restart = value.get("restart", True)
+    require_empty = value.get("requireEmpty", True)
+    if not isinstance(restart, bool) or not isinstance(require_empty, bool):
+        raise ValueError
+except (TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(64)
+
+if not restart:
+    print("--no-restart")
+if require_empty:
+    print("--require-empty")
+PY
+  then
+    rm -f "$tmp"
+    return 64
+  fi
+  local -a flags=()
+  mapfile -t flags < "$tmp"
+  rm -f "$tmp"
+  output="$("$PZ_MODUPDATE" apply --json "${flags[@]}")"; rc=$?
+  if [ -n "$output" ]; then
+    printf '%s\n' "$output"
+    # JSON outcomes (including blocked/partial updates) are interpreted by pz-agent.
+    return 0
+  fi
+  return "$rc"
+}
+
 cli_settings_json() {
   local payload tmp key encoded value updated=""
   payload="$(cat)"
@@ -383,7 +433,7 @@ cli_logs_json() {
 cli_help() {
   cat <<'EOF'
 Usage: pzctl [status|start|stop|restart|backup|logs] [--json] [lines]
-       pzctl [mods-list|mods-add|mods-remove|mods-configure|settings|settings-read|config-read|config-update|world-reset] --json [args]
+       pzctl [mods-list|mods-add|mods-remove|mods-configure|mods-update-check|mods-update-apply|settings|settings-read|config-read|config-update|world-reset] --json [args]
        pzctl backup --json [keep]
        pzctl --version | --help
 
@@ -440,6 +490,14 @@ if [ "$#" -gt 0 ]; then
     mods-configure)
       [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
       cli_mods_configure_json; exit $?
+      ;;
+    mods-update-check)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_mods_update_check_json; exit $?
+      ;;
+    mods-update-apply)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_mods_update_apply_json; exit $?
       ;;
     settings)
       [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
@@ -498,6 +556,14 @@ if [ "$#" -gt 0 ]; then
         mods-configure)
           [ "$#" -eq 2 ] || exit 64
           cli_mods_configure_json
+          ;;
+        mods-update-check)
+          [ "$#" -eq 2 ] || exit 64
+          cli_mods_update_check_json
+          ;;
+        mods-update-apply)
+          [ "$#" -eq 2 ] || exit 64
+          cli_mods_update_apply_json
           ;;
         settings)
           [ "$#" -eq 2 ] || exit 64

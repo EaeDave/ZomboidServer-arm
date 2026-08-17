@@ -44,9 +44,10 @@ jobs:
           persist-credentials: false
       - name: Verify host boot telemetry scripts
         run: |
-          bash -n scripts/common.sh scripts/boot-retry.sh scripts/boot-retry.test.sh scripts/pz-agent.sh scripts/pz-agent-log.test.sh scripts/pz-agent-worker.test.sh scripts/pz-agent-large-result.test.sh scripts/pz-agent-priv.sh install.sh pzctl
+          bash -n scripts/common.sh scripts/boot-retry.sh scripts/boot-retry.test.sh scripts/pz-agent.sh scripts/pz-agent-log.test.sh scripts/pz-agent-worker.test.sh scripts/pz-agent-large-result.test.sh scripts/pz-agent-priv.sh scripts/pz-modupdate.sh scripts/pz-modupdate.test.sh install.sh pzctl
           python3 -m py_compile scripts/pz-config.py
           python3 scripts/pz-config.test.py
+          bash scripts/pz-modupdate.test.sh
           bash scripts/boot-retry.test.sh
           bash scripts/pz-agent-log.test.sh
           bash scripts/pz-agent-worker.test.sh

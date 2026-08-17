@@ -7,6 +7,8 @@ import {
   agentConsoleLogRequestSchema,
   operationCreateRequestSchema,
   configSnapshotSchema,
+  modsUpdateApplyResultSchema,
+  modsUpdateCheckResultSchema,
   worldResetOperationRequestSchema,
 } from "./index";
 
@@ -111,6 +113,54 @@ describe("agent operation contracts", () => {
     ).toBe(false);
   });
 
+  it("accepts workshop update operations and bounded results", () => {
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.update.check",
+        payload: {},
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.update.apply",
+        payload: { restart: true, requireEmpty: true },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.update.apply",
+        payload: { command: "restart" },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(modsUpdateCheckResultSchema, {
+        status: "updates_available",
+        checkedAt: "2026-08-17T00:00:00Z",
+        trackedCount: 1,
+        updates: [
+          {
+            workshopId: "1234567",
+            title: "Example mod",
+            storedUpdatedAt: 100,
+            availableUpdatedAt: 200,
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(modsUpdateApplyResultSchema, {
+        status: "partial",
+        updated: [{ workshopId: "1234567", title: "Example mod" }],
+        failed: [],
+        backupCreated: true,
+        backupPath: "/backups/modup.tar.gz",
+        restartRequested: true,
+        restarted: true,
+        playerCount: 0,
+      }),
+    ).toBe(true);
+  });
+
   it("accepts successful responses for every non-status operation", () => {
     for (const kind of [
       "start",
@@ -120,6 +170,9 @@ describe("agent operation contracts", () => {
       "mods.list",
       "mods.add",
       "mods.remove",
+      "mods.configure",
+      "mods.update.check",
+      "mods.update.apply",
       "settings.update",
       "world.reset",
     ]) {

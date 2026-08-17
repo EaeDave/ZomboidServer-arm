@@ -1110,6 +1110,12 @@ PY
             mods.configure)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-configure 2>/dev/null)"; then :; else result_status=""; fi
               ;;
+            mods.update.check)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" mods-update-check 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            mods.update.apply)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-update-apply 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
             settings.update)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" settings 2>/dev/null)"; then :; else result_status=""; fi
               ;;
@@ -1131,7 +1137,25 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
-            if completion="$(printf '%s' "$result_status" | python3 -c '
+            if [ "$job_kind" = "mods.update.apply" ]; then
+              if completion="$(printf '%s' "$result_status" | python3 -c '
+import json
+import sys
+
+try:
+    result = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+if result.get("status") in {"blocked", "unavailable", "failed"}:
+    print(json.dumps({"status": "failed", "error": result.get("message") or "Workshop mod update failed"}, separators=(",", ":")))
+else:
+    print(json.dumps({"status": "succeeded", "result": result}, separators=(",", ":")))
+')"; then
+                :
+              else
+                completion='{"status":"failed","error":"agent returned invalid JSON result"}'
+              fi
+            elif completion="$(printf '%s' "$result_status" | python3 -c '
 import json
 import sys
 

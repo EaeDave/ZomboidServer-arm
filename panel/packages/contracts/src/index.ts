@@ -67,6 +67,8 @@ export type AuditEvent = Static<typeof auditEventSchema>;
 
 export type AuthErrorResponse = Static<typeof authErrorResponseSchema>;
 
+const closedObjectOptions = { additionalProperties: false } as const;
+
 export const operationKinds = [
   "status",
   "start",
@@ -77,6 +79,8 @@ export const operationKinds = [
   "mods.add",
   "mods.remove",
   "mods.configure",
+  "mods.update.check",
+  "mods.update.apply",
   "settings.update",
   "config.update",
   "world.reset",
@@ -94,6 +98,8 @@ export const operationKindSchema = Type.Union([
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
   Type.Literal("mods.configure"),
+  Type.Literal("mods.update.check"),
+  Type.Literal("mods.update.apply"),
   Type.Literal("settings.update"),
   Type.Literal("config.update"),
   Type.Literal("world.reset"),
@@ -154,6 +160,78 @@ export const agentModsStatusSchema = Type.Object({
   ),
   inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
 });
+
+export const workshopUpdateSchema = Type.Object(
+  {
+    workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }),
+    title: Type.String({ minLength: 1, maxLength: 256 }),
+    storedUpdatedAt: Type.Integer({ minimum: 0 }),
+    availableUpdatedAt: Type.Integer({ minimum: 0 }),
+  },
+  closedObjectOptions,
+);
+
+export type WorkshopUpdate = Static<typeof workshopUpdateSchema>;
+
+export const modsUpdateCheckResultSchema = Type.Object(
+  {
+    status: Type.Union([
+      Type.Literal("no_tracked_mods"),
+      Type.Literal("up_to_date"),
+      Type.Literal("updates_available"),
+      Type.Literal("unavailable"),
+    ]),
+    checkedAt: Type.String({ minLength: 1 }),
+    trackedCount: Type.Integer({ minimum: 0 }),
+    updates: Type.Array(workshopUpdateSchema, { maxItems: 1_000 }),
+    message: Type.Optional(Type.String({ maxLength: 512 })),
+  },
+  closedObjectOptions,
+);
+
+export type ModsUpdateCheckResult = Static<typeof modsUpdateCheckResultSchema>;
+
+export const modsUpdateApplyResultSchema = Type.Object(
+  {
+    status: Type.Union([
+      Type.Literal("up_to_date"),
+      Type.Literal("updated"),
+      Type.Literal("partial"),
+      Type.Literal("blocked"),
+      Type.Literal("unavailable"),
+      Type.Literal("failed"),
+    ]),
+    updated: Type.Array(
+      Type.Object(
+        {
+          workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }),
+          title: Type.String({ minLength: 1, maxLength: 256 }),
+        },
+        closedObjectOptions,
+      ),
+      { maxItems: 1_000 },
+    ),
+    failed: Type.Array(
+      Type.Object(
+        {
+          workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }),
+          title: Type.String({ minLength: 1, maxLength: 256 }),
+        },
+        closedObjectOptions,
+      ),
+      { maxItems: 1_000 },
+    ),
+    backupCreated: Type.Boolean(),
+    backupPath: Type.Union([Type.String({ maxLength: 1024 }), Type.Null()]),
+    restartRequested: Type.Boolean(),
+    restarted: Type.Boolean(),
+    playerCount: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    message: Type.Optional(Type.String({ maxLength: 512 })),
+  },
+  closedObjectOptions,
+);
+
+export type ModsUpdateApplyResult = Static<typeof modsUpdateApplyResultSchema>;
 
 export const agentServerSettingsSchema = Type.Object({
   public: Type.Boolean(),
@@ -319,7 +397,6 @@ export const agentOperationErrorResponseSchema = Type.Object({
   }),
 });
 
-const closedObjectOptions = { additionalProperties: false } as const;
 const emptyPayloadSchema = Type.Object({}, closedObjectOptions);
 
 const operationBaseSchema = {
@@ -457,6 +534,30 @@ export const modsConfigureOperationRequestSchema = Type.Object(
   closedObjectOptions,
 );
 
+export const modsUpdateCheckOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("mods.update.check"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
+
+export const modsUpdateApplyOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("mods.update.apply"),
+    payload: Type.Object(
+      {
+        restart: Type.Optional(Type.Boolean()),
+        requireEmpty: Type.Optional(Type.Boolean()),
+      },
+      closedObjectOptions,
+    ),
+  },
+  closedObjectOptions,
+);
+
 export const settingsUpdateOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
@@ -508,6 +609,8 @@ export const agentOperationRequestSchema = Type.Union([
   modsAddOperationRequestSchema,
   modsRemoveOperationRequestSchema,
   modsConfigureOperationRequestSchema,
+  modsUpdateCheckOperationRequestSchema,
+  modsUpdateApplyOperationRequestSchema,
   settingsReadOperationRequestSchema,
   settingsUpdateOperationRequestSchema,
   configReadOperationRequestSchema,
@@ -556,6 +659,8 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
   Type.Literal("mods.configure"),
+  Type.Literal("mods.update.check"),
+  Type.Literal("mods.update.apply"),
   Type.Literal("settings.read"),
   Type.Literal("settings.update"),
   Type.Literal("config.read"),
@@ -646,6 +751,23 @@ export const operationCreateRequestSchema = Type.Union([
     {
       kind: Type.Literal("mods.configure"),
       payload: modsConfigurePayloadSchema,
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    { kind: Type.Literal("mods.update.check"), payload: emptyPayloadSchema },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("mods.update.apply"),
+      payload: Type.Object(
+        {
+          restart: Type.Optional(Type.Boolean()),
+          requireEmpty: Type.Optional(Type.Boolean()),
+        },
+        closedObjectOptions,
+      ),
     },
     closedObjectOptions,
   ),

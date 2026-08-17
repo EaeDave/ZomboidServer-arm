@@ -281,8 +281,8 @@ describe("control-plane API", () => {
           ],
         };
       },
-      async enqueueOperation() {
-        return operation;
+      async enqueueOperation(_serverId, _actorUserId, request) {
+        return { ...operation, kind: request.kind } as typeof operation;
       },
       async enqueueStatus() {
         return operation;
@@ -361,6 +361,35 @@ describe("control-plane API", () => {
     );
     expect(queued.status).toBe(202);
     expect(await queued.json()).toEqual(operation);
+
+    const updateCheck = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "mods.update.check", payload: {} }),
+      }),
+    );
+    expect(updateCheck.status).toBe(202);
+    expect((await updateCheck.json()).kind).toBe("mods.update.check");
+
+    const updateApply = await operationApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "mods.update.apply",
+          payload: { restart: true, requireEmpty: true },
+        }),
+      }),
+    );
+    expect(updateApply.status).toBe(202);
+    expect((await updateApply.json()).kind).toBe("mods.update.apply");
 
     const read = await operationApp.handle(
       new Request("http://localhost/api/operations/operation-1", {
@@ -535,6 +564,28 @@ describe("control-plane API", () => {
       }),
     );
     expect(forbidden.status).toBe(403);
+    const viewerUpdateCheck = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "mods.update.check", payload: {} }),
+      }),
+    );
+    expect(viewerUpdateCheck.status).toBe(202);
+    const viewerUpdateApply = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "mods.update.apply", payload: {} }),
+      }),
+    );
+    expect(viewerUpdateApply.status).toBe(403);
     const forbiddenConfig = await viewerApp.handle(
       new Request("http://localhost/api/servers/production/config", {
         headers: { cookie: "zomboid_session=session-token" },
