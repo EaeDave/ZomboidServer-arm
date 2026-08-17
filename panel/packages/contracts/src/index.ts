@@ -163,7 +163,6 @@ export const agentModsStatusSchema = Type.Object({
   inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
 });
 
-
 export const workshopUpdateSchema = Type.Object(
   {
     workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }),
@@ -256,7 +255,6 @@ export const buildUpdateResultSchema = Type.Object(
 );
 
 export type BuildUpdateResult = Static<typeof buildUpdateResultSchema>;
-
 
 export const agentServerSettingsSchema = Type.Object({
   public: Type.Boolean(),
@@ -474,7 +472,6 @@ export const buildUpdateOperationRequestSchema = Type.Object(
   closedObjectOptions,
 );
 
-
 export const settingsReadOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
@@ -653,7 +650,6 @@ export const agentOperationRequestSchema = Type.Union([
   worldResetOperationRequestSchema,
 ]);
 
-
 export type AgentOperationRequest = Static<typeof agentOperationRequestSchema>;
 
 export const statusOperationResponseSchema = Type.Object(
@@ -705,7 +701,6 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("world.reset"),
 ]);
 
-
 export const agentOperationSuccessResponseSchema = Type.Object(
   {
     protocolVersion: Type.Literal(1),
@@ -746,7 +741,10 @@ export const operationCreateRequestSchema = Type.Union([
   Type.Object({ kind: Type.Literal("start"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("stop"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("restart"), payload: emptyPayloadSchema }, closedObjectOptions),
-  Type.Object({ kind: Type.Literal("build.update"), payload: emptyPayloadSchema }, closedObjectOptions),
+  Type.Object(
+    { kind: Type.Literal("build.update"), payload: emptyPayloadSchema },
+    closedObjectOptions,
+  ),
   Type.Object(
     {
       kind: Type.Literal("backup"),

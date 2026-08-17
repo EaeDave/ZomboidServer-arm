@@ -59,7 +59,11 @@ function operationLabel(kind: OperationKind) {
 
 function operationDetail(operation: OperationRecord) {
   if (operation.error) return operation.error;
-  if (operation.kind !== "build.update" || !operation.result || typeof operation.result !== "object") {
+  if (
+    operation.kind !== "build.update" ||
+    !operation.result ||
+    typeof operation.result !== "object"
+  ) {
     return undefined;
   }
   const result = operation.result as {
@@ -69,8 +73,7 @@ function operationDetail(operation: OperationRecord) {
     backupCreated?: unknown;
   };
   if (typeof result.message === "string") return result.message;
-  const previous =
-    typeof result.previousVersion === "string" ? result.previousVersion : undefined;
+  const previous = typeof result.previousVersion === "string" ? result.previousVersion : undefined;
   const installed =
     typeof result.installedVersion === "string" ? result.installedVersion : undefined;
   if (!previous && !installed) return undefined;
@@ -550,7 +553,9 @@ export function OverviewPage({
                 >
                   <div className="min-w-0">
                     <span className="text-zinc-300">{operationLabel(operation.kind)}</span>
-                    {detail ? <p className="mt-1 max-w-xl text-xs text-zinc-500">{detail}</p> : null}
+                    {detail ? (
+                      <p className="mt-1 max-w-xl text-xs text-zinc-500">{detail}</p>
+                    ) : null}
                   </div>
                   <span
                     className={
