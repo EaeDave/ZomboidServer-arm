@@ -423,18 +423,22 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
             ) : null}
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 hover:border-emerald-400 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!user || server.isFetching}
+              onClick={() => void server.refetch()}
+              type="button"
+            >
+              {server.isFetching ? "Refreshing status..." : "Refresh status"}
+            </button>
             {[
-              ["status", "Queue status"],
               ["start", "Start"],
               ["stop", "Stop"],
               ["restart", "Restart"],
               ["backup", "Backup"],
             ].map(([kind, label]) => {
-              const isReadOnly = kind === "status";
               const disabled =
-                operationMutation.isPending ||
-                Boolean(activeOperation) ||
-                (isReadOnly ? !user : !canOperate);
+                operationMutation.isPending || Boolean(activeOperation) || !canOperate;
               return (
                 <button
                   className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 hover:border-emerald-400 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
