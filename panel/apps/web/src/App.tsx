@@ -329,6 +329,154 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     setServerPublic(settings.public);
   }, [server.data?.settings]);
 
+  const serverAccessPanel = (
+    <section className="mt-8 rounded-2xl border border-emerald-400/20 bg-zinc-900/80 p-6 shadow-2xl shadow-black/20">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-medium">Server access</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Connection details and the settings players use to find and join the server.
+          </p>
+        </div>
+        <StatusPill online={server.data?.state === "active"} />
+      </div>
+      <form
+        className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr_auto] lg:items-start"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const payload = {
+            public: serverPublic,
+            ...(publicName ? { publicName } : {}),
+            ...(joinPassword ? { password: joinPassword } : {}),
+          };
+          operationMutation.mutate({
+            kind: "settings.update",
+            payload,
+          } as OperationCreateRequest);
+        }}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-400">Current server details</p>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+            <p>
+              Public name:{" "}
+              <strong className="font-medium text-zinc-200">
+                {server.data?.settings?.publicName ?? "Not set"}
+              </strong>
+            </p>
+            <p className="mt-2">
+              Join password:{" "}
+              <strong className="font-medium text-zinc-200">
+                {revealedPassword ??
+                  (server.data?.settings?.passwordConfigured ? "Configured" : "Not configured")}
+              </strong>
+            </p>
+            {canAdmin && server.data?.settings?.passwordConfigured ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
+                  disabled={settingsReveal.isPending || Boolean(activeOperation)}
+                  onClick={() => {
+                    if (revealedPassword) setRevealedPassword(undefined);
+                    else if (
+                      window.confirm("Reveal the server join password? This action is audited.")
+                    )
+                      settingsReveal.mutate();
+                  }}
+                  type="button"
+                >
+                  {settingsReveal.isPending
+                    ? "Reading..."
+                    : revealedPassword
+                      ? "Hide password"
+                      : "Reveal password"}
+                </button>
+                {revealedPassword ? (
+                  <button
+                    className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
+                    onClick={() => void navigator.clipboard?.writeText(revealedPassword)}
+                    type="button"
+                  >
+                    Copy
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {settingsReveal.error instanceof Error ? (
+              <p className="mt-2 text-rose-300">{settingsReveal.error.message}</p>
+            ) : null}
+          </div>
+          {canAdmin && server.data?.settings?.publicAddress ? (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+              <p className="text-zinc-500">Server address</p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <code className="text-zinc-200">
+                  {server.data.settings.publicAddress}:{server.data.settings.defaultPort}
+                </code>
+                <button
+                  className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
+                  onClick={() =>
+                    void navigator.clipboard?.writeText(
+                      `${server.data?.settings?.publicAddress}:${server.data?.settings?.defaultPort}`,
+                    )
+                  }
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-400">Change settings</p>
+          <input
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+            id="public-name"
+            name="publicName"
+            aria-label="New public name (optional)"
+            placeholder="New public name (optional)"
+            value={publicName}
+            onChange={(event) => setPublicName(event.target.value)}
+          />
+          <input
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
+            id="join-password"
+            name="joinPassword"
+            aria-label="New join password (optional)"
+            autoComplete="new-password"
+            placeholder="New join password (optional)"
+            type="password"
+            value={joinPassword}
+            onChange={(event) => setJoinPassword(event.target.value)}
+          />
+          <label className="flex items-center gap-2 text-sm text-zinc-400">
+            <input
+              checked={serverPublic}
+              onChange={(event) => setServerPublic(event.target.checked)}
+              type="checkbox"
+            />
+            Public server
+          </label>
+        </div>
+        <div className="flex flex-col gap-3 lg:min-w-44">
+          <p className="text-sm text-zinc-400">Apply</p>
+          <p className="text-xs leading-5 text-zinc-500">
+            Changes are saved to the server configuration. Restart the server to ensure they take
+            effect.
+          </p>
+          <button
+            className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!canOperate || Boolean(activeOperation) || operationMutation.isPending}
+            type="submit"
+          >
+            Save settings
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+
   return (
     <main className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
       <section className="mx-auto max-w-5xl">
@@ -356,12 +504,14 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
           Zomboid host.
         </p>
 
-        <div className="mt-10 grid gap-5 md:grid-cols-2">
-          <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
-            <div className="flex items-center justify-between gap-4">
+        {serverAccessPanel}
+
+        <div className="mt-5 grid gap-5 md:grid-cols-2">
+          <details className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
               <h2 className="text-lg font-medium">Control plane</h2>
               <StatusPill online={health.isSuccess} />
-            </div>
+            </summary>
             <pre className="mt-5 overflow-x-auto rounded-xl bg-black/30 p-4 text-sm text-zinc-300">
               {health.isSuccess
                 ? JSON.stringify(health.data, null, 2)
@@ -369,10 +519,10 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                   ? health.error.message
                   : "Checking API..."}
             </pre>
-          </section>
+          </details>
 
-          <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
-            <div className="flex items-center justify-between gap-4">
+          <details className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-500">
                   production
@@ -380,7 +530,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                 <h2 className="mt-1 text-lg font-medium">Project Zomboid</h2>
               </div>
               <StatusPill online={server.data?.state === "active"} />
-            </div>
+            </summary>
 
             {server.isSuccess ? (
               <dl className="mt-6 grid grid-cols-2 gap-4 text-sm">
@@ -431,7 +581,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                 {server.error instanceof Error ? server.error.message : "Checking server agent..."}
               </p>
             )}
-          </section>
+          </details>
         </div>
 
         <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
@@ -544,7 +694,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
 
         <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
           <h2 className="text-lg font-medium">Server tools</h2>
-          <div className="mt-5 grid gap-5 md:grid-cols-3">
+          <div className="mt-5 grid gap-5 md:grid-cols-2">
             <form
               className="space-y-3"
               onSubmit={(event) => {
@@ -637,133 +787,6 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                 <p className="text-xs text-zinc-600">Waiting for the agent mod snapshot…</p>
               )}
             </div>
-
-            <form
-              className="space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const payload = {
-                  public: serverPublic,
-                  ...(publicName ? { publicName } : {}),
-                  ...(joinPassword ? { password: joinPassword } : {}),
-                };
-                operationMutation.mutate({
-                  kind: "settings.update",
-                  payload,
-                } as OperationCreateRequest);
-              }}
-            >
-              <p className="text-sm text-zinc-400">Settings</p>
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
-                <p>
-                  Current public name:{" "}
-                  <strong className="font-medium text-zinc-200">
-                    {server.data?.settings?.publicName ?? "Not set"}
-                  </strong>
-                </p>
-                <p className="mt-2">
-                  Join password:{" "}
-                  <strong className="font-medium text-zinc-200">
-                    {revealedPassword ??
-                      (server.data?.settings?.passwordConfigured ? "Configured" : "Not configured")}
-                  </strong>
-                </p>
-                {canAdmin && server.data?.settings?.passwordConfigured ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
-                      disabled={settingsReveal.isPending || Boolean(activeOperation)}
-                      onClick={() => {
-                        if (revealedPassword) setRevealedPassword(undefined);
-                        else if (
-                          window.confirm("Reveal the server join password? This action is audited.")
-                        )
-                          settingsReveal.mutate();
-                      }}
-                      type="button"
-                    >
-                      {settingsReveal.isPending
-                        ? "Reading..."
-                        : revealedPassword
-                          ? "Hide password"
-                          : "Reveal password"}
-                    </button>
-                    {revealedPassword ? (
-                      <button
-                        className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
-                        onClick={() => void navigator.clipboard?.writeText(revealedPassword)}
-                        type="button"
-                      >
-                        Copy
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {settingsReveal.error instanceof Error ? (
-                  <p className="mt-2 text-rose-300">{settingsReveal.error.message}</p>
-                ) : null}
-              </div>
-              {canAdmin && server.data?.settings?.publicAddress ? (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
-                  <p className="text-zinc-500">Server address</p>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <code className="text-zinc-200">
-                      {server.data.settings.publicAddress}:{server.data.settings.defaultPort}
-                    </code>
-                    <button
-                      className="rounded-lg border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-emerald-400"
-                      onClick={() =>
-                        void navigator.clipboard?.writeText(
-                          `${server.data?.settings?.publicAddress}:${server.data?.settings?.defaultPort}`,
-                        )
-                      }
-                      type="button"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              <input
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
-                id="public-name"
-                name="publicName"
-                aria-label="New public name (optional)"
-                placeholder="New public name (optional)"
-                value={publicName}
-                onChange={(event) => setPublicName(event.target.value)}
-              />
-              <input
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none ring-emerald-400 focus:ring-2"
-                id="join-password"
-                name="joinPassword"
-                aria-label="New join password (optional)"
-                autoComplete="new-password"
-                placeholder="New join password (optional)"
-                type="password"
-                value={joinPassword}
-                onChange={(event) => setJoinPassword(event.target.value)}
-              />
-              <label className="flex items-center gap-2 text-sm text-zinc-400">
-                <input
-                  checked={serverPublic}
-                  onChange={(event) => setServerPublic(event.target.checked)}
-                  type="checkbox"
-                />
-                Public server
-              </label>
-              <p className="text-xs leading-5 text-zinc-500">
-                Changes are saved to the server configuration. Restart the server to ensure they
-                take effect.
-              </p>
-              <button
-                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
-                disabled={!canOperate || Boolean(activeOperation) || operationMutation.isPending}
-                type="submit"
-              >
-                Save settings
-              </button>
-            </form>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-zinc-800 pt-5">
             <label className="flex items-center gap-2 text-sm text-zinc-400">
