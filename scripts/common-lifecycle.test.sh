@@ -17,7 +17,13 @@ mkdir -p "$PZ_CACHEDIR"
 read_systemctl() { printf 'active\n'; }
 is_listening() { return 0; }
 rcon_ready() { return 0; }
-rcon_cmd() { printf 'rcon:%s\n' "$1" >>"$EVENTS"; }
+rcon_cmd() {
+  if [ "$1" = players ]; then
+    printf 'Players connected (1):\n- test-player\n'
+  else
+    printf 'rcon:%s\n' "$1" >>"$EVENTS"
+  fi
+}
 sudo() { printf 'sudo:%s\n' "$*" >>"$EVENTS"; }
 
 graceful_stop_service "Server is restarting for maintenance. Please wait."
@@ -27,8 +33,8 @@ import sys
 
 expected = [
     'rcon:servermsg "Server is restarting for maintenance. Please wait."',
+    'rcon:kickuser "test-player" -r "Server is restarting for maintenance. Please wait."',
     'rcon:save',
-    'rcon:quit',
     'sudo:systemctl stop test-service',
 ]
 actual = open(sys.argv[1], encoding='utf-8').read().splitlines()

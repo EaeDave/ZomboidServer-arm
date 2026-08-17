@@ -557,13 +557,31 @@ announce_server_message() {
   rcon_cmd "servermsg \"$message\"" >/dev/null 2>&1 || true
 }
 
+disconnect_players() {
+  local reason="${1:-Server maintenance is starting. Please wait.}" listing line name escaped
+  listing="$(rcon_cmd players 2>/dev/null || true)"
+  while IFS= read -r line; do
+    case "$line" in
+      *-*)
+        name="${line#*-}"
+        name="${name#"${name%%[![:space:]]*}"}"
+        name="${name%"${name##*[![:space:]]}"}"
+        [ -n "$name" ] || continue
+        escaped="${name//\\/\\\\}"
+        escaped="${escaped//\"/\\\"}"
+        rcon_cmd "kickuser \"$escaped\" -r \"$reason\"" >/dev/null 2>&1 || true
+        ;;
+    esac
+  done <<< "$listing"
+}
+
 graceful_stop_service() {
   local active message="${1:-Server maintenance is starting. Please wait.}"
   active="$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)"
   [ "$active" = active ] || return 0
   announce_server_message "$message"
+  disconnect_players "$message"
   save_world || return $?
-  rcon_cmd quit >/dev/null 2>&1 || true
   sudo systemctl stop "$PZ_SERVICE"
 }
 
