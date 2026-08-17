@@ -186,7 +186,7 @@ func (c *Client) runConnection(ctx context.Context) error {
 		case c.commands <- struct{}{}:
 			go c.execute(pingCtx, connection, &writeMu, message)
 		default:
-			c.writeResult(
+			go c.writeResult(
 				pingCtx,
 				connection,
 				&writeMu,

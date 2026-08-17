@@ -32,6 +32,7 @@ import {
   databaseHealthResponseSchema,
   directCommandRequestSchema,
   directCommandResponseSchema,
+  directCapabilityRoles,
   healthResponseSchema,
   operationCreateRequestSchema,
   operationEventListResponseSchema,
@@ -200,6 +201,21 @@ export function createApp(
 ) {
   const realtime = options.realtimeBroker ?? new RealtimeBroker();
   const authenticatedRealtimeSockets = new WeakSet<object>();
+  const pendingRealtimeMessages = new WeakMap<object, unknown[]>();
+  const receiveRealtimeMessage = (
+    serverId: string,
+    socket: Parameters<RealtimeBroker["connect"]>[1],
+    message: unknown,
+  ): boolean => {
+    try {
+      const value = typeof message === "string" ? JSON.parse(message) : message;
+      realtime.receive(serverId, socket, value);
+      return true;
+    } catch {
+      socket.close(1008, "Invalid realtime protocol message");
+      return false;
+    }
+  };
   const app = new Elysia({ name: "zomboid-control-plane" })
     .use(cors({ origin: corsOrigin, credentials: true }))
     .use(
@@ -224,28 +240,37 @@ export function createApp(
           ws.close(1008, "Agent authentication required");
           return;
         }
+        pendingRealtimeMessages.set(ws.raw, []);
         try {
           await agentService.authenticateRealtime(agentId, token, serverId);
+          const pending = pendingRealtimeMessages.get(ws.raw);
+          if (!pending) return;
+          pendingRealtimeMessages.delete(ws.raw);
           authenticatedRealtimeSockets.add(ws.raw);
           realtime.connect(serverId, ws.raw);
           ws.send(JSON.stringify({ type: "control.ready", protocolVersion: 1 }));
+          for (const message of pending) {
+            if (!receiveRealtimeMessage(serverId, ws.raw, message)) break;
+          }
         } catch {
+          pendingRealtimeMessages.delete(ws.raw);
           ws.close(1008, "Agent authentication failed");
         }
       },
       message(ws, message) {
-        if (!authenticatedRealtimeSockets.has(ws.raw)) {
-          ws.close(1008, "Agent authentication incomplete");
+        if (authenticatedRealtimeSockets.has(ws.raw)) {
+          receiveRealtimeMessage(ws.data.query.serverId, ws.raw, message);
           return;
         }
-        try {
-          const value = typeof message === "string" ? JSON.parse(message) : message;
-          realtime.receive(ws.data.query.serverId, ws.raw, value);
-        } catch {
-          ws.close(1008, "Invalid realtime protocol message");
+        const pending = pendingRealtimeMessages.get(ws.raw);
+        if (pending) {
+          pending.push(message);
+          return;
         }
+        ws.close(1008, "Agent authentication incomplete");
       },
       close(ws) {
+        pendingRealtimeMessages.delete(ws.raw);
         authenticatedRealtimeSockets.delete(ws.raw);
         realtime.disconnect(ws.data.query.serverId, ws.raw);
       },
@@ -684,7 +709,17 @@ export function createApp(
             error: { code: "unsupported_capability", message: "Unsupported direct capability" },
           };
         }
-        if (!roleAtLeast(user.role, capability.role)) {
+        const canonicalRole = directCapabilityRoles[body.capabilityId];
+        if (!canonicalRole) {
+          set.status = 400;
+          return {
+            error: { code: "unsupported_capability", message: "Unsupported direct capability" },
+          };
+        }
+        const effectiveRole = roleAtLeast(capability.role, canonicalRole)
+          ? capability.role
+          : canonicalRole;
+        if (!roleAtLeast(user.role, effectiveRole)) {
           set.status = 403;
           return { error: { code: "forbidden", message: "Insufficient role for this command" } };
         }

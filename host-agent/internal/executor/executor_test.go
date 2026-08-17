@@ -100,6 +100,8 @@ func TestExecuteRejectsUnknownAndInvalidInput(t *testing.T) {
 
 func TestRegistryIdentifiersAreUnique(t *testing.T) {
 	identifier := regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
+	argumentName := regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
+	roles := map[string]bool{"viewer": true, "operator": true, "admin": true}
 	seen := make(map[string]bool)
 	for _, capability := range capabilities.Registry {
 		if seen[capability.ID] {
@@ -117,6 +119,14 @@ func TestRegistryIdentifiersAreUnique(t *testing.T) {
 		}
 		if len(capability.Effects) > 10 || len(capability.Arguments) > 20 {
 			t.Fatalf("capability %q exceeds panel collection bounds", capability.ID)
+		}
+		if !roles[capability.Role] {
+			t.Fatalf("capability %q has invalid role %q", capability.ID, capability.Role)
+		}
+		for _, argument := range capability.Arguments {
+			if !argumentName.MatchString(argument.Name) {
+				t.Fatalf("capability %q has invalid argument name %q", capability.ID, argument.Name)
+			}
 		}
 		effects := make(map[string]bool, len(capability.Effects))
 		for _, effect := range capability.Effects {

@@ -1,3 +1,5 @@
+export { directCapabilityRoles, roleRank, type CapabilityRole } from "./roles";
+
 import { Type, type Static } from "@sinclair/typebox";
 
 export const healthResponseSchema = Type.Object({
@@ -118,6 +120,7 @@ export const capabilityRoleSchema = Type.Union([
   Type.Literal("operator"),
   Type.Literal("admin"),
 ]);
+
 export const capabilityArgumentSchema = Type.Object(
   {
     name: Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z][A-Za-z0-9]*$" }),

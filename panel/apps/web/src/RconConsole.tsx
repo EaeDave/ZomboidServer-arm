@@ -1,16 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type {
-  AgentCapability,
-  AgentStatus,
-  AuthUser,
-  DirectCommandRequest,
-  DirectCommandResponse,
+import {
+  type AgentCapability,
+  type AgentStatus,
+  type AuthUser,
+  type DirectCommandRequest,
+  type DirectCommandResponse,
 } from "@zomboid/contracts";
-import { useMemo, useState } from "react";
+import { roleRank } from "@zomboid/contracts/roles";
+import { useEffect, useMemo, useState } from "react";
 import { executeDirectCommand, getAgentCapabilities } from "./direct-command";
 import type { PanelPage } from "./PanelNav";
-
-const roleRank = { viewer: 0, operator: 1, admin: 2 } as const;
 
 function canRun(role: AuthUser["role"] | undefined, capability: AgentCapability) {
   return role !== undefined && roleRank[role] >= roleRank[capability.role];
@@ -97,6 +96,12 @@ export function RconConsole({
     capabilities.data?.capabilities.filter((item) => item.mode === "direct") ?? [];
   const selected =
     directCapabilities.find((capability) => capability.id === selectedId) ?? directCapabilities[0];
+  const resolvedSelectedId = selected?.id;
+  useEffect(() => {
+    setInput({});
+    setValidationError(undefined);
+    command.reset();
+  }, [resolvedSelectedId]);
   const grouped = useMemo(() => {
     const groups = new Map<string, AgentCapability[]>();
     for (const capability of capabilities.data?.capabilities ?? []) {

@@ -3,6 +3,7 @@ import type { AgentCapability } from "@zomboid/contracts";
 import {
   RealtimeAgentUnavailableError,
   RealtimeBroker,
+  RealtimeCapabilityError,
   RealtimeCommandError,
 } from "./realtime-broker";
 
@@ -194,5 +195,46 @@ describe("RealtimeBroker", () => {
     });
 
     await expect(pending).rejects.toBeInstanceOf(RealtimeCommandError);
+  });
+
+  it("rejects invalid registration frames and unavailable direct capabilities", async () => {
+    const broker = new RealtimeBroker();
+    const invalidSocket = new FakeSocket();
+    broker.connect("production", invalidSocket);
+    broker.receive("production", invalidSocket, { type: "invalid" });
+    expect(invalidSocket.closed?.code).toBe(1008);
+
+    const mismatchSocket = new FakeSocket();
+    broker.connect("production", mismatchSocket);
+    broker.receive("production", mismatchSocket, {
+      type: "agent.hello",
+      protocolVersion: 1,
+      serverId: "staging",
+      capabilities,
+    });
+    expect(mismatchSocket.closed?.code).toBe(1008);
+
+    const socket = new FakeSocket();
+    connect(broker, socket);
+    await expect(
+      broker.execute("production", { capabilityId: "config.read", input: {} }, "operator"),
+    ).rejects.toBeInstanceOf(RealtimeCapabilityError);
+
+    broker.receive("production", socket, {
+      type: "agent.hello",
+      protocolVersion: 1,
+      serverId: "production",
+      capabilities: [
+        {
+          ...capabilities[0]!,
+          id: "server.start",
+          mode: "job",
+          operationKind: "start",
+        },
+      ],
+    });
+    await expect(
+      broker.execute("production", { capabilityId: "server.start", input: {} }, "operator"),
+    ).rejects.toBeInstanceOf(RealtimeCapabilityError);
   });
 });

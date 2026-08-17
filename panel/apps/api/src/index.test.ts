@@ -579,7 +579,7 @@ describe("control-plane API", () => {
           description: "Remove one player",
           category: "RCON",
           mode: "direct",
-          role: "admin",
+          role: "viewer",
           arguments: [],
           effects: ["player-visible"],
         },

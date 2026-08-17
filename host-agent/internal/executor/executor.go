@@ -65,7 +65,7 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 	case "server.status":
 		args = []string{"status"}
 	case "logs.tail":
-		lines, err := optionalInteger(input, "lines", 50, 1, 1000)
+		lines, err := optionalInteger(input, argumentOf(capability, "lines"), 50)
 		if err != nil {
 			return nil, err
 		}
@@ -83,18 +83,18 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 		args = []string{"rcon"}
 		stdin, _ = json.Marshal(map[string]any{"command": command, "args": []string{}})
 	case "rcon.servermsg":
-		message, err := requiredString(input, "message", 500)
+		message, err := requiredString(input, argumentOf(capability, "message"))
 		if err != nil {
 			return nil, err
 		}
 		args = []string{"rcon"}
 		stdin, _ = json.Marshal(map[string]any{"command": "servermsg", "args": []string{message}})
 	case "rcon.kickuser":
-		username, err := requiredString(input, "username", 128)
+		username, err := requiredString(input, argumentOf(capability, "username"))
 		if err != nil {
 			return nil, err
 		}
-		reason, err := requiredString(input, "reason", 500)
+		reason, err := requiredString(input, argumentOf(capability, "reason"))
 		if err != nil {
 			return nil, err
 		}
@@ -147,6 +147,14 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 		}
 	}
 	return result, nil
+}
+func argumentOf(capability capabilities.Capability, name string) capabilities.Argument {
+	for _, argument := range capability.Arguments {
+		if argument.Name == name {
+			return argument
+		}
+	}
+	return capabilities.Argument{Name: name}
 }
 
 func validateInput(capability capabilities.Capability, input map[string]json.RawMessage) error {
@@ -201,6 +209,7 @@ func validateArgument(argument capabilities.Argument, raw json.RawMessage) error
 		}
 		for _, value := range values {
 			if strings.TrimSpace(value) == "" ||
+				strings.ContainsAny(value, "\r\n") ||
 				(argument.MaxLength > 0 && utf8.RuneCountInString(value) > argument.MaxLength) {
 				return fmt.Errorf("%s contains an invalid value", argument.Name)
 			}
@@ -211,30 +220,33 @@ func validateArgument(argument capabilities.Argument, raw json.RawMessage) error
 	return nil
 }
 
-func requiredString(input map[string]json.RawMessage, name string, maxLength int) (string, error) {
-	raw, ok := input[name]
+func requiredString(input map[string]json.RawMessage, argument capabilities.Argument) (string, error) {
+	raw, ok := input[argument.Name]
 	if !ok {
-		return "", fmt.Errorf("%s is required", name)
+		return "", fmt.Errorf("%s is required", argument.Name)
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", fmt.Errorf("%s must be a string", name)
+		return "", fmt.Errorf("%s must be a string", argument.Name)
 	}
 	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\r\n") || utf8.RuneCountInString(value) > maxLength {
-		return "", fmt.Errorf("%s is invalid", name)
+	if value == "" || strings.ContainsAny(value, "\r\n") ||
+		(argument.MaxLength > 0 && utf8.RuneCountInString(value) > argument.MaxLength) {
+		return "", fmt.Errorf("%s is invalid", argument.Name)
 	}
 	return value, nil
 }
 
-func optionalInteger(input map[string]json.RawMessage, name string, fallback, minimum, maximum int) (int, error) {
-	raw, ok := input[name]
+func optionalInteger(input map[string]json.RawMessage, argument capabilities.Argument, fallback int) (int, error) {
+	raw, ok := input[argument.Name]
 	if !ok || string(raw) == "null" {
 		return fallback, nil
 	}
 	var value int
-	if err := json.Unmarshal(raw, &value); err != nil || value < minimum || value > maximum {
-		return 0, fmt.Errorf("%s must be between %d and %d", name, minimum, maximum)
+	if err := json.Unmarshal(raw, &value); err != nil ||
+		(argument.Minimum != nil && value < *argument.Minimum) ||
+		(argument.Maximum != nil && value > *argument.Maximum) {
+		return 0, fmt.Errorf("%s is outside its allowed range", argument.Name)
 	}
 	return value, nil
 }

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./roles": "./src/roles.ts"
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.52"
