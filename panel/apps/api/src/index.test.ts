@@ -576,6 +576,17 @@ describe("control-plane API", () => {
       }),
     );
     expect(forbidden.status).toBe(403);
+    const viewerRcon = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "rcon.command", payload: { command: "players", args: [] } }),
+      }),
+    );
+    expect(viewerRcon.status).toBe(403);
     const viewerUpdateCheck = await viewerApp.handle(
       new Request("http://localhost/api/servers/production/operations", {
         method: "POST",
@@ -632,6 +643,18 @@ describe("control-plane API", () => {
       },
     };
     const revealApp = createApp(undefined, undefined, adminAuth, agentService, audit);
+    const adminRcon = await revealApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "rcon.command", payload: { command: "players", args: [] } }),
+      }),
+    );
+    expect(adminRcon.status).toBe(202);
+    expect((await adminRcon.json()).kind).toBe("rcon.command");
     const revealed = await revealApp.handle(
       new Request("http://localhost/api/servers/production/settings/reveal", {
         headers: { cookie: "zomboid_session=session-token" },

@@ -428,6 +428,99 @@ import os
 print(json.dumps({"backupPath": os.environ["BACKUP_PATH"]}, separators=(",", ":")))
 PY
 }
+cli_world_save_json() {
+  if [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null || true)" != active ] || ! is_listening; then
+    printf '{"status":"failed","message":"The server is not running; the world was not saved."}\n'
+    return 0
+  fi
+  if ! rcon_ready; then
+    printf '{"status":"failed","message":"RCON is not configured; the world was not saved."}\n'
+    return 0
+  fi
+  if ! rcon_cmd save >/dev/null; then
+    printf '{"status":"failed","message":"RCON save failed; the world was not saved."}\n'
+    return 0
+  fi
+  printf '{"status":"succeeded","saved":true}\n'
+}
+
+cli_rcon_json() {
+  local payload request command wire output
+  payload="$(cat)"
+  request="$(RCON_PAYLOAD="$payload" python3 - <<'PY'
+import json
+import os
+
+try:
+    value = json.loads(os.environ["RCON_PAYLOAD"])
+    command = value["command"]
+    args = value["args"]
+    if not isinstance(command, str) or not isinstance(args, list):
+        raise ValueError
+    if any(not isinstance(item, str) or not item or "\r" in item or "\n" in item for item in args):
+        raise ValueError
+    required = {"help": 0, "players": 0, "servermsg": 1, "kickuser": 2, "save": 0}
+    if command not in required or len(args) != required[command]:
+        raise ValueError
+    if command == "servermsg" and len(args[0]) > 500:
+        raise ValueError
+    if command == "kickuser" and (len(args[0]) > 128 or len(args[1]) > 500):
+        raise ValueError
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(64)
+
+
+def quoted(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+if command in {"help", "players", "save"}:
+    wire = command
+elif command == "servermsg":
+    wire = f"servermsg {quoted(args[0])}"
+else:
+    wire = f"kickuser {quoted(args[0])} -r {quoted(args[1])}"
+
+print(json.dumps({"command": command, "wire": wire}, separators=(",", ":")))
+PY
+  )" || return 64
+  command="$(REQUEST="$request" python3 -c 'import json,os; print(json.loads(os.environ["REQUEST"])["command"])')"
+  wire="$(REQUEST="$request" python3 -c 'import json,os; print(json.loads(os.environ["REQUEST"])["wire"])')"
+  if output="$(rcon_cmd "$wire")"; then
+    RCON_COMMAND="$command" RCON_OUTPUT="$output" python3 - <<'PY'
+import json
+import os
+
+print(
+    json.dumps(
+        {
+            "status": "succeeded",
+            "command": os.environ["RCON_COMMAND"],
+            "output": os.environ["RCON_OUTPUT"],
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+  else
+    RCON_COMMAND="$command" python3 - <<'PY'
+import json
+import os
+
+print(
+    json.dumps(
+        {
+            "status": "failed",
+            "command": os.environ["RCON_COMMAND"],
+            "message": "RCON is unavailable or the command was rejected by the server.",
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+  fi
+}
+
 cli_build_update_json() {
   [ -x "$PZ_BUILDUPDATE" ] || {
     printf 'pzctl: build updater is not installed: %s\n' "$PZ_BUILDUPDATE" >&2
@@ -446,8 +539,9 @@ cli_logs_json() {
 
 cli_help() {
   cat <<'EOF'
-Usage: pzctl [status|start|stop|restart|build-update|backup|logs] [--json] [lines]
+Usage: pzctl [status|start|stop|restart|build-update|backup|world-save|logs] [--json] [lines]
        pzctl [mods-list|mods-add|mods-remove|mods-configure|mods-update-check|mods-update-apply|settings|settings-read|config-read|config-update|world-reset] --json [args]
+       pzctl rcon --json < request.json
        pzctl backup --json [keep]
        pzctl --version | --help
 
@@ -455,6 +549,7 @@ The no-argument form opens the interactive control panel. The listed commands ar
 non-interactive JSON operations used by pz-agent.
 EOF
 }
+
 
 if [ "$#" -gt 0 ]; then
   case "$1" in
@@ -472,6 +567,22 @@ if [ "$#" -gt 0 ]; then
         exit 64
       }
       "cli_${1}_json"
+      exit $?
+      ;;
+    world-save)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || {
+        printf 'pzctl: world-save requires --json\n' >&2
+        exit 64
+      }
+      cli_world_save_json
+      exit $?
+      ;;
+    rcon)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || {
+        printf 'pzctl: rcon requires --json and a JSON payload on stdin\n' >&2
+        exit 64
+      }
+      cli_rcon_json
       exit $?
       ;;
     build-update)
@@ -554,6 +665,14 @@ if [ "$#" -gt 0 ]; then
         start|stop|restart)
           [ "$#" -eq 2 ] || exit 64
           "cli_${2}_json"
+          ;;
+        world-save)
+          [ "$#" -eq 2 ] || exit 64
+          cli_world_save_json
+          ;;
+        rcon)
+          [ "$#" -eq 2 ] || exit 64
+          cli_rcon_json
           ;;
         build-update)
           [ "$#" -eq 2 ] || exit 64

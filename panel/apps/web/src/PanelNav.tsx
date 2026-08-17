@@ -1,13 +1,14 @@
 import type { AuthUser } from "@zomboid/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 
-export type PanelPage = "overview" | "settings" | "mods" | "logs" | "activity";
+export type PanelPage = "overview" | "settings" | "mods" | "logs" | "console" | "activity";
 
 const pages: Array<{ id: PanelPage; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "Server status and quick actions" },
   { id: "settings", label: "Settings", description: "Player and gameplay configuration" },
   { id: "mods", label: "Mods", description: "Workshop content and load order" },
   { id: "logs", label: "Logs", description: "Live server output" },
+  { id: "console", label: "Console", description: "Admin commands through local RCON" },
   { id: "activity", label: "Activity", description: "Operations and audit history" },
 ];
 

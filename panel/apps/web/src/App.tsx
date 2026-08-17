@@ -18,12 +18,13 @@ import { OverviewPage, type AccessUpdate } from "./OverviewPage";
 import { PageHeading, PanelHeader, usePanelPage } from "./PanelNav";
 import { ServerConfiguration } from "./ServerConfiguration";
 import { ServerConsole } from "./ServerConsole";
+import { RconConsole } from "./RconConsole";
 
 const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
 
 type LifecycleOperation = Extract<
   OperationCreateRequest["kind"],
-  "start" | "stop" | "restart" | "build.update" | "backup"
+  "start" | "stop" | "restart" | "build.update" | "backup" | "world.save"
 >;
 
 async function getHealth(): Promise<HealthResponse> {
@@ -330,6 +331,22 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
           description="Follow bounded server output when you need to troubleshoot a warning or verify a restart."
         />
         <ServerConsole serverId={SERVER_ID} enabled={Boolean(user)} />
+      </div>
+    );
+  } else if (page === "console") {
+    content = (
+      <div className="space-y-5">
+        <PageHeading
+          eyebrow="Administration"
+          title="RCON console"
+          description="Use the documented command catalog for player, announcement, and world actions without opening a host shell."
+        />
+        <RconConsole
+          busy={busy}
+          canAdmin={Boolean(canAdmin)}
+          onQueue={queueOperationRequest}
+          server={server.data}
+        />
       </div>
     );
   } else {

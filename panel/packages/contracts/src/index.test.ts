@@ -113,6 +113,45 @@ describe("agent operation contracts", () => {
     ).toBe(false);
   });
 
+  it("accepts only documented RCON commands and save operations", () => {
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "world.save",
+        payload: {},
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "rcon.command",
+        payload: { command: "players", args: [] },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "rcon.command",
+        payload: { command: "servermsg", args: ["Maintenance soon"] },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "rcon.command",
+        payload: { command: "shell", args: ["id"] },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "rcon.command",
+        payload: { command: "players", args: ["unexpected"] },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "rcon.command",
+        payload: { command: "servermsg", args: ["line one\nline two"] },
+      }),
+    ).toBe(false);
+  });
+
   it("accepts workshop update operations and bounded results", () => {
     expect(
       Value.Check(operationCreateRequestSchema, {
@@ -167,6 +206,8 @@ describe("agent operation contracts", () => {
       "stop",
       "restart",
       "backup",
+      "world.save",
+      "rcon.command",
       "mods.list",
       "mods.add",
       "mods.remove",

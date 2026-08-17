@@ -76,6 +76,8 @@ export const operationKinds = [
   "restart",
   "build.update",
   "backup",
+  "world.save",
+  "rcon.command",
   "mods.list",
   "mods.add",
   "mods.remove",
@@ -96,6 +98,8 @@ export const operationKindSchema = Type.Union([
   Type.Literal("restart"),
   Type.Literal("build.update"),
   Type.Literal("backup"),
+  Type.Literal("world.save"),
+  Type.Literal("rcon.command"),
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
@@ -106,6 +110,55 @@ export const operationKindSchema = Type.Union([
   Type.Literal("config.update"),
   Type.Literal("world.reset"),
 ]);
+
+export const rconCommands = ["help", "players", "servermsg", "kickuser", "save"] as const;
+
+export type RconCommand = (typeof rconCommands)[number];
+
+export const rconCommandSchema = Type.Union([
+  Type.Literal("help"),
+  Type.Literal("players"),
+  Type.Literal("servermsg"),
+  Type.Literal("kickuser"),
+  Type.Literal("save"),
+]);
+
+const rconTextArgumentSchema = Type.String({
+  minLength: 1,
+  maxLength: 500,
+  pattern: "^[^\\r\\n]*$",
+});
+
+export const rconCommandPayloadSchema = Type.Union([
+  Type.Object(
+    { command: Type.Literal("help"), args: Type.Array(rconTextArgumentSchema, { maxItems: 0 }) },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    { command: Type.Literal("players"), args: Type.Array(rconTextArgumentSchema, { maxItems: 0 }) },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      command: Type.Literal("servermsg"),
+      args: Type.Array(rconTextArgumentSchema, { minItems: 1, maxItems: 1 }),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      command: Type.Literal("kickuser"),
+      args: Type.Array(rconTextArgumentSchema, { minItems: 2, maxItems: 2 }),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    { command: Type.Literal("save"), args: Type.Array(rconTextArgumentSchema, { maxItems: 0 }) },
+    closedObjectOptions,
+  ),
+]);
+
+export type RconCommandPayload = Static<typeof rconCommandPayloadSchema>;
 
 export const agentRuntimeSchema = Type.Union([
   Type.Literal("fex"),
@@ -501,6 +554,23 @@ export const backupOperationRequestSchema = Type.Object(
   },
   closedObjectOptions,
 );
+export const worldSaveOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("world.save"),
+    payload: emptyPayloadSchema,
+  },
+  closedObjectOptions,
+);
+
+export const rconCommandOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("rcon.command"),
+    payload: rconCommandPayloadSchema,
+  },
+  closedObjectOptions,
+);
 
 export const modsListOperationRequestSchema = Type.Object(
   {
@@ -637,6 +707,8 @@ export const agentOperationRequestSchema = Type.Union([
   restartOperationRequestSchema,
   buildUpdateOperationRequestSchema,
   backupOperationRequestSchema,
+  worldSaveOperationRequestSchema,
+  rconCommandOperationRequestSchema,
   modsListOperationRequestSchema,
   modsAddOperationRequestSchema,
   modsRemoveOperationRequestSchema,
@@ -688,6 +760,8 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("restart"),
   Type.Literal("build.update"),
   Type.Literal("backup"),
+  Type.Literal("world.save"),
+  Type.Literal("rcon.command"),
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
@@ -752,6 +826,17 @@ export const operationCreateRequestSchema = Type.Union([
         { keep: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) },
         closedObjectOptions,
       ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    { kind: Type.Literal("world.save"), payload: emptyPayloadSchema },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("rcon.command"),
+      payload: rconCommandPayloadSchema,
     },
     closedObjectOptions,
   ),

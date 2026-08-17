@@ -53,26 +53,27 @@ function operationLabel(kind: OperationKind) {
     restart: "Restart server",
     "build.update": "Update game build",
     backup: "Create backup",
+    "world.save": "Save world",
+    "rcon.command": "RCON command",
   };
   return labels[kind] ?? kind;
 }
 
 function operationDetail(operation: OperationRecord) {
   if (operation.error) return operation.error;
-  if (
-    operation.kind !== "build.update" ||
-    !operation.result ||
-    typeof operation.result !== "object"
-  ) {
-    return undefined;
-  }
+  if (!operation.result || typeof operation.result !== "object") return undefined;
   const result = operation.result as {
     message?: unknown;
     previousVersion?: unknown;
     installedVersion?: unknown;
     backupCreated?: unknown;
+    saved?: unknown;
   };
   if (typeof result.message === "string") return result.message;
+  if (operation.kind === "world.save" && result.saved === true) {
+    return "World saved through the local RCON connection.";
+  }
+  if (operation.kind !== "build.update") return undefined;
   const previous = typeof result.previousVersion === "string" ? result.previousVersion : undefined;
   const installed =
     typeof result.installedVersion === "string" ? result.installedVersion : undefined;
@@ -282,7 +283,10 @@ export function OverviewPage({
   operationPending: boolean;
   onRefresh: () => void;
   onQueue: (
-    kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
+    kind: Extract<
+      OperationKind,
+      "start" | "stop" | "restart" | "build.update" | "backup" | "world.save"
+    >,
   ) => void;
   onRevealSettings: () => Promise<AgentSettingsReveal>;
   onUpdateSettings: (update: AccessUpdate) => Promise<void>;
@@ -296,7 +300,10 @@ export function OverviewPage({
     operations?.filter((operation) => operation.kind !== "status").slice(0, 3) ?? [];
 
   const queue = (
-    kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
+    kind: Extract<
+      OperationKind,
+      "start" | "stop" | "restart" | "build.update" | "backup" | "world.save"
+    >,
   ) => {
     if (
       (kind === "stop" || kind === "restart" || kind === "build.update") &&
@@ -410,6 +417,19 @@ export function OverviewPage({
               More actions
             </summary>
             <div className="absolute right-0 z-10 mt-2 w-48 rounded-xl border border-zinc-700 bg-zinc-900 p-1.5 shadow-2xl">
+              <button
+                className="block w-full rounded-lg px-3 py-2 text-left text-sm text-emerald-200 hover:bg-emerald-400/10 disabled:opacity-40"
+                disabled={!canOperate || busy || !running || server?.rconAvailable === false}
+                onClick={() => queue("world.save")}
+                title={
+                  server?.rconAvailable === false
+                    ? "RCON is not available; the world cannot be saved safely."
+                    : "Send the save command through the local RCON connection."
+                }
+                type="button"
+              >
+                Save world
+              </button>
               {running ? (
                 <button
                   className="block w-full rounded-lg px-3 py-2 text-left text-sm text-rose-300 hover:bg-rose-400/10 disabled:opacity-40"

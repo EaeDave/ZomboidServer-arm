@@ -73,6 +73,8 @@ const supportedOperationKinds: Record<string, true> = {
   restart: true,
   "build.update": true,
   backup: true,
+  "world.save": true,
+  "rcon.command": true,
   "mods.list": true,
   "mods.add": true,
   "mods.remove": true,
@@ -530,7 +532,7 @@ export function createApp(
         const requiredRole =
           body.kind === "status" || body.kind === "mods.list" || body.kind === "mods.update.check"
             ? "viewer"
-            : body.kind === "world.reset"
+            : body.kind === "world.reset" || body.kind === "rcon.command"
               ? "admin"
               : "operator";
         if (!roleAtLeast(user.role, requiredRole)) {

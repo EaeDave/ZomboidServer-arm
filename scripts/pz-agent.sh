@@ -1116,6 +1116,12 @@ PY
                 if result_status="$(sudo -n "$PZ_AGENT_PRIV" backup "$keep" 2>/dev/null)"; then :; else result_status=""; fi
               elif result_status="$(sudo -n "$PZ_AGENT_PRIV" backup 2>/dev/null)"; then :; else result_status=""; fi
               ;;
+            world.save)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" world-save 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            rcon.command)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" rcon 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
             mods.list)
               if result_status="$(sudo -n "$PZ_AGENT_PRIV" mods-list 2>/dev/null)"; then :; else result_status=""; fi
               ;;
@@ -1161,7 +1167,25 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
-            if [ "$job_kind" = "mods.update.apply" ] || [ "$job_kind" = "build.update" ]; then
+            if [ "$job_kind" = "world.save" ] || [ "$job_kind" = "rcon.command" ]; then
+              if completion="$(printf '%s' "$result_status" | python3 -c '
+import json
+import sys
+
+try:
+    result = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+if result.get("status") in {"blocked", "unavailable", "failed"}:
+    print(json.dumps({"status": "failed", "error": result.get("message") or "RCON operation failed"}, separators=(",", ":")))
+else:
+    print(json.dumps({"status": "succeeded", "result": result}, separators=(",", ":")))
+')"; then
+                :
+              else
+                completion='{"status":"failed","error":"agent returned invalid JSON result"}'
+              fi
+            elif [ "$job_kind" = "mods.update.apply" ] || [ "$job_kind" = "build.update" ]; then
               if completion="$(printf '%s' "$result_status" | python3 -c '
 import json
 import sys

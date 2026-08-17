@@ -7,7 +7,7 @@ set -uo pipefail
 PZCTL_BIN="/usr/local/bin/pzctl"
 
 usage() {
-  printf 'Usage: pz-agent-priv {status|start|stop|restart|build-update|backup|logs|mods-list|mods-add|mods-remove|mods-configure|mods-update-check|mods-update-apply|settings|settings-read|config-read|config-update|world-reset} [args]\n' >&2
+  printf 'Usage: pz-agent-priv {status|start|stop|restart|build-update|backup|world-save|rcon|logs|mods-list|mods-add|mods-remove|mods-configure|mods-update-check|mods-update-apply|settings|settings-read|config-read|config-update|world-reset} [args]\n' >&2
 }
 
 case "${1:-}" in
@@ -29,6 +29,14 @@ case "${1:-}" in
     case "${2:-}" in ''|*[!0-9]*) [ "$#" -eq 1 ] || { usage; exit 64; } ;; esac
     [ -z "${2:-}" ] || { [ "$2" -ge 1 ] && [ "$2" -le 100 ] || { usage; exit 64; }; }
     exec "$PZCTL_BIN" backup --json "${2:-}"
+    ;;
+  world-save)
+    [ "$#" -eq 1 ] || { usage; exit 64; }
+    exec "$PZCTL_BIN" world-save --json
+    ;;
+  rcon)
+    [ "$#" -eq 1 ] || { usage; exit 64; }
+    exec "$PZCTL_BIN" rcon --json
     ;;
   logs)
     lines="${2:-50}"

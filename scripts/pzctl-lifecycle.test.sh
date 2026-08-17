@@ -20,6 +20,8 @@ pz_load_env() {
 conf_get() { printf '0\n'; }
 graceful_stop_service() { printf 'graceful-stop:%s\n' "${1:-default}" >>"$TEST_EVENTS"; }
 status_json() { printf '%s\n' '{"state":"inactive","listening":false}'; }
+rcon_ready() { return 0; }
+rcon_cmd() { printf 'response:%s\n' "$1"; }
 COMMON
 cat >"$TMP_DIR/boot" <<'BOOT'
 printf 'boot\n' >>"$TEST_EVENTS"
@@ -44,5 +46,23 @@ assert open(sys.argv[1], encoding="utf-8").read().splitlines() == [
     "boot",
 ]
 PY
+rcon_output="$TMP_DIR/rcon.json"
+printf '%s' '{"command":"servermsg","args":["hello players"]}' |
+  PZCTL_ENV="$TMP_DIR/missing.env" bash "$ROOT_DIR/pzctl" rcon --json >"$rcon_output"
+python3 - "$rcon_output" <<'PY'
+import json
+import sys
+
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["status"] == "succeeded"
+assert result["command"] == "servermsg"
+assert result["output"] == 'response:servermsg "hello players"'
+PY
+
+if printf '%s' '{"command":"players","args":["unexpected"]}' |
+  PZCTL_ENV="$TMP_DIR/missing.env" bash "$ROOT_DIR/pzctl" rcon --json >/dev/null 2>&1; then
+  echo "pzctl accepted an invalid RCON argument list" >&2
+  exit 1
+fi
 
 echo "pzctl lifecycle safety test: ok"
