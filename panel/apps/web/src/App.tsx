@@ -563,8 +563,8 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                   <div>
                     <p className="mb-1 text-zinc-500">Collections</p>
                     <div className="flex flex-wrap gap-2">
-                      {server.data.mods.collections.length ? (
-                        server.data.mods.collections.map((collection) => (
+                      {(server.data.mods.collections ?? []).length ? (
+                        (server.data.mods.collections ?? []).map((collection) => (
                           <a
                             className="rounded-lg border border-zinc-700 px-2 py-1 text-emerald-300 hover:border-emerald-400"
                             href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${collection.id}`}
@@ -582,10 +582,10 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                   </div>
                   <details className="rounded-lg border border-zinc-800 p-3">
                     <summary className="cursor-pointer text-zinc-300">
-                      {server.data.mods.configuredItems.length} configured Workshop mods
+                      {(server.data.mods.configuredItems ?? []).length} configured Workshop mods
                     </summary>
                     <div className="mt-3 grid max-h-56 gap-2 overflow-auto sm:grid-cols-2">
-                      {server.data.mods.configuredItems.map((item) => (
+                      {(server.data.mods.configuredItems ?? []).map((item) => (
                         <a
                           className="rounded-md bg-zinc-950 px-2 py-1.5 text-zinc-300 hover:text-emerald-300"
                           href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${item.workshopId}`}

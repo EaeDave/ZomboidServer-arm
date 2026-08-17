@@ -180,7 +180,7 @@ try:
                 collections.append({"id": fields[0], "title": (fields[1].strip() if len(fields) > 1 else f"Collection {fields[0]}")[:256]})
 except OSError:
     pass
-print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
+print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "workshopIds": [item["workshopId"] for item in items[:500]], "activeModIds": list(active)[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
 PY
 }
 

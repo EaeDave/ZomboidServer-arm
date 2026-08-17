@@ -139,8 +139,15 @@ export const agentModItemSchema = Type.Object({
 });
 
 export const agentModsStatusSchema = Type.Object({
-  collections: Type.Array(agentModCollectionSchema, { maxItems: 50 }),
-  configuredItems: Type.Array(agentModItemSchema, { maxItems: 500 }),
+  collections: Type.Optional(Type.Array(agentModCollectionSchema, { maxItems: 50 })),
+  configuredItems: Type.Optional(Type.Array(agentModItemSchema, { maxItems: 500 })),
+  // Temporary compatibility with agents deployed before collection snapshots.
+  workshopIds: Type.Optional(
+    Type.Array(Type.String({ pattern: "^[0-9]{6,20}$" }), { maxItems: 500 }),
+  ),
+  activeModIds: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
+  ),
   inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
 });
 
