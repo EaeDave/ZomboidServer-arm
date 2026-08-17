@@ -133,8 +133,12 @@ status_json() {
   players_raw=""
   rcon_available=false
   if [ "${PZ_STATUS_RCON:-0}" = 1 ] && [ "$active" = active ] && [ "$listening" = true ] && rcon_ready; then
-    local players_cache players_meta cache_mtime now cached_active cached_ok players_lock_fd
-    players_cache="${PZ_STATUS_RCON_CACHE:-${PZ_CACHEDIR}/status-rcon-players.cache}"
+    local players_cache players_meta cache_mtime now cached_active cached_ok players_lock_fd safe_service
+    safe_service="${PZ_SERVICE//[^A-Za-z0-9_.-]/_}"
+    # The privileged probe must never create predictable files in a directory
+    # writable by the game account. /run is root-owned and cleared on boot.
+    install -d -o root -g root -m 0700 /run/zomboid-arm
+    players_cache="/run/zomboid-arm/status-rcon-${safe_service}.cache"
     players_meta="${players_cache}.meta"
     if mkdir -p "$(dirname "$players_cache")" 2>/dev/null; then
       exec {players_lock_fd}>"${players_cache}.lock"

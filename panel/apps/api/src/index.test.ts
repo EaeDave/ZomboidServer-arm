@@ -608,6 +608,24 @@ describe("control-plane API", () => {
       }),
     );
     expect(overlappingMods.status).toBe(400);
+
+    const tooManyMods = await revealApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "mods.configure",
+          payload: {
+            activeModIds: Array.from({ length: 501 }, (_, index) => `Active${index}`),
+            inactiveModIds: Array.from({ length: 500 }, (_, index) => `Inactive${index}`),
+          },
+        }),
+      }),
+    );
+    expect(tooManyMods.status).toBe(400);
   });
 
   it("protects sessions with an HttpOnly cookie", async () => {

@@ -513,13 +513,14 @@ export function createApp(
         }
         if (
           body.kind === "mods.configure" &&
-          body.payload.activeModIds.some((id) => body.payload.inactiveModIds.includes(id))
+          (body.payload.activeModIds.length + body.payload.inactiveModIds.length > 1_000 ||
+            body.payload.activeModIds.some((id) => body.payload.inactiveModIds.includes(id)))
         ) {
           set.status = 400;
           return {
             error: {
               code: "invalid_mod_configuration",
-              message: "Active and inactive mod IDs must be disjoint",
+              message: "Mod IDs must be disjoint and contain at most 1,000 entries in total",
             },
           };
         }

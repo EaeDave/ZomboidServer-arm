@@ -137,6 +137,8 @@ class ParsedField:
     options: list[dict[str, SCALAR]] | None = None
     indent: str = ""
     trailing_comma: bool = False
+    validation_minimum: float | None = None
+    validation_maximum: float | None = None
 
 
 def scalar_type(value: SCALAR) -> str:
@@ -219,11 +221,6 @@ def metadata_from_comments(comments: Iterable[str], value_type: str, current: SC
         minimum = float(min_match.group(1))
     if max_match:
         maximum = float(max_match.group(1))
-    if isinstance(current, (int, float)) and not isinstance(current, bool):
-        if minimum is not None and current < minimum:
-            minimum = None
-        if maximum is not None and current > maximum:
-            maximum = None
     if default_match:
         parsed = parse_scalar(default_match.group(1))
         if parsed is not None:
@@ -265,7 +262,26 @@ def parse_ini(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]
             continue
         value_type = scalar_type(value)
         description, minimum, maximum, default, options = metadata_from_comments(comments, value_type, value)
-        fields[key] = ParsedField(SOURCE_SERVER, key, value, value_type, index, description, minimum, maximum, default, options)
+        validation_minimum, validation_maximum = minimum, maximum
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if minimum is not None and value < minimum:
+                minimum = None
+            if maximum is not None and value > maximum:
+                maximum = None
+        fields[key] = ParsedField(
+            SOURCE_SERVER,
+            key,
+            value,
+            value_type,
+            index,
+            description,
+            minimum,
+            maximum,
+            default,
+            options,
+            validation_minimum=validation_minimum,
+            validation_maximum=validation_maximum,
+        )
         comments = []
     return lines, fields, warnings
 
@@ -338,7 +354,28 @@ def parse_lua(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]
         field_path = ".".join([*prefix, key])
         value_type = scalar_type(value)
         description, minimum, maximum, default, options = metadata_from_comments(comments, value_type, value)
-        fields[field_path] = ParsedField(SOURCE_SANDBOX, field_path, value, value_type, index, description, minimum, maximum, default, options, indent, bool(comma))
+        validation_minimum, validation_maximum = minimum, maximum
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if minimum is not None and value < minimum:
+                minimum = None
+            if maximum is not None and value > maximum:
+                maximum = None
+        fields[field_path] = ParsedField(
+            SOURCE_SANDBOX,
+            field_path,
+            value,
+            value_type,
+            index,
+            description,
+            minimum,
+            maximum,
+            default,
+            options,
+            indent,
+            bool(comma),
+            validation_minimum,
+            validation_maximum,
+        )
         comments = []
     return lines, fields, warnings
 
@@ -422,13 +459,19 @@ def validate_value(field: ParsedField, value: Any) -> SCALAR:
     elif field.value_type == "string":
         if not isinstance(value, str) or len(value) > 4096 or "\x00" in value or "\r" in value or "\n" in value:
             raise ConfigError(f"{field.path} must be a single-line string up to 4096 characters")
+        if field.source == SOURCE_SERVER and parse_scalar(value) != value:
+            raise ConfigError(
+                f"{field.path} cannot use edge whitespace or a value that looks boolean, numeric or quoted"
+            )
     else:
         raise ConfigError(f"unsupported type for {field.path}")
     numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
-    if numeric and field.minimum is not None and value < field.minimum:
-        raise ConfigError(f"{field.path} must be at least {field.minimum:g}")
-    if numeric and field.maximum is not None and value > field.maximum:
-        raise ConfigError(f"{field.path} must be at most {field.maximum:g}")
+    minimum = field.validation_minimum if field.validation_minimum is not None else field.minimum
+    maximum = field.validation_maximum if field.validation_maximum is not None else field.maximum
+    if numeric and minimum is not None and value < minimum:
+        raise ConfigError(f"{field.path} must be at least {minimum:g}")
+    if numeric and maximum is not None and value > maximum:
+        raise ConfigError(f"{field.path} must be at most {maximum:g}")
     # Enumerations extracted from comments are UI hints; mod and game comments
     # are not guaranteed to list every accepted value.
     return value
@@ -643,6 +686,8 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
             candidate = verified.get((field.source, field.path))
             if field.value != intended and (candidate is None or candidate.value != intended):
                 raise ConfigError(f"could not verify updated value for {field.path}")
+        if revision_for(ini, sandbox) != current["revision"]:
+            raise StaleRevisionError("configuration changed while the update was being prepared")
         commit_transaction(ini, sandbox, ini_temp, sandbox_temp)
     finally:
         ini_temp.unlink(missing_ok=True)

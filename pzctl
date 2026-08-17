@@ -183,7 +183,7 @@ PY
     case "$installed" in *";$id;"*) : ;; *) missing+="${id}"$'\n' ;; esac
   done < <(printf '%s\n%s\n' "$(printf '%s' "$active" | tr ';' '\n')" "$disabled")
   [ -z "$missing" ] || return 64
-  mods_set "$active"
+  mods_set "$active" || return 1
   printf '%s\n' "$disabled" | awk 'NF && !seen[$0]++' > "$PZ_DISABLED.pztmp"
   mv "$PZ_DISABLED.pztmp" "$PZ_DISABLED"
   maps_rebuild >/dev/null

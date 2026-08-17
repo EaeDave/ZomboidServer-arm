@@ -89,11 +89,9 @@ function FieldControl({
         onChange={(event) => {
           if (field.type === "string") onChange(event.target.value);
           else if (event.target.value !== "") {
-            const parsed =
-              field.type === "integer"
-                ? Number.parseInt(event.target.value, 10)
-                : Number(event.target.value);
-            if (Number.isFinite(parsed)) onChange(parsed);
+            const parsed = Number(event.target.value);
+            if (Number.isFinite(parsed) && (field.type !== "integer" || Number.isInteger(parsed)))
+              onChange(parsed);
           }
         }}
       />

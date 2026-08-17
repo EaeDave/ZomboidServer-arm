@@ -144,6 +144,33 @@ class ConfigTest(unittest.TestCase):
                 },
             )
 
+    def test_legacy_out_of_range_value_hides_hint_but_retains_validation(self):
+        self.ini.write_text(INI.replace("MaxPlayers=4", "MaxPlayers=101"), encoding="utf-8")
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        field = next(item for item in before["fields"] if item["path"] == "MaxPlayers")
+        self.assertNotIn("maximum", field)
+        with self.assertRaisesRegex(pz_config.ConfigError, "at most 100"):
+            pz_config.apply_update(
+                self.ini,
+                self.sandbox,
+                {
+                    "expectedRevision": before["revision"],
+                    "changes": [{"source": "server", "path": "MaxPlayers", "value": 102}],
+                },
+            )
+
+    def test_rejects_ambiguous_server_string_values(self):
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        for value in ("123", " true ", '"quoted"', "trailing,"):
+            with self.subTest(value=value), self.assertRaisesRegex(pz_config.ConfigError, "cannot use"):
+                pz_config.apply_update(
+                    self.ini,
+                    self.sandbox,
+                    {
+                        "expectedRevision": before["revision"],
+                        "changes": [{"source": "server", "path": "PublicName", "value": value}],
+                    },
+                )
     def test_noop_does_not_create_backups(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
         result = pz_config.apply_update(
@@ -221,6 +248,38 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.ini.read_bytes(), original_ini)
         self.assertEqual(self.sandbox.read_bytes(), original_sandbox)
         self.assertFalse((self.ini.parent / ".pz-config-transaction.json").exists())
+
+    def test_rejects_a_concurrent_change_before_commit(self):
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        original_write_temp = pz_config.write_temp
+        calls = 0
+
+        def write_temp_with_concurrent_change(path, lines):
+            nonlocal calls
+            result = original_write_temp(path, lines)
+            calls += 1
+            if calls == 2:
+                self.ini.write_text(
+                    self.ini.read_text(encoding="utf-8") + "Public=true\n", encoding="utf-8"
+                )
+            return result
+
+        pz_config.write_temp = write_temp_with_concurrent_change
+        try:
+            with self.assertRaisesRegex(pz_config.StaleRevisionError, "while the update"):
+                pz_config.apply_update(
+                    self.ini,
+                    self.sandbox,
+                    {
+                        "expectedRevision": before["revision"],
+                        "changes": [{"source": "server", "path": "SleepAllowed", "value": True}],
+                    },
+                )
+        finally:
+            pz_config.write_temp = original_write_temp
+        current = self.ini.read_text(encoding="utf-8")
+        self.assertIn("SleepAllowed=false", current)
+        self.assertIn("Public=true", current)
 
     def test_rejects_invalid_utf8_without_rewriting_it(self):
         invalid = INI.encode("utf-8") + b"Bad=\xff\n"

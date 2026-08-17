@@ -63,13 +63,22 @@ export function ModManager({
     setInactive(mods.inactiveModIds);
   }, [dirty, mods, pending]);
   useEffect(() => {
+    if (pending && pendingOperation.isError) {
+      setError(
+        pendingOperation.error instanceof Error
+          ? pendingOperation.error.message
+          : "Could not track the mod update",
+      );
+      setPending(undefined);
+      return;
+    }
     const operation = pendingOperation.data;
     if (!pending || !operation) return;
     if (operation.status === "failed" || operation.status === "cancelled") {
       setError(operation.error ?? "The mod update did not complete");
       setPending(undefined);
     }
-  }, [pending, pendingOperation.data]);
+  }, [pending, pendingOperation.data, pendingOperation.error, pendingOperation.isError]);
   if (!mods) return <p className="text-xs text-zinc-600">Waiting for the agent inventory…</p>;
   if (mods.activeModIds === undefined) {
     return (

@@ -73,8 +73,8 @@ Artifacts were saved locally during validation and are not committed.
 Before production rollout:
 
 1. ✅ GitHub Actions completed successfully (push run `31988786392` and the PR `panel` check);
-2. deploy the branch control-plane and host-agent scripts to the staging instance;
-3. exercise browser → API → PostgreSQL → agent → host end-to-end using an authenticated staging account;
-4. apply and revert one staging setting from the browser;
-5. verify audit rows, operation progress, backup files and restart-required messaging;
+2. ✅ Deployed the branch control-plane and host-agent scripts to the staging instance;
+3. ✅ Exercised browser/HTTP → API → PostgreSQL → agent → host end-to-end with a temporary authenticated staging administrator;
+4. ✅ Applied and reverted `SleepAllowed` through the staging API operation flow; 414 fields were returned and both files matched their original bytes afterward;
+5. ✅ Verified the read audit event, operation completion, mandatory backup results, restart-required result and deployed login UI;
 6. only then merge and schedule production deployment.

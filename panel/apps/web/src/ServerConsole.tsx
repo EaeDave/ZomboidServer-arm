@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ConsoleLogEntry } from "@zomboid/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { throwApiError } from "./api-error";
 
 interface ConsoleHistory {
   logs: ConsoleLogEntry[];
@@ -9,11 +10,6 @@ interface ConsoleHistory {
 
 type StreamState = "connecting" | "live" | "reconnecting" | "degraded";
 type LogLevel = "all" | "warn" | "error";
-
-function throwApiError(response: Response, message: string): never {
-  if (response.status === 401) window.dispatchEvent(new Event("zomboid-auth-expired"));
-  throw new Error(message);
-}
 
 async function getConsole(serverId: string): Promise<ConsoleHistory> {
   const response = await fetch(`/api/servers/${serverId}/console?after=0`, {
