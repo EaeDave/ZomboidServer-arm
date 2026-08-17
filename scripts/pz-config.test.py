@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,8 @@ SleepAllowed=false
 
 # Players get tired and need to sleep
 SleepNeeded=false
+
+PublicName=My Server
 
 # Maximum players Min: 1 Max: 100 Default: 32
 MaxPlayers=4
@@ -57,8 +60,8 @@ class ConfigTest(unittest.TestCase):
         root = Path(self.temp.name)
         self.ini = root / "servertest.ini"
         self.sandbox = root / "servertest_SandboxVars.lua"
-        self.ini.write_text(INI)
-        self.sandbox.write_text(SANDBOX)
+        self.ini.write_text(INI, encoding="utf-8")
+        self.sandbox.write_text(SANDBOX, encoding="utf-8")
 
     def tearDown(self):
         self.temp.cleanup()
@@ -85,6 +88,7 @@ class ConfigTest(unittest.TestCase):
                 "createBackup": True,
                 "changes": [
                     {"source": "server", "path": "SleepAllowed", "value": True},
+                    {"source": "server", "path": "PublicName", "value": "Safe Server"},
                     {"source": "sandbox", "path": "ZombieConfig.PopulationMultiplier", "value": 2.5},
                     {"source": "sandbox", "path": "ExampleMod.Name", "value": "Safe House"},
                 ],
@@ -93,8 +97,10 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(result["requiresRestart"])
         self.assertNotEqual(result["revision"], before["revision"])
         self.assertEqual(len(result["backupPaths"]), 2)
-        self.assertIn("SleepAllowed=true", self.ini.read_text())
-        sandbox = self.sandbox.read_text()
+        self.assertIn("SleepAllowed=true", self.ini.read_text(encoding="utf-8"))
+        self.assertIn("PublicName=Safe Server", self.ini.read_text(encoding="utf-8"))
+        self.assertNotIn('PublicName="Safe Server"', self.ini.read_text(encoding="utf-8"))
+        sandbox = self.sandbox.read_text(encoding="utf-8")
         self.assertIn("PopulationMultiplier = 2.5,", sandbox)
         self.assertIn('Name = "Safe House",', sandbox)
         for backup in result["backupPaths"]:
@@ -102,7 +108,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_rejects_stale_revision(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
-        self.ini.write_text(self.ini.read_text() + "Public=true\n")
+        self.ini.write_text(self.ini.read_text(encoding="utf-8") + "Public=true\n", encoding="utf-8")
         with self.assertRaises(pz_config.StaleRevisionError):
             pz_config.apply_update(
                 self.ini,
@@ -147,6 +153,54 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(result["changed"], [])
         self.assertEqual(result["backupPaths"], [])
         self.assertFalse(result["requiresRestart"])
+
+    def test_whole_number_update_remains_a_number(self):
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        pz_config.apply_update(
+            self.ini,
+            self.sandbox,
+            {
+                "expectedRevision": before["revision"],
+                "changes": [
+                    {"source": "sandbox", "path": "ZombieConfig.PopulationMultiplier", "value": 2}
+                ],
+            },
+        )
+        after, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        field = next(item for item in after["fields"] if item["path"] == "ZombieConfig.PopulationMultiplier")
+        self.assertEqual(field["type"], "number")
+        self.assertIn("PopulationMultiplier = 2.0,", self.sandbox.read_text(encoding="utf-8"))
+
+    def test_cross_file_failure_restores_both_files(self):
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        original_ini = self.ini.read_bytes()
+        original_sandbox = self.sandbox.read_bytes()
+        os.environ["PZ_CONFIG_FAIL_AFTER_INI_REPLACE"] = "1"
+        try:
+            with self.assertRaises(OSError):
+                pz_config.apply_update(
+                    self.ini,
+                    self.sandbox,
+                    {
+                        "expectedRevision": before["revision"],
+                        "changes": [
+                            {"source": "server", "path": "SleepAllowed", "value": True},
+                            {"source": "sandbox", "path": "ExampleMod.Enabled", "value": False},
+                        ],
+                    },
+                )
+        finally:
+            os.environ.pop("PZ_CONFIG_FAIL_AFTER_INI_REPLACE", None)
+        self.assertEqual(self.ini.read_bytes(), original_ini)
+        self.assertEqual(self.sandbox.read_bytes(), original_sandbox)
+        self.assertFalse((self.ini.parent / ".pz-config-transaction.json").exists())
+
+    def test_rejects_invalid_utf8_without_rewriting_it(self):
+        invalid = INI.encode("utf-8") + b"Bad=\xff\n"
+        self.ini.write_bytes(invalid)
+        with self.assertRaisesRegex(pz_config.ConfigError, "valid UTF-8"):
+            pz_config.snapshot(self.ini, self.sandbox)
+        self.assertEqual(self.ini.read_bytes(), invalid)
 
 
 if __name__ == "__main__":

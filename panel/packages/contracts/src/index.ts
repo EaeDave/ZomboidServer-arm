@@ -205,40 +205,49 @@ export const configScalarSchema = Type.Union([
   Type.String({ maxLength: 4096 }),
 ]);
 
-export const configFieldSchema = Type.Object({
-  source: Type.Union([Type.Literal("server"), Type.Literal("sandbox")]),
-  path: Type.String({ minLength: 1, maxLength: 256, pattern: "^[A-Za-z_][A-Za-z0-9_.]*$" }),
-  label: Type.String({ minLength: 1, maxLength: 256 }),
-  category: Type.String({ minLength: 1, maxLength: 64 }),
-  categoryLabel: Type.String({ minLength: 1, maxLength: 128 }),
-  type: Type.Union([
-    Type.Literal("boolean"),
-    Type.Literal("integer"),
-    Type.Literal("number"),
-    Type.Literal("string"),
-  ]),
-  value: Type.Union([configScalarSchema, Type.Null()]),
-  configured: Type.Boolean(),
-  description: Type.String({ maxLength: 2000 }),
-  editable: Type.Boolean(),
-  sensitive: Type.Boolean(),
-  requiresRestart: Type.Boolean(),
-  minimum: Type.Optional(Type.Number()),
-  maximum: Type.Optional(Type.Number()),
-  defaultValue: Type.Optional(configScalarSchema),
-  options: Type.Optional(
-    Type.Array(Type.Object({ value: configScalarSchema, label: Type.String({ maxLength: 256 }) }), {
-      maxItems: 100,
-    }),
-  ),
-});
+export const configFieldSchema = Type.Object(
+  {
+    source: Type.Union([Type.Literal("server"), Type.Literal("sandbox")]),
+    path: Type.String({ minLength: 1, maxLength: 256, pattern: "^[A-Za-z_][A-Za-z0-9_.]*$" }),
+    label: Type.String({ minLength: 1, maxLength: 256 }),
+    category: Type.String({ minLength: 1, maxLength: 64 }),
+    categoryLabel: Type.String({ minLength: 1, maxLength: 128 }),
+    type: Type.Union([
+      Type.Literal("boolean"),
+      Type.Literal("integer"),
+      Type.Literal("number"),
+      Type.Literal("string"),
+    ]),
+    value: Type.Union([configScalarSchema, Type.Null()]),
+    configured: Type.Boolean(),
+    description: Type.String({ maxLength: 2000 }),
+    editable: Type.Boolean(),
+    sensitive: Type.Boolean(),
+    requiresRestart: Type.Boolean(),
+    minimum: Type.Optional(Type.Number()),
+    maximum: Type.Optional(Type.Number()),
+    defaultValue: Type.Optional(configScalarSchema),
+    options: Type.Optional(
+      Type.Array(
+        Type.Object({ value: configScalarSchema, label: Type.String({ maxLength: 256 }) }),
+        {
+          maxItems: 100,
+        },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-export const configSnapshotSchema = Type.Object({
-  revision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" }),
-  generatedAt: Type.String({ minLength: 1 }),
-  fields: Type.Array(configFieldSchema, { maxItems: 2_000 }),
-  warnings: Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 100 }),
-});
+export const configSnapshotSchema = Type.Object(
+  {
+    revision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" }),
+    generatedAt: Type.String({ minLength: 1 }),
+    fields: Type.Array(configFieldSchema, { maxItems: 2_000 }),
+    warnings: Type.Array(Type.String({ maxLength: 1000 }), { maxItems: 100 }),
+  },
+  { additionalProperties: false },
+);
 
 export type ConfigField = Static<typeof configFieldSchema>;
 export type ConfigSnapshot = Static<typeof configSnapshotSchema>;

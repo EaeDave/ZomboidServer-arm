@@ -535,6 +535,12 @@ describe("control-plane API", () => {
       }),
     );
     expect(forbidden.status).toBe(403);
+    const forbiddenConfig = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/config", {
+        headers: { cookie: "zomboid_session=session-token" },
+      }),
+    );
+    expect(forbiddenConfig.status).toBe(403);
 
     const adminAuth: AuthService = {
       async login() {
@@ -587,6 +593,21 @@ describe("control-plane API", () => {
       }),
     );
     expect(sensitiveUpdate.status).toBe(400);
+
+    const overlappingMods = await revealApp.handle(
+      new Request("http://localhost/api/servers/production/operations", {
+        method: "POST",
+        headers: {
+          cookie: "zomboid_session=session-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "mods.configure",
+          payload: { activeModIds: ["Alpha"], inactiveModIds: ["Alpha"] },
+        }),
+      }),
+    );
+    expect(overlappingMods.status).toBe(400);
   });
 
   it("protects sessions with an HttpOnly cookie", async () => {

@@ -509,6 +509,18 @@ export function createApp(
             },
           };
         }
+        if (
+          body.kind === "mods.configure" &&
+          body.payload.activeModIds.some((id) => body.payload.inactiveModIds.includes(id))
+        ) {
+          set.status = 400;
+          return {
+            error: {
+              code: "invalid_mod_configuration",
+              message: "Active and inactive mod IDs must be disjoint",
+            },
+          };
+        }
         const requiredRole =
           body.kind === "status" || body.kind === "mods.list"
             ? "viewer"
@@ -1094,6 +1106,10 @@ export function createApp(
           set.status = 401;
           return { error: { code: "unauthenticated", message: "Login required" } };
         }
+        if (!roleAtLeast(user.role, "operator")) {
+          set.status = 403;
+          return { error: { code: "forbidden", message: "Insufficient role for this operation" } };
+        }
         if (!agentService.readConfig) {
           set.status = 503;
           return { error: { code: "agent_unavailable", message: "Configuration is unavailable" } };
@@ -1124,6 +1140,7 @@ export function createApp(
         response: {
           200: configSnapshotSchema,
           401: agentOperationErrorResponseSchema,
+          403: agentOperationErrorResponseSchema,
           404: agentOperationErrorResponseSchema,
           409: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,

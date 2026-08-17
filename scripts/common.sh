@@ -170,9 +170,10 @@ def online_players():
         return []
     names = []
     for line in raw.splitlines():
-        candidate = re.sub(r"^\s*[-*]\s*", "", line).strip()
-        if not candidate or candidate.startswith("Players connected"):
+        match = re.match(r"^\s*[-*]\s*(\S.*)$", line)
+        if not match:
             continue
+        candidate = match.group(1).strip()
         # PZ commonly emits '-username'; keep only bounded display text.
         candidate = candidate[:128]
         if candidate not in names:

@@ -1,7 +1,19 @@
+import { useQuery } from "@tanstack/react-query";
 import type { AgentStatus, OperationCreateRequest, OperationRecord } from "@zomboid/contracts";
 import { useEffect, useState } from "react";
+import { throwApiError } from "./api-error";
 
 type Mods = NonNullable<AgentStatus["mods"]>;
+
+async function readOperation(operationId: string): Promise<OperationRecord> {
+  const response = await fetch(`/api/operations/${operationId}`, { credentials: "same-origin" });
+  if (!response.ok) throwApiError(response, "Could not track the mod update");
+  return response.json() as Promise<OperationRecord>;
+}
+
+function sameIds(left: string[], right: string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
 
 export function ModManager({
   mods,
@@ -18,12 +30,48 @@ export function ModManager({
   const [inactive, setInactive] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string>();
+  const [pending, setPending] = useState<{
+    operationId: string;
+    activeModIds: string[];
+    inactiveModIds: string[];
+  }>();
+  const pendingOperation = useQuery({
+    queryKey: ["mods-operation", pending?.operationId],
+    queryFn: () => readOperation(pending!.operationId),
+    enabled: Boolean(pending),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "succeeded" || status === "failed" || status === "cancelled"
+        ? false
+        : 1_500;
+    },
+  });
   useEffect(() => {
-    if (!mods || dirty) return;
+    if (!mods) return;
+    if (pending) {
+      if (
+        sameIds(mods.activeModIds ?? [], pending.activeModIds) &&
+        sameIds(mods.inactiveModIds, pending.inactiveModIds)
+      ) {
+        setPending(undefined);
+        setDirty(false);
+      }
+      return;
+    }
+    if (dirty) return;
     setActive(mods.activeModIds ?? []);
     setInactive(mods.inactiveModIds);
-  }, [dirty, mods]);
-  if (!mods) return <p className="text-xs text-zinc-600">Aguardando inventário do agente…</p>;
+  }, [dirty, mods, pending]);
+  useEffect(() => {
+    const operation = pendingOperation.data;
+    if (!pending || !operation) return;
+    if (operation.status === "failed" || operation.status === "cancelled") {
+      setError(operation.error ?? "The mod update did not complete");
+      setPending(undefined);
+    }
+  }, [pending, pendingOperation.data]);
+  if (!mods) return <p className="text-xs text-zinc-600">Waiting for the agent inventory…</p>;
+  const locked = busy || Boolean(pending);
 
   const move = (index: number, offset: number) => {
     const target = index + offset;
@@ -48,14 +96,12 @@ export function ModManager({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-medium">Ordem de carregamento</p>
-          <p className="text-xs text-zinc-500">
-            Mods posteriores podem sobrescrever os anteriores.
-          </p>
+          <p className="text-sm font-medium">Load order</p>
+          <p className="text-xs text-zinc-500">Later mods can override earlier ones.</p>
         </div>
         {dirty ? (
           <span className="rounded-full bg-amber-400/10 px-2 py-1 text-xs text-amber-200">
-            não salvo
+            unsaved
           </span>
         ) : null}
       </div>
@@ -70,18 +116,18 @@ export function ModManager({
               {id}
             </span>
             <button
-              aria-label={`Subir ${id}`}
+              aria-label={`Move ${id} up`}
               className="px-2 py-1 text-zinc-400 hover:text-white disabled:opacity-20"
-              disabled={index === 0 || busy}
+              disabled={index === 0 || locked}
               onClick={() => move(index, -1)}
               type="button"
             >
               ↑
             </button>
             <button
-              aria-label={`Descer ${id}`}
+              aria-label={`Move ${id} down`}
               className="px-2 py-1 text-zinc-400 hover:text-white disabled:opacity-20"
-              disabled={index === active.length - 1 || busy}
+              disabled={index === active.length - 1 || locked}
               onClick={() => move(index, 1)}
               type="button"
             >
@@ -89,11 +135,11 @@ export function ModManager({
             </button>
             <button
               className="rounded border border-zinc-700 px-2 py-1 text-amber-200"
-              disabled={busy}
+              disabled={locked}
               onClick={() => disable(id)}
               type="button"
             >
-              Desativar
+              Disable
             </button>
           </li>
         ))}
@@ -101,18 +147,18 @@ export function ModManager({
       {inactive.length ? (
         <details className="rounded-lg border border-zinc-800 p-3">
           <summary className="cursor-pointer text-xs text-zinc-400">
-            {inactive.length} desativado(s)
+            {inactive.length} disabled
           </summary>
           <div className="mt-3 flex flex-wrap gap-2">
             {inactive.map((id) => (
               <button
                 className="rounded-lg border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-emerald-400"
-                disabled={busy}
+                disabled={locked}
                 key={id}
                 onClick={() => enable(id)}
                 type="button"
               >
-                Ativar {id}
+                Enable {id}
               </button>
             ))}
           </div>
@@ -122,7 +168,7 @@ export function ModManager({
         <div className="flex flex-wrap gap-2">
           <button
             className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"
-            disabled={busy}
+            disabled={locked}
             onClick={() => {
               setActive(mods.activeModIds ?? []);
               setInactive(mods.inactiveModIds);
@@ -130,32 +176,36 @@ export function ModManager({
             }}
             type="button"
           >
-            Descartar
+            Discard
           </button>
           <button
             className="rounded-lg bg-emerald-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
-            disabled={!canOperate || busy}
+            disabled={!canOperate || locked}
             onClick={async () => {
               if (
                 !window.confirm(
-                  "Salvar a nova ordem/ativação de mods? Um reinício será necessário.",
+                  "Save the new mod order and activation state? A restart will be required.",
                 )
               )
                 return;
               setError(undefined);
               try {
-                await onQueue({
+                const queued = await onQueue({
                   kind: "mods.configure",
                   payload: { activeModIds: active, inactiveModIds: inactive },
                 });
-                setDirty(false);
+                setPending({
+                  operationId: queued.operationId,
+                  activeModIds: [...active],
+                  inactiveModIds: [...inactive],
+                });
               } catch (cause) {
-                setError(cause instanceof Error ? cause.message : "Não foi possível salvar mods");
+                setError(cause instanceof Error ? cause.message : "Could not save mods");
               }
             }}
             type="button"
           >
-            Salvar configuração de mods
+            Save mod configuration
           </button>
         </div>
       ) : null}

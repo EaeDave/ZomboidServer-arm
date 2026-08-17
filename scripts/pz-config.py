@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import re
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,45 +47,45 @@ SENSITIVE_SERVER_KEYS = {
 PROTECTED_SANDBOX_PATHS = {"VERSION"}
 
 CATEGORY_LABELS = {
-    "general": "Geral",
-    "access": "Acesso e identidade",
-    "players": "Jogadores",
-    "pvp": "PVP e segurança",
-    "safehouse": "Safehouses e facções",
-    "sleep": "Sono e passagem do tempo",
-    "communication": "Chat, voz e integrações",
-    "network": "Rede e Steam",
-    "security": "Anti-cheat e proteção",
-    "zombies": "Zumbis",
-    "loot": "Loot e itens",
-    "world": "Mundo, clima e eventos",
-    "survival": "Sobrevivência",
-    "vehicles": "Veículos",
-    "animals": "Animais",
-    "farming": "Agricultura e natureza",
-    "mods": "Opções de mods",
-    "advanced": "Avançado",
+    "general": "General",
+    "access": "Access and identity",
+    "players": "Players",
+    "pvp": "PVP and safety",
+    "safehouse": "Safehouses and factions",
+    "sleep": "Sleep and time passage",
+    "communication": "Chat, voice and integrations",
+    "network": "Network and Steam",
+    "security": "Anti-cheat and protection",
+    "zombies": "Zombies",
+    "loot": "Loot and items",
+    "world": "World, weather and events",
+    "survival": "Survival",
+    "vehicles": "Vehicles",
+    "animals": "Animals",
+    "farming": "Farming and nature",
+    "mods": "Mod options",
+    "advanced": "Advanced",
 }
 
 FRIENDLY_LABELS = {
-    "SleepAllowed": "Permitir dormir",
-    "SleepNeeded": "Exigir sono",
-    "FastForwardMultiplier": "Velocidade durante o sono",
-    "PauseEmpty": "Pausar quando vazio",
-    "Public": "Servidor público",
-    "PublicName": "Nome público",
-    "PublicDescription": "Descrição pública",
-    "MaxPlayers": "Máximo de jogadores",
-    "PVP": "Permitir PVP",
-    "SafetySystem": "Sistema de segurança PVP",
-    "PlayerSafehouse": "Jogadores podem criar safehouses",
-    "Faction": "Permitir facções",
-    "DayLength": "Duração do dia",
-    "StartTime": "Horário inicial",
-    "WaterShut": "Desligamento da água",
-    "ElecShut": "Desligamento da energia",
-    "HoursForLootRespawn": "Horas para respawn de loot",
-    "ZombieConfig.PopulationMultiplier": "Multiplicador da população",
+    "SleepAllowed": "Allow sleeping",
+    "SleepNeeded": "Require sleep",
+    "FastForwardMultiplier": "Sleep fast-forward speed",
+    "PauseEmpty": "Pause when empty",
+    "Public": "Public server",
+    "PublicName": "Public name",
+    "PublicDescription": "Public description",
+    "MaxPlayers": "Maximum players",
+    "PVP": "Allow PVP",
+    "SafetySystem": "PVP safety system",
+    "PlayerSafehouse": "Players can create safehouses",
+    "Faction": "Allow factions",
+    "DayLength": "Day length",
+    "StartTime": "Start time",
+    "WaterShut": "Water shutoff",
+    "ElecShut": "Electricity shutoff",
+    "HoursForLootRespawn": "Hours until loot respawn",
+    "ZombieConfig.PopulationMultiplier": "Population multiplier",
 }
 
 SERVER_CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
@@ -163,13 +165,20 @@ def parse_scalar(raw: str) -> SCALAR | None:
     return value
 
 
-def format_scalar(value: SCALAR, value_type: str) -> str:
+def format_scalar(value: SCALAR, value_type: str, source: str) -> str:
     if value_type == "boolean":
         return "true" if value is True else "false"
     if value_type == "integer":
         return str(value)
     if value_type == "number":
-        return format(float(value), ".15g")
+        formatted = format(float(value), ".15g")
+        exponent = re.search(r"[eE]", formatted)
+        if exponent:
+            index = exponent.start()
+            return formatted if "." in formatted[:index] else f"{formatted[:index]}.0{formatted[index:]}"
+        return formatted if "." in formatted else f"{formatted}.0"
+    if source == SOURCE_SERVER:
+        return str(value)
     return json.dumps(str(value), ensure_ascii=False)
 
 
@@ -192,7 +201,7 @@ def category_for(source: str, path: str) -> str:
     return "general" if source == SOURCE_SERVER else "advanced"
 
 
-def metadata_from_comments(comments: Iterable[str], value_type: str) -> tuple[str, float | None, float | None, SCALAR | None, list[dict[str, SCALAR]] | None]:
+def metadata_from_comments(comments: Iterable[str], value_type: str, current: SCALAR) -> tuple[str, float | None, float | None, SCALAR | None, list[dict[str, SCALAR]] | None]:
     cleaned = [re.sub(r"^\s*(?:#|--)\s?", "", line).strip() for line in comments]
     description = " ".join(line for line in cleaned if line and not re.match(r"^[-+]?\d+(?:\.\d+)?\s*=", line))
     joined = " ".join(cleaned)
@@ -205,6 +214,11 @@ def metadata_from_comments(comments: Iterable[str], value_type: str) -> tuple[st
         minimum = float(min_match.group(1))
     if max_match:
         maximum = float(max_match.group(1))
+    if isinstance(current, (int, float)) and not isinstance(current, bool):
+        if minimum is not None and current < minimum:
+            minimum = None
+        if maximum is not None and current > maximum:
+            maximum = None
     if default_match:
         parsed = parse_scalar(default_match.group(1))
         if parsed is not None:
@@ -219,7 +233,9 @@ def metadata_from_comments(comments: Iterable[str], value_type: str) -> tuple[st
 
 def parse_ini(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]:
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        lines = path.read_text(encoding="utf-8", errors="strict").splitlines(keepends=True)
+    except UnicodeDecodeError as error:
+        raise ConfigError("server configuration is not valid UTF-8") from error
     except OSError as error:
         raise ConfigError(f"server configuration is unavailable: {error.strerror}") from error
     fields: dict[str, ParsedField] = {}
@@ -243,7 +259,7 @@ def parse_ini(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]
             comments = []
             continue
         value_type = scalar_type(value)
-        description, minimum, maximum, default, options = metadata_from_comments(comments, value_type)
+        description, minimum, maximum, default, options = metadata_from_comments(comments, value_type, value)
         fields[key] = ParsedField(SOURCE_SERVER, key, value, value_type, index, description, minimum, maximum, default, options)
         comments = []
     return lines, fields, warnings
@@ -269,7 +285,9 @@ def strip_lua_inline_comment(raw: str) -> str:
 
 def parse_lua(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]:
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        lines = path.read_text(encoding="utf-8", errors="strict").splitlines(keepends=True)
+    except UnicodeDecodeError as error:
+        raise ConfigError("sandbox configuration is not valid UTF-8") from error
     except OSError as error:
         raise ConfigError(f"sandbox configuration is unavailable: {error.strerror}") from error
     fields: dict[str, ParsedField] = {}
@@ -304,14 +322,17 @@ def parse_lua(path: Path) -> tuple[list[str], dict[str, ParsedField], list[str]]
             continue
         indent, key, raw, comma = scalar_match.groups()
         value = parse_scalar(raw)
-        if value is None or isinstance(value, str) and not (raw.strip().startswith(('"', "'")) or raw.strip() in {"nil", ""}):
+        if value is None or (
+            isinstance(value, str)
+            and not (raw.strip().startswith(('"', "'")) or raw.strip() in {"nil", ""})
+        ):
             warnings.append(f"Unsupported Lua expression at line {index + 1}: {key}")
             comments = []
             continue
         prefix = [part for part in stack if part]
         field_path = ".".join([*prefix, key])
         value_type = scalar_type(value)
-        description, minimum, maximum, default, options = metadata_from_comments(comments, value_type)
+        description, minimum, maximum, default, options = metadata_from_comments(comments, value_type, value)
         fields[field_path] = ParsedField(SOURCE_SANDBOX, field_path, value, value_type, index, description, minimum, maximum, default, options, indent, bool(comma))
         comments = []
     return lines, fields, warnings
@@ -346,9 +367,11 @@ def field_payload(field: ParsedField) -> dict[str, Any]:
         "type": field.value_type,
         "value": None if sensitive else field.value,
         "configured": bool(field.value) if sensitive else True,
-        "description": field.description or f"Configuração {field.path} do Project Zomboid.",
+        "description": field.description or f"Project Zomboid setting {field.path}.",
         "editable": not protected and not sensitive,
         "sensitive": sensitive,
+        # PZ does not publish a reliable hot-reload matrix. Conservatively mark
+        # every generic file setting as restart-required.
         "requiresRestart": True,
     }
     if field.minimum is not None:
@@ -398,8 +421,8 @@ def validate_value(field: ParsedField, value: Any) -> SCALAR:
         raise ConfigError(f"{field.path} must be at least {field.minimum:g}")
     if numeric and field.maximum is not None and value > field.maximum:
         raise ConfigError(f"{field.path} must be at most {field.maximum:g}")
-    if field.options and value not in {option["value"] for option in field.options}:
-        raise ConfigError(f"{field.path} must be one of the documented options")
+    # Enumerations extracted from comments are UI hints; mod and game comments
+    # are not guaranteed to list every accepted value.
     return value
 
 
@@ -423,13 +446,113 @@ def write_temp(path: Path, lines: list[str]) -> Path:
         raise
 
 
-def create_backup(path: Path, timestamp: str) -> Path:
+def create_backup(path: Path, timestamp: str, keep: int = 10) -> Path:
     backup = path.with_name(f"{path.name}.bak.{timestamp}")
     shutil.copy2(path, backup)
+    existing = sorted(path.parent.glob(f"{path.name}.bak.*"), key=lambda item: item.stat().st_mtime_ns)
+    for stale in existing[:-keep]:
+        stale.unlink(missing_ok=True)
     return backup
 
 
-def apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str, Any]:
+def fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def configuration_lock(ini: Path):
+    lock_path = ini.with_name(".pz-config.lock")
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def transaction_paths(ini: Path) -> tuple[Path, Path, Path]:
+    return (
+        ini.with_name(".pz-config-transaction.json"),
+        ini.with_name(f".{ini.name}.pz-original"),
+        ini.with_name(".sandbox.pz-original"),
+    )
+
+
+def restore_copy(copy: Path, target: Path) -> None:
+    descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".pzrestore", dir=target.parent)
+    os.close(descriptor)
+    temp = Path(name)
+    try:
+        shutil.copy2(copy, temp)
+        with temp.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temp, target)
+        fsync_directory(target.parent)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def recover_transaction(ini: Path, sandbox: Path) -> None:
+    journal, ini_original, sandbox_original = transaction_paths(ini)
+    if not journal.exists():
+        # A crash before publishing the journal cannot have replaced either
+        # target, so any unpublished originals are safe to discard.
+        ini_original.unlink(missing_ok=True)
+        sandbox_original.unlink(missing_ok=True)
+        return
+    try:
+        record = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ConfigError("configuration transaction journal is invalid; manual recovery required") from error
+    expected = {"ini": str(ini.resolve()), "sandbox": str(sandbox.resolve())}
+    if record != expected or not ini_original.exists() or not sandbox_original.exists():
+        raise ConfigError("configuration transaction cannot be recovered automatically")
+    restore_copy(ini_original, ini)
+    restore_copy(sandbox_original, sandbox)
+    journal.unlink()
+    ini_original.unlink()
+    sandbox_original.unlink()
+    fsync_directory(journal.parent)
+
+
+def commit_transaction(ini: Path, sandbox: Path, ini_temp: Path, sandbox_temp: Path) -> None:
+    journal, ini_original, sandbox_original = transaction_paths(ini)
+    if journal.exists() or ini_original.exists() or sandbox_original.exists():
+        raise ConfigError("unfinished configuration transaction exists")
+    shutil.copy2(ini, ini_original)
+    shutil.copy2(sandbox, sandbox_original)
+    for original in (ini_original, sandbox_original):
+        with original.open("rb") as handle:
+            os.fsync(handle.fileno())
+    fsync_directory(ini_original.parent)
+    if sandbox_original.parent != ini_original.parent:
+        fsync_directory(sandbox_original.parent)
+    descriptor, name = tempfile.mkstemp(prefix=".pz-config-journal.", dir=journal.parent)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump({"ini": str(ini.resolve()), "sandbox": str(sandbox.resolve())}, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    journal_temp = Path(name)
+    os.replace(journal_temp, journal)
+    fsync_directory(journal.parent)
+    try:
+        os.replace(ini_temp, ini)
+        fsync_directory(ini.parent)
+        if os.environ.get("PZ_CONFIG_FAIL_AFTER_INI_REPLACE") == "1":
+            raise OSError("injected failure after server configuration replacement")
+        os.replace(sandbox_temp, sandbox)
+        fsync_directory(sandbox.parent)
+    except Exception:
+        recover_transaction(ini, sandbox)
+        raise
+    journal.unlink()
+    ini_original.unlink()
+    sandbox_original.unlink()
+    fsync_directory(journal.parent)
+
+
+def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str, Any]:
     if set(request) - {"expectedRevision", "createBackup", "changes"}:
         raise ConfigError("unknown update fields are not accepted")
     expected = request.get("expectedRevision")
@@ -473,12 +596,12 @@ def apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str,
         changed_paths.append(f"{field.source}:{field.path}")
         if field.source == SOURCE_SERVER:
             newline = "\n" if ini_lines[field.line].endswith("\n") else ""
-            ini_lines[field.line] = f"{field.path}={format_scalar(value, field.value_type)}{newline}"
+            ini_lines[field.line] = f"{field.path}={format_scalar(value, field.value_type, field.source)}{newline}"
         else:
             newline = "\n" if sandbox_lines[field.line].endswith("\n") else ""
             leaf = field.path.rsplit(".", 1)[-1]
             comma = "," if field.trailing_comma else ""
-            sandbox_lines[field.line] = f"{field.indent}{leaf} = {format_scalar(value, field.value_type)}{comma}{newline}"
+            sandbox_lines[field.line] = f"{field.indent}{leaf} = {format_scalar(value, field.value_type, field.source)}{comma}{newline}"
 
     if not changed_paths:
         return {"changed": [], "backupPaths": [], "revision": current["revision"], "requiresRestart": False}
@@ -490,18 +613,20 @@ def apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str,
 
     ini_temp = write_temp(ini, ini_lines)
     sandbox_temp = write_temp(sandbox, sandbox_lines)
-    original_ini = ini.read_bytes()
-    original_sandbox = sandbox.read_bytes()
     try:
-        parse_ini(ini_temp)
-        parse_lua(sandbox_temp)
-        os.replace(ini_temp, ini)
-        try:
-            os.replace(sandbox_temp, sandbox)
-        except Exception:
-            ini.write_bytes(original_ini)
-            sandbox.write_bytes(original_sandbox)
-            raise
+        _, verified_ini, ini_warnings = parse_ini(ini_temp)
+        _, verified_sandbox, sandbox_warnings = parse_lua(sandbox_temp)
+        if ini_warnings or sandbox_warnings:
+            raise ConfigError("updated configuration contains unparsable entries")
+        verified = {
+            **{(SOURCE_SERVER, path): field for path, field in verified_ini.items()},
+            **{(SOURCE_SANDBOX, path): field for path, field in verified_sandbox.items()},
+        }
+        for field, intended in normalized:
+            candidate = verified.get((field.source, field.path))
+            if field.value != intended and (candidate is None or candidate.value != intended):
+                raise ConfigError(f"could not verify updated value for {field.path}")
+        commit_transaction(ini, sandbox, ini_temp, sandbox_temp)
     finally:
         ini_temp.unlink(missing_ok=True)
         sandbox_temp.unlink(missing_ok=True)
@@ -513,6 +638,12 @@ def apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str,
         "revision": after["revision"],
         "requiresRestart": True,
     }
+
+
+def apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str, Any]:
+    with configuration_lock(ini):
+        recover_transaction(ini, sandbox)
+        return _apply_update(ini, sandbox, request)
 
 
 def load_request() -> dict[str, Any]:
@@ -533,7 +664,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "read":
-            result, _, _ = snapshot(args.ini, args.sandbox)
+            with configuration_lock(args.ini):
+                recover_transaction(args.ini, args.sandbox)
+                result, _, _ = snapshot(args.ini, args.sandbox)
         else:
             result = apply_update(args.ini, args.sandbox, load_request())
         print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))

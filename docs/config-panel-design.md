@@ -103,8 +103,10 @@ The host must:
 5. write timestamped backups when requested;
 6. apply changes to temporary files;
 7. parse and validate the temporary results;
-8. atomically replace the originals;
-9. return changed paths, backup paths, the new revision and restart requirement.
+8. hold one exclusive configuration lock across read, revision check and write;
+9. persist original copies and a transaction journal before replacing either file;
+10. replace and fsync both originals, then remove the journal; a later read or update restores both originals if interruption leaves the journal behind;
+11. return changed paths, backup paths, the new revision and restart requirement.
 
 No update automatically restarts production. The UI offers a separate restart action after a successful apply.
 

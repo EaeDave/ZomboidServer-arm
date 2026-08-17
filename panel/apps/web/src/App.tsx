@@ -14,23 +14,9 @@ import { useEffect, useRef, useState } from "react";
 import { ServerConsole } from "./ServerConsole";
 import { ServerConfiguration } from "./ServerConfiguration";
 import { ModManager } from "./ModManager";
+import { throwApiError } from "./api-error";
 
 const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
-
-class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
-
-function throwApiError(response: Response, message: string): never {
-  if (response.status === 401) window.dispatchEvent(new Event("zomboid-auth-expired"));
-  throw new ApiError(message, response.status);
-}
 
 async function getHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health");
@@ -512,19 +498,19 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
             className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-300 hover:border-emerald-400"
             href="#overview"
           >
-            Visão geral
+            Overview
           </a>
           <a
             className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-300 hover:border-emerald-400"
             href="#configuration"
           >
-            Configurações
+            Configuration
           </a>
           <a
             className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-300 hover:border-emerald-400"
             href="#server-tools"
           >
-            Mods e mundo
+            Mods and world
           </a>
         </nav>
 
@@ -573,7 +559,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                   </dd>
                 </div>
                 <div className="col-span-2">
-                  <dt className="text-zinc-500">Jogadores online</dt>
+                  <dt className="text-zinc-500">Online players</dt>
                   <dd className="mt-2 flex flex-wrap gap-2">
                     {server.data.onlinePlayers?.length ? (
                       server.data.onlinePlayers.map((player) => (
@@ -586,9 +572,9 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                       ))
                     ) : (
                       <span className="text-sm text-zinc-400">
-                        {server.data.rconAvailable === false
-                          ? "RCON indisponível"
-                          : "Nenhum jogador conectado"}
+                        {server.data.rconAvailable !== true || server.data.playerCount < 0
+                          ? "RCON unavailable"
+                          : "No players connected"}
                       </span>
                     )}
                   </dd>

@@ -7,11 +7,10 @@ import type {
   OperationRecord,
 } from "@zomboid/contracts";
 import { useEffect, useMemo, useState } from "react";
+import { throwApiError } from "./api-error";
 
 type Scalar = boolean | number | string;
 type Draft = Record<string, Scalar>;
-
-class ConfigApiError extends Error {}
 
 function identity(field: Pick<ConfigField, "source" | "path">) {
   return `${field.source}:${field.path}`;
@@ -19,14 +18,18 @@ function identity(field: Pick<ConfigField, "source" | "path">) {
 
 async function readConfig(serverId: string): Promise<ConfigSnapshot> {
   const response = await fetch(`/api/servers/${serverId}/config`, { credentials: "same-origin" });
-  const body = (await response.json()) as ConfigSnapshot & { error?: { message?: string } };
-  if (!response.ok) throw new ConfigApiError(body.error?.message ?? "Configuração indisponível");
-  return body;
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
+    throwApiError(response, body?.error?.message ?? "Configuration unavailable");
+  }
+  return response.json() as Promise<ConfigSnapshot>;
 }
 
 async function readOperation(operationId: string): Promise<OperationRecord> {
   const response = await fetch(`/api/operations/${operationId}`, { credentials: "same-origin" });
-  if (!response.ok) throw new ConfigApiError("Não foi possível acompanhar a alteração");
+  if (!response.ok) throwApiError(response, "Could not track the configuration update");
   return response.json() as Promise<OperationRecord>;
 }
 
@@ -48,12 +51,12 @@ function FieldControl({
   if (field.sensitive) {
     return (
       <span className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200">
-        {field.configured ? "Configurado e protegido" : "Não configurado"}
+        {field.configured ? "Configured and protected" : "Not configured"}
       </span>
     );
   }
   if (!field.editable) {
-    return <span className="text-xs text-zinc-500">Gerenciado por uma área dedicada</span>;
+    return <span className="text-xs text-zinc-500">Managed by a dedicated workflow</span>;
   }
   if (field.type === "boolean") {
     return (
@@ -67,51 +70,43 @@ function FieldControl({
         <span
           className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${value === true ? "left-6" : "left-1"}`}
         />
-        <span className="sr-only">{value === true ? "Ativado" : "Desativado"}</span>
+        <span className="sr-only">{value === true ? "Enabled" : "Disabled"}</span>
       </button>
     );
   }
-  if (field.options?.length) {
-    return (
-      <select
-        className="max-w-xs rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+  const optionsId = `options-${field.source}-${field.path.replaceAll(".", "-")}`;
+  return (
+    <>
+      <input
+        className="w-44 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-emerald-400 disabled:opacity-50"
         disabled={disabled}
+        list={field.options?.length ? optionsId : undefined}
+        max={field.maximum}
+        min={field.minimum}
+        step={field.type === "integer" ? 1 : field.type === "number" ? "any" : undefined}
+        type={field.type === "string" ? "text" : "number"}
         value={String(value ?? "")}
         onChange={(event) => {
-          const option = field.options?.find(
-            ({ value: candidate }) => String(candidate) === event.target.value,
-          );
-          if (option) onChange(option.value);
+          if (field.type === "string") onChange(event.target.value);
+          else if (event.target.value !== "") {
+            const parsed =
+              field.type === "integer"
+                ? Number.parseInt(event.target.value, 10)
+                : Number(event.target.value);
+            if (Number.isFinite(parsed)) onChange(parsed);
+          }
         }}
-      >
-        {field.options.map((option) => (
-          <option key={String(option.value)} value={String(option.value)}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    );
-  }
-  return (
-    <input
-      className="w-44 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-emerald-400 disabled:opacity-50"
-      disabled={disabled}
-      max={field.maximum}
-      min={field.minimum}
-      step={field.type === "integer" ? 1 : field.type === "number" ? "any" : undefined}
-      type={field.type === "string" ? "text" : "number"}
-      value={String(value ?? "")}
-      onChange={(event) => {
-        if (field.type === "string") onChange(event.target.value);
-        else if (event.target.value !== "") {
-          const parsed =
-            field.type === "integer"
-              ? Number.parseInt(event.target.value, 10)
-              : Number(event.target.value);
-          if (Number.isFinite(parsed)) onChange(parsed);
-        }
-      }}
-    />
+      />
+      {field.options?.length ? (
+        <datalist id={optionsId}>
+          {field.options.map((option) => (
+            <option key={String(option.value)} value={String(option.value)}>
+              {option.label}
+            </option>
+          ))}
+        </datalist>
+      ) : null}
+    </>
   );
 }
 
@@ -126,10 +121,11 @@ export function ServerConfiguration({
   busy: boolean;
   onQueue: (payload: ConfigUpdatePayload) => Promise<OperationRecord>;
 }) {
+  const canEdit = user?.role === "admin" || user?.role === "operator";
   const config = useQuery({
     queryKey: ["server-config", serverId],
     queryFn: () => readConfig(serverId),
-    enabled: Boolean(user),
+    enabled: canEdit,
     staleTime: 30_000,
     retry: false,
   });
@@ -179,6 +175,10 @@ export function ServerConfiguration({
     }
     return [...byId.values()].sort((left, right) => left.label.localeCompare(right.label));
   }, [fields, source]);
+  useEffect(() => {
+    if (!categories.length || categories.some((item) => item.id === category)) return;
+    setCategory(categories.find((item) => item.id === "sleep")?.id ?? categories[0]!.id);
+  }, [categories, category]);
   const visible = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
     return fields.filter((field) => {
@@ -207,7 +207,6 @@ export function ServerConfiguration({
     setSource("server");
     setCategory("sleep");
   };
-  const canEdit = user?.role === "admin" || user?.role === "operator";
   const applying =
     busy || operation.data?.status === "queued" || operation.data?.status === "running";
 
@@ -220,12 +219,12 @@ export function ServerConfiguration({
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.22em] text-emerald-400">
-              Configuração assistida
+              Assisted configuration
             </p>
-            <h2 className="mt-2 text-2xl font-semibold">Servidor e Sandbox</h2>
+            <h2 className="mt-2 text-2xl font-semibold">Server and Sandbox</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-              Edite as opções reais do INI e do Sandbox sem abrir um editor. Chaves de mods são
-              descobertas automaticamente; segredos e identidade do mundo permanecem protegidos.
+              Edit the real INI and Sandbox options without opening an editor. Mod-defined keys are
+              discovered automatically; secrets and world identity remain protected.
             </p>
           </div>
           <button
@@ -234,23 +233,23 @@ export function ServerConfiguration({
             onClick={() => void config.refetch()}
             type="button"
           >
-            {config.isFetching ? "Carregando…" : "Recarregar do host"}
+            {config.isFetching ? "Loading…" : "Reload from host"}
           </button>
         </div>
         {config.data ? (
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl bg-black/20 p-4">
-              <p className="text-xs text-zinc-500">Opções encontradas</p>
+              <p className="text-xs text-zinc-500">Options found</p>
               <p className="mt-1 text-xl font-semibold">{fields.length}</p>
             </div>
             <div className="rounded-xl bg-black/20 p-4">
-              <p className="text-xs text-zinc-500">Editáveis</p>
+              <p className="text-xs text-zinc-500">Editable</p>
               <p className="mt-1 text-xl font-semibold">
                 {fields.filter((field) => field.editable).length}
               </p>
             </div>
             <div className="rounded-xl bg-black/20 p-4">
-              <p className="text-xs text-zinc-500">Revisão carregada</p>
+              <p className="text-xs text-zinc-500">Loaded revision</p>
               <p className="mt-1 font-mono text-sm text-zinc-300">
                 {config.data.revision.slice(0, 12)}
               </p>
@@ -264,8 +263,15 @@ export function ServerConfiguration({
           {config.error.message}
         </p>
       ) : null}
-      {config.isPending ? (
-        <p className="p-6 text-sm text-zinc-400">Lendo configurações atuais pelo agente…</p>
+      {!canEdit ? (
+        <p className="p-6 text-sm text-zinc-400">
+          An operator or administrator role is required to read and edit configuration.
+        </p>
+      ) : null}
+      {config.isPending && canEdit ? (
+        <p className="p-6 text-sm text-zinc-400">
+          Reading current configuration through the agent…
+        </p>
       ) : null}
       {config.data ? (
         <div className="grid lg:grid-cols-[250px_1fr]">
@@ -278,7 +284,7 @@ export function ServerConfiguration({
                   onClick={() => setSource(item)}
                   type="button"
                 >
-                  {item === "all" ? "Tudo" : item === "server" ? "Servidor" : "Sandbox"}
+                  {item === "all" ? "All" : item === "server" ? "Server" : "Sandbox"}
                 </button>
               ))}
             </div>
@@ -304,9 +310,9 @@ export function ServerConfiguration({
           <div className="min-w-0 p-5 md:p-6">
             <div className="flex flex-wrap gap-3">
               <input
-                aria-label="Buscar configurações"
+                aria-label="Search configuration"
                 className="min-w-64 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm outline-none focus:border-emerald-400"
-                placeholder="Buscar por nome, chave ou descrição…"
+                placeholder="Search by name, key or description…"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -315,15 +321,15 @@ export function ServerConfiguration({
                 onClick={() => setChangedOnly((value) => !value)}
                 type="button"
               >
-                Alteradas ({changed.length})
+                Changed ({changed.length})
               </button>
             </div>
 
             {category === "sleep" && !search && !changedOnly ? (
               <div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4">
-                <p className="font-medium text-emerald-200">Atalhos de sono multiplayer</p>
+                <p className="font-medium text-emerald-200">Multiplayer sleep presets</p>
                 <p className="mt-1 text-sm text-zinc-400">
-                  Escolha um comportamento conhecido; você ainda revisará o diff antes de aplicar.
+                  Choose a known behavior; you will still review the diff before applying it.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
@@ -331,21 +337,21 @@ export function ServerConfiguration({
                     onClick={() => applySleepPreset(true, false)}
                     type="button"
                   >
-                    Permitir, sem obrigar
+                    Allow, not required
                   </button>
                   <button
                     className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
                     onClick={() => applySleepPreset(true, true)}
                     type="button"
                   >
-                    Permitir e exigir
+                    Allow and require
                   </button>
                   <button
                     className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
                     onClick={() => applySleepPreset(false, false)}
                     type="button"
                   >
-                    Desativar sono
+                    Disable sleep
                   </button>
                 </div>
               </div>
@@ -367,20 +373,20 @@ export function ServerConfiguration({
                           <h3 className="font-medium">{field.label}</h3>
                           {isChanged ? (
                             <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold uppercase text-emerald-300">
-                              alterada
+                              changed
                             </span>
                           ) : null}
                           {!field.editable ? (
                             <span className="rounded-full bg-zinc-700 px-2 py-1 text-[10px] text-zinc-300">
-                              somente leitura
+                              read only
                             </span>
                           ) : null}
                         </div>
                         <p className="mt-1 text-sm leading-5 text-zinc-400">{field.description}</p>
                         <p className="mt-2 font-mono text-[11px] text-zinc-600">
                           {field.source} · {field.path}
-                          {field.minimum !== undefined ? ` · mín ${field.minimum}` : ""}
-                          {field.maximum !== undefined ? ` · máx ${field.maximum}` : ""}
+                          {field.minimum !== undefined ? ` · min ${field.minimum}` : ""}
+                          {field.maximum !== undefined ? ` · max ${field.maximum}` : ""}
                         </p>
                       </div>
                       <FieldControl
@@ -402,7 +408,7 @@ export function ServerConfiguration({
                         }
                         type="button"
                       >
-                        Desfazer esta alteração
+                        Undo this change
                       </button>
                     ) : null}
                   </article>
@@ -410,7 +416,7 @@ export function ServerConfiguration({
               })}
               {visible.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm text-zinc-500">
-                  Nenhuma opção encontrada neste filtro.
+                  No options match this filter.
                 </p>
               ) : null}
             </div>
@@ -422,9 +428,9 @@ export function ServerConfiguration({
         <footer className="sticky bottom-0 border-t border-emerald-400/20 bg-zinc-950/95 p-5 backdrop-blur">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="font-medium">{changed.length} alteração(ões) no rascunho</p>
+              <p className="font-medium">{changed.length} draft change(s)</p>
               <p className="text-xs text-zinc-500">
-                Nada foi gravado no servidor ainda. Todas exigem reinício.
+                Nothing has been written to the server yet. All changes require a restart.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -434,7 +440,7 @@ export function ServerConfiguration({
                   onChange={(event) => setCreateBackup(event.target.checked)}
                   type="checkbox"
                 />
-                Criar backup dos arquivos
+                Create file backups
               </label>
               <button
                 className="rounded-xl border border-zinc-700 px-4 py-2 text-sm"
@@ -442,17 +448,13 @@ export function ServerConfiguration({
                 onClick={() => setDraft({})}
                 type="button"
               >
-                Descartar
+                Discard
               </button>
               <button
                 className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
                 disabled={!canEdit || applying || !config.data}
                 onClick={async () => {
-                  if (
-                    !window.confirm(
-                      `Aplicar ${changed.length} alteração(ões) ao servidor ${serverId}?`,
-                    )
-                  )
+                  if (!window.confirm(`Apply ${changed.length} change(s) to server ${serverId}?`))
                     return;
                   setSubmitError(undefined);
                   try {
@@ -468,13 +470,13 @@ export function ServerConfiguration({
                     setOperationId(queued.operationId);
                   } catch (error) {
                     setSubmitError(
-                      error instanceof Error ? error.message : "Não foi possível aplicar",
+                      error instanceof Error ? error.message : "Could not apply changes",
                     );
                   }
                 }}
                 type="button"
               >
-                {applying ? "Aplicando…" : "Revisar e aplicar"}
+                {applying ? "Applying…" : "Review and apply"}
               </button>
             </div>
           </div>
@@ -483,12 +485,12 @@ export function ServerConfiguration({
           ) : null}
           {operation.data?.status === "failed" ? (
             <p className="mx-auto mt-3 max-w-5xl text-sm text-rose-300">
-              Falha no host: {operation.data.error}
+              Host failure: {operation.data.error}
             </p>
           ) : null}
           {operation.data?.status === "succeeded" ? (
             <p className="mx-auto mt-3 max-w-5xl text-sm text-emerald-300">
-              Configuração salva e relida do host. Reinicie o servidor quando estiver pronto.
+              Configuration saved and re-read from the host. Restart the server when ready.
             </p>
           ) : null}
         </footer>

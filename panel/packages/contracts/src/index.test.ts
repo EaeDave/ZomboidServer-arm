@@ -40,6 +40,12 @@ describe("agent operation contracts", () => {
         payload: { command: "rm -rf /" },
       }),
     ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "config.update",
+        payload: { expectedRevision: "a".repeat(64), changes: [] },
+      }),
+    ).toBe(false);
   });
 
   it("accepts a status success and a bounded error response", () => {
@@ -239,6 +245,18 @@ describe("agent operation contracts", () => {
       Value.Check(operationCreateRequestSchema, {
         kind: "mods.configure",
         payload: { activeModIds: ["bad/id"], inactiveModIds: [] },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: ["Alpha", "Alpha"], inactiveModIds: [] },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: [], inactiveModIds: ["Alpha", "Alpha"] },
       }),
     ).toBe(false);
   });

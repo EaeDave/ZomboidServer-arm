@@ -47,11 +47,13 @@ s=ThreadingHTTPServer(('127.0.0.1',0),H); open(port_file,'w').write(str(s.server
 PY
 SERVER_PID=$!
 for _ in $(seq 1 30); do [ -s "$TMP_DIR/port" ] && break; sleep .1; done
+[ -s "$TMP_DIR/port" ] || { echo "stub control plane did not start" >&2; exit 1; }
 export TEST_ROOT="$TMP_DIR" PZ_COMMON="$TMP_DIR/common.sh" PZCTL_BIN="$TMP_DIR/bin/pzctl" PATH="$TMP_DIR/bin:$PATH"
 export PZ_AGENT_URL="http://127.0.0.1:$(cat "$TMP_DIR/port")" PZ_AGENT_ALLOW_INSECURE=1 PZ_AGENT_ID=a PZ_AGENT_ACCESS_TOKEN=t PZ_AGENT_INTERVAL=5
 set +e; timeout 12 bash "$ROOT_DIR/scripts/pz-agent.sh" --poll >"$TMP_DIR/log" 2>&1; rc=$?; set -e
 [ "$rc" -eq 124 ] || { cat "$TMP_DIR/log"; exit "$rc"; }
 [ -s "$TMP_DIR/result" ] || { cat "$TMP_DIR/log"; exit 1; }
 read -r bytes fields <"$TMP_DIR/result"
-[ "$bytes" -gt 131072 ] && [ "$fields" -eq 500 ]
+[ "$bytes" -gt 131072 ] || { echo "completion body too small: $bytes bytes" >&2; cat "$TMP_DIR/log"; exit 1; }
+[ "$fields" -eq 500 ] || { echo "unexpected field count: $fields" >&2; cat "$TMP_DIR/log"; exit 1; }
 echo "pz-agent large result test: ok ($bytes bytes, $fields fields)"
