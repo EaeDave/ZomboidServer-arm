@@ -171,6 +171,16 @@ class ConfigTest(unittest.TestCase):
                 },
             )
 
+    def test_backup_names_do_not_collide_within_one_timestamp(self):
+        first_state = self.ini.read_bytes()
+        first = pz_config.create_backup(self.ini, "20260817_030000_000001")
+        self.ini.write_text(INI.replace("MaxPlayers=4", "MaxPlayers=5"), encoding="utf-8")
+        second_state = self.ini.read_bytes()
+        second = pz_config.create_backup(self.ini, "20260817_030000_000001")
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.read_bytes(), first_state)
+        self.assertEqual(second.read_bytes(), second_state)
+
     def test_whole_number_update_remains_a_number(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
         pz_config.apply_update(
@@ -218,6 +228,24 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(pz_config.ConfigError, "valid UTF-8"):
             pz_config.snapshot(self.ini, self.sandbox)
         self.assertEqual(self.ini.read_bytes(), invalid)
+
+    def test_preserves_preexisting_unsupported_expression_warning(self):
+        sandbox = self.sandbox.read_text(encoding="utf-8").replace(
+            "        Name = \"Home\",", '        Name = "Home",\n        Computed = getValue(),'
+        )
+        self.sandbox.write_text(sandbox, encoding="utf-8")
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        self.assertTrue(before["warnings"])
+        result = pz_config.apply_update(
+            self.ini,
+            self.sandbox,
+            {
+                "expectedRevision": before["revision"],
+                "changes": [{"source": "server", "path": "SleepAllowed", "value": True}],
+            },
+        )
+        self.assertIn("server:SleepAllowed", result["changed"])
+        self.assertIn("Computed = getValue(),", self.sandbox.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

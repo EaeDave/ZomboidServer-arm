@@ -580,6 +580,8 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
     current, lookup, (ini_lines, sandbox_lines) = snapshot(ini, sandbox)
     if current["revision"] != expected:
         raise StaleRevisionError("configuration changed since it was loaded")
+    _, _, original_ini_warnings = parse_ini(ini)
+    _, _, original_sandbox_warnings = parse_lua(sandbox)
 
     normalized: list[tuple[ParsedField, SCALAR]] = []
     seen: set[tuple[str, str]] = set()
@@ -628,8 +630,11 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
     try:
         _, verified_ini, ini_warnings = parse_ini(ini_temp)
         _, verified_sandbox, sandbox_warnings = parse_lua(sandbox_temp)
-        if ini_warnings or sandbox_warnings:
-            raise ConfigError("updated configuration contains unparsable entries")
+        new_warnings = (set(ini_warnings) - set(original_ini_warnings)) | (
+            set(sandbox_warnings) - set(original_sandbox_warnings)
+        )
+        if new_warnings:
+            raise ConfigError("updated configuration introduces unparsable entries")
         verified = {
             **{(SOURCE_SERVER, path): field for path, field in verified_ini.items()},
             **{(SOURCE_SANDBOX, path): field for path, field in verified_sandbox.items()},
