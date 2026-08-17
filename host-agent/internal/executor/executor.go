@@ -181,8 +181,8 @@ func validateArgument(argument capabilities.Argument, raw json.RawMessage) error
 	case "integer":
 		var value int
 		if json.Unmarshal(raw, &value) != nil ||
-			(argument.Minimum != 0 && value < argument.Minimum) ||
-			(argument.Maximum != 0 && value > argument.Maximum) {
+			(argument.Minimum != nil && value < *argument.Minimum) ||
+			(argument.Maximum != nil && value > *argument.Maximum) {
 			return fmt.Errorf("%s is outside its allowed range", argument.Name)
 		}
 	case "boolean":

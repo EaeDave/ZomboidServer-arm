@@ -127,3 +127,24 @@ func TestRegistryIdentifiersAreUnique(t *testing.T) {
 		}
 	}
 }
+
+func TestIntegerValidationSupportsZeroBounds(t *testing.T) {
+	zero := 0
+	ten := 10
+	argument := capabilities.Argument{Type: "integer", Minimum: &zero, Maximum: &ten}
+	if err := validateArgument(argument, json.RawMessage(`0`)); err != nil {
+		t.Fatalf("zero lower bound rejected: %v", err)
+	}
+	if err := validateArgument(argument, json.RawMessage(`-1`)); err == nil {
+		t.Fatal("value below zero lower bound succeeded")
+	}
+
+	negativeTen := -10
+	argument = capabilities.Argument{Type: "integer", Minimum: &negativeTen, Maximum: &zero}
+	if err := validateArgument(argument, json.RawMessage(`0`)); err != nil {
+		t.Fatalf("zero upper bound rejected: %v", err)
+	}
+	if err := validateArgument(argument, json.RawMessage(`1`)); err == nil {
+		t.Fatal("value above zero upper bound succeeded")
+	}
+}

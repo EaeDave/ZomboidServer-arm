@@ -367,8 +367,11 @@ if [ "${PZ_AGENT_ENABLE:-0}" = 1 ]; then
       -e "s|__BACKUPS__|$(esc "$BACKUPS")|g" -e "s|__REALTIME_AGENT__|$(esc "$BIN_REALTIME_AGENT")|g" \
       "$REPO_DIR/templates/zomboid-realtime-agent.service" > "/etc/systemd/system/$SVC-realtime-agent.service"
 else
-  systemctl disable --now "$SVC-realtime-agent.service" >/dev/null 2>&1 || true
-  rm -f "$BIN_REALTIME_AGENT" "/etc/systemd/system/$SVC-realtime-agent.service"
+  if [ -e "$BIN_REALTIME_AGENT" ] || [ -e "/etc/systemd/system/$SVC-realtime-agent.service" ]; then
+    say "PZ_AGENT_ENABLE is not 1; disabling and removing the previously installed realtime host agent."
+    systemctl disable --now "$SVC-realtime-agent.service" >/dev/null 2>&1 || true
+    rm -f "$BIN_REALTIME_AGENT" "/etc/systemd/system/$SVC-realtime-agent.service"
+  fi
 fi
 mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"

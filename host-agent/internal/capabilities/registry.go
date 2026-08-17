@@ -7,8 +7,8 @@ type Argument struct {
 	Type        string `json:"type"`
 	Required    bool   `json:"required"`
 	MaxLength   int    `json:"maxLength,omitempty"`
-	Minimum     int    `json:"minimum,omitempty"`
-	Maximum     int    `json:"maximum,omitempty"`
+	Minimum     *int   `json:"minimum,omitempty"`
+	Maximum     *int   `json:"maximum,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
 }
 
@@ -24,9 +24,13 @@ type Capability struct {
 	OperationKind string     `json:"operationKind,omitempty"`
 }
 
+func integerBound(value int) *int {
+	return &value
+}
+
 var Registry = []Capability{
 	{ID: "server.status", Title: "Server status", Description: "Read the current service, socket, build, player, and RCON state.", Category: "Server", Mode: "direct", Role: "viewer", Effects: []string{"read"}, Arguments: []Argument{}},
-	{ID: "logs.tail", Title: "Recent logs", Description: "Read a bounded tail of the game console log (50 lines by default).", Category: "Diagnostics", Mode: "direct", Role: "viewer", Effects: []string{"read"}, Arguments: []Argument{{Name: "lines", Label: "Lines", Description: "Number of recent lines to return (default 50).", Type: "integer", Required: false, Minimum: 1, Maximum: 1000, Placeholder: "50"}}},
+	{ID: "logs.tail", Title: "Recent logs", Description: "Read a bounded tail of the game console log (50 lines by default).", Category: "Diagnostics", Mode: "direct", Role: "viewer", Effects: []string{"read"}, Arguments: []Argument{{Name: "lines", Label: "Lines", Description: "Number of recent lines to return (default 50).", Type: "integer", Required: false, Minimum: integerBound(1), Maximum: integerBound(1000), Placeholder: "50"}}},
 	{ID: "settings.read", Title: "Server access settings", Description: "Read public name, ports, and password configuration metadata.", Category: "Settings", Mode: "direct", Role: "admin", Effects: []string{"read", "sensitive"}, Arguments: []Argument{}},
 	{ID: "config.read", Title: "Full configuration", Description: "Read structured server and Sandbox settings with revision metadata.", Category: "Settings", Mode: "direct", Role: "operator", Effects: []string{"read"}, Arguments: []Argument{}},
 	{ID: "mods.list", Title: "Installed mods", Description: "Read installed, enabled, disabled, and tracked Workshop content.", Category: "Mods", Mode: "direct", Role: "viewer", Effects: []string{"read"}, Arguments: []Argument{}},
@@ -40,7 +44,7 @@ var Registry = []Capability{
 	{ID: "server.start", Title: "Start server", Description: "Start the game service and wait for readiness.", Category: "Server", Mode: "job", Role: "operator", Effects: []string{"lifecycle"}, Arguments: []Argument{}, OperationKind: "start"},
 	{ID: "server.stop", Title: "Stop server", Description: "Notify players, save the world, and stop the game service.", Category: "Server", Mode: "job", Role: "operator", Effects: []string{"lifecycle", "player-visible"}, Arguments: []Argument{}, OperationKind: "stop"},
 	{ID: "server.restart", Title: "Restart server", Description: "Notify players, save the world, and restart safely.", Category: "Server", Mode: "job", Role: "operator", Effects: []string{"lifecycle", "player-visible"}, Arguments: []Argument{}, OperationKind: "restart"},
-	{ID: "backup.create", Title: "Create backup", Description: "Save and archive world and server configuration data.", Category: "Backups", Mode: "job", Role: "operator", Effects: []string{"write", "filesystem"}, Arguments: []Argument{{Name: "keep", Label: "Backups to keep", Description: "Optional retention count.", Type: "integer", Required: false, Minimum: 1, Maximum: 100}}, OperationKind: "backup"},
+	{ID: "backup.create", Title: "Create backup", Description: "Save and archive world and server configuration data.", Category: "Backups", Mode: "job", Role: "operator", Effects: []string{"write", "filesystem"}, Arguments: []Argument{{Name: "keep", Label: "Backups to keep", Description: "Optional retention count.", Type: "integer", Required: false, Minimum: integerBound(1), Maximum: integerBound(100)}}, OperationKind: "backup"},
 	{ID: "build.update", Title: "Update game build", Description: "Back up, download, install, and restart the configured game build.", Category: "Server", Mode: "job", Role: "operator", Effects: []string{"download", "lifecycle", "filesystem"}, Arguments: []Argument{}, OperationKind: "build.update"},
 	{ID: "mods.add", Title: "Add Workshop item", Description: "Install a Workshop mod or collection and update configuration.", Category: "Mods", Mode: "job", Role: "operator", Effects: []string{"download", "filesystem"}, Arguments: []Argument{{Name: "workshopId", Label: "Workshop ID", Description: "Numeric Workshop item or collection ID.", Type: "string", Required: true, MaxLength: 20}}, OperationKind: "mods.add"},
 	{ID: "mods.remove", Title: "Remove mods", Description: "Remove one or more configured mod IDs.", Category: "Mods", Mode: "job", Role: "operator", Effects: []string{"write"}, Arguments: []Argument{{Name: "modIds", Label: "Mod IDs", Description: "Mod IDs to remove.", Type: "string-list", Required: true}}, OperationKind: "mods.remove"},

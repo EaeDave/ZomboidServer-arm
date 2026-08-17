@@ -716,10 +716,6 @@ export function createApp(
           }
           return result;
         } catch (error) {
-          if (error instanceof RealtimeCapabilityError) {
-            set.status = 400;
-            return { error: { code: "unsupported_capability", message: error.message } };
-          }
           try {
             await audit.record({
               action: "server.command.failed",
@@ -732,6 +728,10 @@ export function createApp(
             });
           } catch (auditError) {
             console.error("failed to record realtime command failure", auditError);
+          }
+          if (error instanceof RealtimeCapabilityError) {
+            set.status = 400;
+            return { error: { code: "unsupported_capability", message: error.message } };
           }
           if (error instanceof RealtimeCommandError) {
             console.error("realtime host command failed", {

@@ -67,10 +67,14 @@ func TestEndpointRequiresTLSAndPreservesBasePath(t *testing.T) {
 	}
 }
 
-func TestBoundedErrorPreservesUTF8(t *testing.T) {
-	message := strings.Repeat("á", 2001)
-	bounded := boundedError(message)
-	if len([]rune(bounded)) != 2000 || !strings.HasSuffix(bounded, "á") {
-		t.Fatalf("bounded error has %d characters", len([]rune(bounded)))
+func TestBoundedErrorPreservesUTF8AndLimitsUTF16Units(t *testing.T) {
+	accented := boundedError(strings.Repeat("á", 2001))
+	if len([]rune(accented)) != 2000 || !strings.HasSuffix(accented, "á") {
+		t.Fatalf("bounded accented error has %d characters", len([]rune(accented)))
+	}
+
+	emoji := boundedError(strings.Repeat("😀", 1001))
+	if len([]rune(emoji)) != 1000 || !strings.HasSuffix(emoji, "😀") {
+		t.Fatalf("bounded emoji error has %d characters", len([]rune(emoji)))
 	}
 }

@@ -42,8 +42,10 @@ capability registry drives the Console UI and `pzctl capabilities`, while the ro
 wrapper remains the final allowlist. RCON and host files are never exposed to the browser.
 
 The realtime broker is process-local because WebSocket ownership cannot be shared between Bun
-processes. Deploy exactly one API replica. Horizontal scaling requires a shared command router and
-is intentionally unsupported until that transport exists.
+processes. Deploy exactly one API replica and replace it without overlapping old and new API
+processes. A rolling replacement temporarily routes some requests to a process without the agent
+socket, making realtime commands unavailable. Horizontal scaling requires a shared command router
+and is intentionally unsupported until that transport exists.
 
 ## Deployment model
 

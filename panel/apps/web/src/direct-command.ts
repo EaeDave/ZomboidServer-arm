@@ -30,9 +30,19 @@ export async function executeDirectCommand(
     credentials: "same-origin",
     body: JSON.stringify(request),
   });
-  const body: unknown = await response.json();
+  const text = await response.text();
+  let body: unknown;
+  try {
+    body = text === "" ? undefined : JSON.parse(text);
+  } catch {
+    if (!response.ok) {
+      throwApiError(response, `Realtime command failed: ${response.status}`);
+    }
+    throw new Error("Realtime command returned an invalid JSON response");
+  }
   if (!response.ok) {
     throwApiError(response, apiErrorMessage(body) ?? `Realtime command failed: ${response.status}`);
   }
+  if (body === undefined) throw new Error("Realtime command returned an empty response");
   return body as DirectCommandResponse;
 }

@@ -1095,5 +1095,30 @@ describe("control-plane API", () => {
     );
     expect(blocked.status).toBe(503);
     expect(sent).toHaveLength(sentBeforeBlockedRequest);
+    const reconnectAuditActions: string[] = [];
+    const replacementSocket = { send() {}, close() {} };
+    const reconnectAudit: AuditService = {
+      async record(event) {
+        reconnectAuditActions.push(event.action);
+        if (event.action === "server.command.requested") {
+          broker.connect("production", replacementSocket);
+        }
+      },
+      async list() {
+        return [];
+      },
+    };
+    const reconnectApp = createApp(undefined, undefined, appAuth, undefined, reconnectAudit, {
+      realtimeBroker: broker,
+    });
+    const capabilityChanged = await reconnectApp.handle(
+      new Request("http://localhost/api/servers/production/commands", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilityId: "server.status", input: {} }),
+      }),
+    );
+    expect(capabilityChanged.status).toBe(400);
+    expect(reconnectAuditActions).toEqual(["server.command.requested", "server.command.failed"]);
   });
 });

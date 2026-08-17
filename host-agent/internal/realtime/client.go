@@ -15,7 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/capabilities"
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/executor"
@@ -135,7 +134,10 @@ func (c *Client) runConnection(ctx context.Context) error {
 		"serverId":        c.config.ServerID,
 		"capabilities":    capabilities.Registry,
 	})
-	if err := connection.Write(ctx, websocket.MessageText, hello); err != nil {
+	writeCtx, cancelWrite := context.WithTimeout(ctx, 5*time.Second)
+	err = connection.Write(writeCtx, websocket.MessageText, hello)
+	cancelWrite()
+	if err != nil {
 		return fmt.Errorf("send capability registry: %w", err)
 	}
 	log.Printf("realtime agent connected for %s", c.config.ServerID)
@@ -238,10 +240,18 @@ func (c *Client) writeResult(
 
 func boundedError(message string) string {
 	const limit = 2000
-	if utf8.RuneCountInString(message) <= limit {
-		return message
+	units := 0
+	for byteIndex, character := range message {
+		characterUnits := 1
+		if character > '\uFFFF' {
+			characterUnits = 2
+		}
+		if units+characterUnits > limit {
+			return message[:byteIndex]
+		}
+		units += characterUnits
 	}
-	return string([]rune(message)[:limit])
+	return message
 }
 
 func roleAtLeast(actual, required string) bool {
