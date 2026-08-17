@@ -143,12 +143,12 @@ export function ServerConsole({ serverId, enabled }: { serverId: string; enabled
   const lastEntry = entries.at(-1);
 
   return (
-    <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-medium">Server console</h2>
+          <h2 className="text-lg font-semibold text-zinc-100">Live server output</h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Incremental output from the host, streamed through the authenticated control plane.
+            Bounded output streamed through the authenticated control plane.
           </p>
         </div>
         <span
@@ -167,7 +167,7 @@ export function ServerConsole({ serverId, enabled }: { serverId: string; enabled
         <input
           aria-label="Search server console"
           className="min-w-52 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none ring-emerald-400 focus:ring-2"
-          placeholder="Search console lines..."
+          placeholder="Search log messages…"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />

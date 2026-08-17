@@ -5,6 +5,90 @@ import { PageHeading } from "./PanelNav";
 
 type Mods = NonNullable<AgentStatus["mods"]>;
 
+function ResetWorldDialog({
+  createBackup,
+  onClose,
+  onConfirm,
+  onToggleBackup,
+}: {
+  createBackup: boolean;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+  onToggleBackup: (value: boolean) => void;
+}) {
+  const [phrase, setPhrase] = useState("");
+  const [saving, setSaving] = useState(false);
+  const ready = phrase === "RESET WORLD";
+
+  const confirm = async () => {
+    setSaving(true);
+    try {
+      await onConfirm();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      aria-labelledby="reset-world-title"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      role="dialog"
+    >
+      <div className="w-full max-w-lg rounded-2xl border border-rose-500/40 bg-zinc-900 p-5 shadow-2xl sm:p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-300">
+          Danger zone
+        </p>
+        <h2 id="reset-world-title" className="mt-1 text-xl font-semibold text-zinc-100">
+          Reset world and player data
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-zinc-400">
+          This permanently deletes the current world and player data. Make sure the server is not in
+          use before continuing.
+        </p>
+        <label className="mt-5 flex items-center gap-2 text-sm text-zinc-300">
+          <input
+            checked={createBackup}
+            className="size-4 accent-emerald-400"
+            onChange={(event) => onToggleBackup(event.target.checked)}
+            type="checkbox"
+          />
+          Create a backup first
+        </label>
+        <label className="mt-5 block text-sm text-zinc-300" htmlFor="reset-world-confirmation">
+          Type <strong className="font-semibold text-rose-200">RESET WORLD</strong> to confirm
+        </label>
+        <input
+          autoComplete="off"
+          className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-rose-400"
+          id="reset-world-confirmation"
+          value={phrase}
+          onChange={(event) => setPhrase(event.target.value)}
+        />
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:border-zinc-500 hover:text-white"
+            disabled={saving}
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-400 disabled:opacity-40"
+            disabled={!ready || saving}
+            onClick={() => void confirm()}
+            type="button"
+          >
+            {saving ? "Queuing…" : "Reset world"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ModsPage({
   mods,
   canAdmin,
@@ -20,6 +104,7 @@ export function ModsPage({
 }) {
   const [workshopId, setWorkshopId] = useState("");
   const [resetBackup, setResetBackup] = useState(true);
+  const [resetOpen, setResetOpen] = useState(false);
   const [error, setError] = useState<string>();
   const [adding, setAdding] = useState(false);
 
@@ -38,14 +123,13 @@ export function ModsPage({
   };
 
   const resetWorld = async () => {
-    if (!window.confirm("This permanently deletes the production world and player data. Continue?"))
-      return;
     setError(undefined);
     try {
       await onQueue({
         kind: "world.reset",
         payload: { confirm: true, createBackup: resetBackup },
       });
+      setResetOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not queue world reset");
     }
@@ -169,26 +253,25 @@ export function ModsPage({
             Permanently deletes the current world and player data. This is unrelated to mod
             management and is intentionally isolated here.
           </p>
-          <div className="mt-5 flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-zinc-300">
-              <input
-                checked={resetBackup}
-                className="size-4 accent-emerald-400"
-                onChange={(event) => setResetBackup(event.target.checked)}
-                type="checkbox"
-              />
-              Create a backup first
-            </label>
+          <div className="mt-5">
             <button
               className="rounded-xl border border-rose-500/50 px-3.5 py-2 text-sm text-rose-300 hover:border-rose-400 disabled:opacity-40"
               disabled={busy}
-              onClick={() => void resetWorld()}
+              onClick={() => setResetOpen(true)}
               type="button"
             >
               Reset world data
             </button>
           </div>
         </section>
+      ) : null}
+      {resetOpen ? (
+        <ResetWorldDialog
+          createBackup={resetBackup}
+          onClose={() => setResetOpen(false)}
+          onConfirm={resetWorld}
+          onToggleBackup={setResetBackup}
+        />
       ) : null}
     </div>
   );

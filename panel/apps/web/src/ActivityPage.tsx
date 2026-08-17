@@ -105,7 +105,9 @@ export function ActivityPage({
                   key={event.id}
                 >
                   <span className="font-medium text-zinc-300">{event.action}</span>
-                  <span className="text-xs text-zinc-500">{event.actorUserId ?? "system"}</span>
+                  <span className="text-xs text-zinc-500">
+                    {event.actorUserId ? "Administrator" : "System"}
+                  </span>
                   <time className="text-xs text-zinc-500" dateTime={event.createdAt}>
                     {new Date(event.createdAt).toLocaleString()}
                   </time>
