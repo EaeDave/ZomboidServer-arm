@@ -317,6 +317,8 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
         canOperate={Boolean(canOperate)}
         mods={server.data?.mods}
         onQueue={queueOperationRequest}
+        onRefresh={() => void server.refetch()}
+        server={server.data}
       />
     );
   } else if (page === "logs") {
