@@ -43,6 +43,10 @@ become a general-purpose shell or Docker host controller.
 - [x] Reconcile operation history after reload and provide pause/search/autoscroll log UX.
 - [x] Reject conflicting queued/running operations and recover expired leases.
 - [x] Validate log bounds, cursor idempotency, worker heartbeats, migrations and SSE behavior.
+- [x] Add an authenticated outbound WebSocket for correlated, concurrent direct commands.
+- [x] Publish the host capability registry to both `pzctl` and the React panel.
+- [x] Keep caller-role authorization enforced at the API and again inside the host agent.
+- [x] Move RCON, save, settings reads, and config reads off the durable job queue.
 
 The realtime slice is ready for review and staging deployment. Production remains unchanged until
 this branch is approved and the migration/agent rollout is explicitly scheduled.

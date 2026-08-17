@@ -31,11 +31,15 @@ bun run dev:web
 
 ## Realtime operations
 
-Operation state is durable in PostgreSQL. The host agent renews a lease while a long-running
-start/stop/restart is active, publishes bounded progress and log deltas, and heartbeats continue
-independently of the host command. The browser consumes authenticated SSE events with
-`Last-Event-ID` reconnection; it never reads the host log directly. Event retention is bounded per
-server, log cursors are idempotent, and a second queued/running operation is rejected with `409`.
+Long-running operations remain durable in PostgreSQL. The heartbeat agent renews a lease while an
+update, backup, restart, or reset is active and publishes bounded progress/log deltas. The browser
+consumes authenticated SSE events with `Last-Event-ID` reconnection; event retention is bounded,
+log cursors are idempotent, and conflicting jobs are rejected with `409`.
+
+Fast commands use a separate authenticated, outbound-only WebSocket from `pz-agent-core`. Each
+request has a correlation ID and timeout; the API and host both enforce the caller role. The agent's
+capability registry drives the Console UI and `pzctl capabilities`, while the root-owned privileged
+wrapper remains the final allowlist. RCON and host files are never exposed to the browser.
 
 ## Deployment model
 

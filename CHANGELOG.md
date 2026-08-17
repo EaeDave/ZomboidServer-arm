@@ -9,6 +9,11 @@ Versions are git tags; every release ships with these notes on the GitHub Releas
   4 OCPUs, 24 GiB RAM, 4 GiB swap, Build 42.20.2 and 10 GiB allocated to the server.
 - The pinned FEX commit, launcher, RootFS settings and systemd unit are reproducible through
   `install.sh`; Steam Relay remains the recommended client path behind Oracle cloud NAT.
+- Added `pz-agent-core`, an outbound-only Go WebSocket agent that publishes a shared capability
+  registry and executes bounded realtime commands with correlated request IDs, timeouts, reconnects,
+  caller-role checks, and host-side argument validation.
+- Added a capability-driven web console and matching `pzctl capabilities/direct` commands. Fast
+  RCON, save, settings-read, and config-read actions no longer wait behind durable update jobs.
 
 ### Changed
 - Box64 is now an explicit fallback. Its package, `binfmt_misc` registration and

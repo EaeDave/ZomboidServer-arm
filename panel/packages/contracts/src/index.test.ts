@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { Value } from "@sinclair/typebox/value";
 import {
   agentOperationRequestSchema,
+  agentRealtimeInboundSchema,
+  agentRealtimeExecuteSchema,
+  directCommandRequestSchema,
   agentOperationResponseSchema,
   agentJobCompleteRequestSchema,
   agentConsoleLogRequestSchema,
@@ -113,41 +116,36 @@ describe("agent operation contracts", () => {
     ).toBe(false);
   });
 
-  it("accepts only documented RCON commands and save operations", () => {
+  it("accepts bounded direct commands and the realtime wire protocol", () => {
     expect(
-      Value.Check(operationCreateRequestSchema, {
-        kind: "world.save",
-        payload: {},
+      Value.Check(directCommandRequestSchema, {
+        capabilityId: "rcon.servermsg",
+        input: { message: "Maintenance soon" },
       }),
     ).toBe(true);
     expect(
-      Value.Check(operationCreateRequestSchema, {
-        kind: "rcon.command",
-        payload: { command: "players", args: [] },
+      Value.Check(agentRealtimeExecuteSchema, {
+        type: "command.execute",
+        requestId: "request-1",
+        capabilityId: "rcon.players",
+        input: {},
+        actorRole: "viewer",
+        timeoutMs: 15_000,
       }),
     ).toBe(true);
     expect(
-      Value.Check(operationCreateRequestSchema, {
-        kind: "rcon.command",
-        payload: { command: "servermsg", args: ["Maintenance soon"] },
+      Value.Check(agentRealtimeInboundSchema, {
+        type: "command.result",
+        requestId: "request-1",
+        ok: true,
+        result: { output: "Players connected (0)" },
       }),
     ).toBe(true);
     expect(
-      Value.Check(operationCreateRequestSchema, {
-        kind: "rcon.command",
-        payload: { command: "shell", args: ["id"] },
-      }),
-    ).toBe(false);
-    expect(
-      Value.Check(operationCreateRequestSchema, {
-        kind: "rcon.command",
-        payload: { command: "players", args: ["unexpected"] },
-      }),
-    ).toBe(false);
-    expect(
-      Value.Check(operationCreateRequestSchema, {
-        kind: "rcon.command",
-        payload: { command: "servermsg", args: ["line one\nline two"] },
+      Value.Check(agentRealtimeInboundSchema, {
+        type: "command.result",
+        requestId: "",
+        ok: true,
       }),
     ).toBe(false);
   });
@@ -205,16 +203,18 @@ describe("agent operation contracts", () => {
       "start",
       "stop",
       "restart",
+      "build.update",
       "backup",
-      "world.save",
-      "rcon.command",
       "mods.list",
       "mods.add",
       "mods.remove",
       "mods.configure",
       "mods.update.check",
       "mods.update.apply",
+      "settings.read",
       "settings.update",
+      "config.read",
+      "config.update",
       "world.reset",
     ]) {
       expect(

@@ -18,6 +18,7 @@ export PZCTL_ENV="$ENVF"
 pz_load_env
 PZ_MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 PZ_BUILDUPDATE="${PZ_BUILDUPDATE:-/usr/local/sbin/pz-build-update}"
+PZ_AGENT_CORE="${PZ_REALTIME_AGENT:-/usr/local/sbin/pz-agent-core}"
 
 cli_mods_list_json() {
   local active disabled disk tracked
@@ -536,11 +537,29 @@ cli_logs_json() {
   [ "$lines" -ge 1 ] && [ "$lines" -le 1000 ] || return 64
   tail -n "$lines" "$PZ_CONSOLE" 2>/dev/null | python3 -c 'import json, sys; print(json.dumps({"lines": sys.stdin.read().splitlines()}, separators=(",", ":")))'
 }
+cli_capabilities_json() {
+  [ -x "$PZ_AGENT_CORE" ] || {
+    printf 'pzctl: realtime agent core is not installed: %s\n' "$PZ_AGENT_CORE" >&2
+    return 1
+  }
+  "$PZ_AGENT_CORE" capabilities
+}
+
+cli_direct_json() {
+  [ -x "$PZ_AGENT_CORE" ] || {
+    printf 'pzctl: realtime agent core is not installed: %s\n' "$PZ_AGENT_CORE" >&2
+    return 1
+  }
+  "$PZ_AGENT_CORE" direct
+}
+
 
 cli_help() {
   cat <<'EOF'
 Usage: pzctl [status|start|stop|restart|build-update|backup|world-save|logs] [--json] [lines]
        pzctl [mods-list|mods-add|mods-remove|mods-configure|mods-update-check|mods-update-apply|settings|settings-read|config-read|config-update|world-reset] --json [args]
+       pzctl capabilities --json
+       pzctl direct --json < request.json
        pzctl rcon --json < request.json
        pzctl backup --json [keep]
        pzctl --version | --help
@@ -553,6 +572,16 @@ EOF
 
 if [ "$#" -gt 0 ]; then
   case "$1" in
+    capabilities)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_capabilities_json
+      exit $?
+      ;;
+    direct)
+      [ "$#" -eq 2 ] && [ "$2" = --json ] || exit 64
+      cli_direct_json
+      exit $?
+      ;;
     status)
       [ "$#" -le 2 ] && { [ "$#" -eq 1 ] || [ "$2" = --json ]; } || {
         printf 'pzctl: unsupported status arguments\n' >&2
@@ -658,6 +687,14 @@ if [ "$#" -gt 0 ]; then
         exit 64
       }
       case "$2" in
+        capabilities)
+          [ "$#" -eq 2 ] || exit 64
+          cli_capabilities_json
+          ;;
+        direct)
+          [ "$#" -eq 2 ] || exit 64
+          cli_direct_json
+          ;;
         status)
           [ "$#" -eq 2 ] || exit 64
           status_json
