@@ -323,7 +323,7 @@ cli_logs_json() {
 cli_help() {
   cat <<'EOF'
 Usage: pzctl [status|start|stop|restart|backup|logs] [--json] [lines]
-       pzctl [mods-list|mods-add|mods-remove|settings|world-reset] --json [args]
+       pzctl [mods-list|mods-add|mods-remove|settings|settings-read|world-reset] --json [args]
        pzctl backup --json [keep]
        pzctl --version | --help
 
