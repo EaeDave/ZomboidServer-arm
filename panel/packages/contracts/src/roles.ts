@@ -1,4 +1,6 @@
-export type CapabilityRole = "viewer" | "operator" | "admin";
+export const capabilityRoles = ["viewer", "operator", "admin"] as const;
+
+export type CapabilityRole = (typeof capabilityRoles)[number];
 
 export const roleRank: Record<CapabilityRole, number> = {
   viewer: 0,

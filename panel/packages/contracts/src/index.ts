@@ -1,4 +1,5 @@
-export { directCapabilityRoles, roleRank, type CapabilityRole } from "./roles";
+export { capabilityRoles, directCapabilityRoles, roleRank, type CapabilityRole } from "./roles";
+import { capabilityRoles } from "./roles";
 
 import { Type, type Static } from "@sinclair/typebox";
 
@@ -116,9 +117,9 @@ const operationRecordKindSchema = Type.Union([
 
 export const capabilityModeSchema = Type.Union([Type.Literal("direct"), Type.Literal("job")]);
 export const capabilityRoleSchema = Type.Union([
-  Type.Literal("viewer"),
-  Type.Literal("operator"),
-  Type.Literal("admin"),
+  Type.Literal(capabilityRoles[0]),
+  Type.Literal(capabilityRoles[1]),
+  Type.Literal(capabilityRoles[2]),
 ]);
 
 export const capabilityArgumentSchema = Type.Object(

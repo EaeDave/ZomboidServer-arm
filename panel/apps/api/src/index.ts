@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { isIP } from "node:net";
 import { cors } from "@elysiajs/cors";
 import { staticPlugin } from "@elysiajs/static";
@@ -201,7 +202,7 @@ export function createApp(
 ) {
   const realtime = options.realtimeBroker ?? new RealtimeBroker();
   const authenticatedRealtimeSockets = new WeakSet<object>();
-  const pendingRealtimeMessages = new WeakMap<object, unknown[]>();
+  const pendingRealtimeMessages = new WeakMap<object, { messages: unknown[]; bytes: number }>();
   const receiveRealtimeMessage = (
     serverId: string,
     socket: Parameters<RealtimeBroker["connect"]>[1],
@@ -240,7 +241,7 @@ export function createApp(
           ws.close(1008, "Agent authentication required");
           return;
         }
-        pendingRealtimeMessages.set(ws.raw, []);
+        pendingRealtimeMessages.set(ws.raw, { messages: [], bytes: 0 });
         try {
           await agentService.authenticateRealtime(agentId, token, serverId);
           const pending = pendingRealtimeMessages.get(ws.raw);
@@ -249,7 +250,7 @@ export function createApp(
           authenticatedRealtimeSockets.add(ws.raw);
           realtime.connect(serverId, ws.raw);
           ws.send(JSON.stringify({ type: "control.ready", protocolVersion: 1 }));
-          for (const message of pending) {
+          for (const message of pending.messages) {
             if (!receiveRealtimeMessage(serverId, ws.raw, message)) break;
           }
         } catch {
@@ -264,7 +265,27 @@ export function createApp(
         }
         const pending = pendingRealtimeMessages.get(ws.raw);
         if (pending) {
-          pending.push(message);
+          let bytes: number;
+          try {
+            bytes = Buffer.byteLength(
+              typeof message === "string" ? message : JSON.stringify(message),
+            );
+          } catch {
+            pendingRealtimeMessages.delete(ws.raw);
+            ws.close(1008, "Invalid realtime protocol message");
+            return;
+          }
+          if (
+            pending.messages.length >= 8 ||
+            bytes > 64 << 10 ||
+            pending.bytes + bytes > 64 << 10
+          ) {
+            pendingRealtimeMessages.delete(ws.raw);
+            ws.close(1008, "Too many messages before agent authentication");
+            return;
+          }
+          pending.messages.push(message);
+          pending.bytes += bytes;
           return;
         }
         ws.close(1008, "Agent authentication incomplete");
