@@ -72,7 +72,6 @@ export const operationKinds = [
   "start",
   "stop",
   "restart",
-  "logs",
   "backup",
   "mods.list",
   "mods.add",
@@ -88,7 +87,6 @@ export const operationKindSchema = Type.Union([
   Type.Literal("start"),
   Type.Literal("stop"),
   Type.Literal("restart"),
-  Type.Literal("logs"),
   Type.Literal("backup"),
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
@@ -230,18 +228,6 @@ export const restartOperationRequestSchema = Type.Object(
   closedObjectOptions,
 );
 
-export const logsOperationRequestSchema = Type.Object(
-  {
-    ...operationBaseSchema,
-    kind: Type.Literal("logs"),
-    payload: Type.Object(
-      { lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) },
-      closedObjectOptions,
-    ),
-  },
-  closedObjectOptions,
-);
-
 export const backupOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
@@ -329,7 +315,6 @@ export const agentOperationRequestSchema = Type.Union([
   startOperationRequestSchema,
   stopOperationRequestSchema,
   restartOperationRequestSchema,
-  logsOperationRequestSchema,
   backupOperationRequestSchema,
   modsListOperationRequestSchema,
   modsAddOperationRequestSchema,
@@ -374,7 +359,6 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("start"),
   Type.Literal("stop"),
   Type.Literal("restart"),
-  Type.Literal("logs"),
   Type.Literal("backup"),
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
@@ -423,16 +407,6 @@ export const operationCreateRequestSchema = Type.Union([
   Type.Object({ kind: Type.Literal("start"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("stop"), payload: emptyPayloadSchema }, closedObjectOptions),
   Type.Object({ kind: Type.Literal("restart"), payload: emptyPayloadSchema }, closedObjectOptions),
-  Type.Object(
-    {
-      kind: Type.Literal("logs"),
-      payload: Type.Object(
-        { lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) },
-        closedObjectOptions,
-      ),
-    },
-    closedObjectOptions,
-  ),
   Type.Object(
     {
       kind: Type.Literal("backup"),

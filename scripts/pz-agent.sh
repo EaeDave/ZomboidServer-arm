@@ -587,7 +587,7 @@ print(json.dumps({"inode": inode, "cursor": next_offset, "fingerprint": fingerpr
 PY
 }
 
-send_console_delta() {
+send_operation_console_delta() {
   local url="$1" agent_id="$2" token="$3" operation_id="$4"
   local file_cursor="$5" inode="$6" event_cursor="$7" flush="$8"
   local delta lines_json next_file_cursor next_inode line_count next_event_cursor body
@@ -725,38 +725,6 @@ PY
   LOG_NEXT_RESYNC_ID="$resync_id"
 }
 
-post_result_logs() {
-  local url="$1" agent_id="$2" token="$3" operation_id="$4" result="$5" body
-  while IFS= read -r body; do
-    [ -n "$body" ] || continue
-    post_logs_body "$url" "$agent_id" "$token" "$operation_id" "$body" || return 1
-  done < <(RESULT="$result" python3 - <<'PY'
-import json
-import os
-
-try:
-    raw_lines = json.loads(os.environ["RESULT"]).get("lines", [])
-except (TypeError, ValueError, json.JSONDecodeError):
-    raw_lines = []
-lines = [str(line)[:2048] for line in raw_lines if isinstance(line, str)]
-start = 0
-while start < len(lines):
-    end = start
-    encoded = 2
-    while end < len(lines) and end - start < 100:
-        candidate = lines[end]
-        candidate_bytes = len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) + 1
-        if end > start and encoded + candidate_bytes > 60 * 1024:
-            break
-        encoded += candidate_bytes
-        end += 1
-    chunk = lines[start:end]
-    print(json.dumps({"cursor": end, "lines": chunk}, ensure_ascii=False, separators=(",", ":")))
-    start = end
-PY
-  )
-}
-
 run_long_job() {
   local url="$1" agent_id="$2" token="$3" operation_id="$4" kind="$5" active_file="$6"
   local state_dir result_file
@@ -791,7 +759,7 @@ run_long_job() {
     command_pid="$!"
     while kill -0 "$command_pid" 2>/dev/null; do
       post_progress "$url" "$agent_id" "$token" "$operation_id" "Host operation is still running." || true
-      if send_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
+      if send_operation_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
         log_file_cursor="$LOG_NEXT_CURSOR"
         log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
         log_inode="$LOG_NEXT_INODE"
@@ -805,7 +773,7 @@ run_long_job() {
     log_flush=1
     final_attempts=0
     while [ "$final_attempts" -lt 5 ]; do
-      if send_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
+      if send_operation_console_delta "$url" "$agent_id" "$token" "$operation_id" "$log_file_cursor" "$log_inode" "$log_event_cursor" "$log_flush"; then
         log_file_cursor="$LOG_NEXT_CURSOR"
         log_event_cursor="$LOG_NEXT_EVENT_CURSOR"
         log_inode="$LOG_NEXT_INODE"
@@ -1019,16 +987,6 @@ PY
                 if result_status="$(sudo -n "$PZ_AGENT_PRIV" backup "$keep" 2>/dev/null)"; then :; else result_status=""; fi
               elif result_status="$(sudo -n "$PZ_AGENT_PRIV" backup 2>/dev/null)"; then :; else result_status=""; fi
               ;;
-            logs)
-              lines="$(PAYLOAD="$job_payload" python3 - <<'PY'
-import json
-import os
-
-print(json.loads(os.environ["PAYLOAD"]).get("lines", 50))
-PY
-              )"
-              if result_status="$(sudo -n "$PZ_AGENT_PRIV" logs "$lines" 2>/dev/null)"; then :; else result_status=""; fi
-              ;;
             mods.list)
               if result_status="$(sudo -n "$PZ_AGENT_PRIV" mods-list 2>/dev/null)"; then :; else result_status=""; fi
               ;;
@@ -1056,10 +1014,6 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
-            if [ "$job_kind" = logs ]; then
-              post_result_logs "$url" "$agent_id" "$access_token" "$job_id" "$result_status" ||
-                printf 'pz-agent: could not publish fetched log lines; retaining result only\n' >&2
-            fi
             if completion="$(RESULT="$result_status" python3 - <<'PY'
 import json
 import os

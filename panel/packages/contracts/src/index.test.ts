@@ -29,7 +29,7 @@ describe("agent operation contracts", () => {
     expect(Value.Check(operationCreateRequestSchema, { kind: "start", payload: {} })).toBe(true);
     expect(
       Value.Check(operationCreateRequestSchema, { kind: "logs", payload: { lines: 100 } }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       Value.Check(operationCreateRequestSchema, {
         kind: "restart",
@@ -79,7 +79,7 @@ describe("agent operation contracts", () => {
         protocolVersion: 1,
         requestId: "request-extra",
         serverId: "production",
-        kind: "logs",
+        kind: "status",
         payload: { lines: 10, command: "tail" },
       }),
     ).toBe(false);
@@ -96,7 +96,6 @@ describe("agent operation contracts", () => {
       "start",
       "stop",
       "restart",
-      "logs",
       "backup",
       "mods.list",
       "mods.add",

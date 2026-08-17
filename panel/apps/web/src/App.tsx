@@ -642,11 +642,6 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               Queue world reset
             </button>
           </div>
-          {lastOperation.isSuccess && lastOperation.data.result !== undefined ? (
-            <pre className="mt-5 overflow-x-auto rounded-xl bg-black/30 p-4 text-xs text-zinc-400">
-              {JSON.stringify(lastOperation.data.result, null, 2)}
-            </pre>
-          ) : null}
         </section>
 
         {user?.role === "admin" ? (

@@ -69,7 +69,6 @@ const supportedOperationKinds = new Set([
   "start",
   "stop",
   "restart",
-  "logs",
   "backup",
   "mods.list",
   "mods.add",
@@ -493,7 +492,7 @@ export function createApp(
           };
         }
         const requiredRole =
-          body.kind === "status" || body.kind === "logs" || body.kind === "mods.list"
+          body.kind === "status" || body.kind === "mods.list"
             ? "viewer"
             : body.kind === "world.reset"
               ? "admin"
