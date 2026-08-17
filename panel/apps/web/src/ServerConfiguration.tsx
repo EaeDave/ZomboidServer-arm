@@ -287,24 +287,20 @@ export function ServerConfiguration({
     setCategory(categories.find((item) => item.id === "sleep")?.id ?? categories[0]!.id);
   }, [categories, category]);
 
-  const commonFields = useMemo(() => {
-    const preferred = fields.filter((field) => COMMON_PATHS.has(field.path));
-    const categoryFields = fields.filter(
-      (field) =>
-        ["sleep", "players", "pvp", "general"].includes(field.category) &&
-        field.editable &&
-        !field.sensitive,
-    );
-    const seen = new Set<string>();
-    return [...preferred, ...categoryFields]
-      .filter((field) => {
-        const key = identity(field);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .slice(0, 12);
-  }, [fields]);
+  const commonFields = useMemo(
+    () =>
+      fields
+        .filter((field) => {
+          const searchable = `${field.path} ${field.label}`.toLocaleLowerCase();
+          return (
+            (COMMON_PATHS.has(field.path) || /sleep|pvp/.test(searchable)) &&
+            field.editable &&
+            !field.sensitive
+          );
+        })
+        .slice(0, 12),
+    [fields],
+  );
 
   const visible = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
