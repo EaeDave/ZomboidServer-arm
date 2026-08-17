@@ -5,6 +5,7 @@ import {
   agentRealtimeInboundSchema,
   agentRealtimeExecuteSchema,
   directCommandRequestSchema,
+  directCommandResponseSchema,
   agentOperationResponseSchema,
   agentJobCompleteRequestSchema,
   agentConsoleLogRequestSchema,
@@ -124,6 +125,21 @@ describe("agent operation contracts", () => {
         input: { message: "Maintenance soon" },
       }),
     ).toBe(true);
+    expect(
+      Value.Check(directCommandResponseSchema, {
+        requestId: "request-1",
+        capabilityId: "rcon.players",
+        durationMs: 12,
+        result: null,
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(directCommandResponseSchema, {
+        requestId: "request-1",
+        capabilityId: "rcon.players",
+        durationMs: 12,
+      }),
+    ).toBe(false);
     expect(
       Value.Check(agentRealtimeExecuteSchema, {
         type: "command.execute",

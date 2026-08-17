@@ -120,7 +120,11 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 		}
 		message := strings.TrimSpace(stderr.String())
 		if len(message) > 2000 {
-			message = message[:2000]
+			cut := 2000
+			for cut > 0 && !utf8.RuneStart(message[cut]) {
+				cut--
+			}
+			message = message[:cut]
 		}
 		if message == "" {
 			message = runError.Error()

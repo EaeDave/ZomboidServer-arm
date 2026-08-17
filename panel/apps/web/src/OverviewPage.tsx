@@ -263,7 +263,7 @@ export function OverviewPage({
   operations,
   operationMessage,
   operationPending,
-  realtimeConnected,
+  worldSaveAvailable,
   worldSavePending,
   onRefresh,
   onQueue,
@@ -281,7 +281,7 @@ export function OverviewPage({
   operations?: OperationRecord[];
   operationMessage?: string;
   operationPending: boolean;
-  realtimeConnected: boolean;
+  worldSaveAvailable: boolean;
   worldSavePending: boolean;
   onRefresh: () => void;
   onQueue: (
@@ -420,14 +420,16 @@ export function OverviewPage({
                   !canOperate ||
                   busy ||
                   !running ||
-                  !realtimeConnected ||
+                  !worldSaveAvailable ||
                   server?.rconAvailable !== true
                 }
                 onClick={onSaveWorld}
                 title={
-                  server?.rconAvailable === false
-                    ? "RCON is not available; the world cannot be saved safely."
-                    : "Send the save command through the local RCON connection."
+                  !worldSaveAvailable
+                    ? "The host agent is disconnected or does not advertise world save."
+                    : server?.rconAvailable !== true
+                      ? "RCON is not available; the world cannot be saved safely."
+                      : "Send the save command through the local RCON connection."
                 }
                 type="button"
               >

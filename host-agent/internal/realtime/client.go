@@ -77,7 +77,7 @@ func (c *Client) Run(ctx context.Context) error {
 		startedAt := time.Now()
 		err := c.runConnection(ctx)
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // Cancellation is a normal service shutdown.
 		}
 		log.Printf("realtime connection closed: %v", err)
 		if time.Since(startedAt) >= time.Minute {
@@ -107,12 +107,13 @@ func (c *Client) runConnection(ctx context.Context) error {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.config.AccessToken)
 	dialCtx, cancelDial := context.WithTimeout(ctx, 10*time.Second)
-	connection, _, err := websocket.Dial(dialCtx, endpoint, &websocket.DialOptions{HTTPHeader: header})
+	// coder/websocket owns the HTTP response body after upgrading the connection.
+	connection, _, err := websocket.Dial(dialCtx, endpoint, &websocket.DialOptions{HTTPHeader: header}) //nolint:bodyclose
 	cancelDial()
 	if err != nil {
 		return fmt.Errorf("dial realtime API: %w", err)
 	}
-	defer connection.CloseNow()
+	defer func() { _ = connection.CloseNow() }()
 	connection.SetReadLimit(1 << 20)
 
 	readyCtx, cancelReady := context.WithTimeout(ctx, 10*time.Second)
@@ -157,7 +158,7 @@ func (c *Client) runConnection(ctx context.Context) error {
 				writeMu.Unlock()
 				cancel()
 				if err != nil {
-					connection.CloseNow()
+					_ = connection.CloseNow()
 					return
 				}
 			case <-pingCtx.Done():

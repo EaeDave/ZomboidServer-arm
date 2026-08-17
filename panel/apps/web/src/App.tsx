@@ -299,7 +299,7 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
         onRefresh={() => void server.refetch()}
         onRevealSettings={() => revealServerSettings(SERVER_ID)}
         onSaveWorld={() => worldSaveMutation.mutate()}
-        realtimeConnected={
+        worldSaveAvailable={
           agentCapabilities.data?.connected === true &&
           agentCapabilities.data.capabilities.some(
             (capability) => capability.id === "world.save" && capability.mode === "direct",
