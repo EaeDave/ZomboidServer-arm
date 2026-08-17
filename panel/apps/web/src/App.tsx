@@ -4,6 +4,7 @@ import type {
   AgentStatus,
   AuditEvent,
   AuthUser,
+  ConfigUpdatePayload,
   HealthResponse,
   OperationCreateRequest,
   OperationEvent,
@@ -11,6 +12,7 @@ import type {
 } from "@zomboid/contracts";
 import { useEffect, useRef, useState } from "react";
 import { ServerConsole } from "./ServerConsole";
+import { ServerConfiguration } from "./ServerConfiguration";
 
 const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
 
@@ -504,7 +506,28 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
           Zomboid host.
         </p>
 
-        {serverAccessPanel}
+        <nav className="mt-6 flex flex-wrap gap-2 text-sm">
+          <a
+            className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-300 hover:border-emerald-400"
+            href="#overview"
+          >
+            Visão geral
+          </a>
+          <a
+            className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-300 hover:border-emerald-400"
+            href="#configuration"
+          >
+            Configurações
+          </a>
+          <a
+            className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-300 hover:border-emerald-400"
+            href="#server-tools"
+          >
+            Mods e mundo
+          </a>
+        </nav>
+
+        <div id="overview">{serverAccessPanel}</div>
 
         <div className="mt-5 grid gap-5 md:grid-cols-2">
           <details className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
@@ -546,6 +569,27 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                   <dt className="text-zinc-500">Players</dt>
                   <dd className="mt-1 font-medium">
                     {server.data.playerCount < 0 ? "unknown" : server.data.playerCount}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-zinc-500">Jogadores online</dt>
+                  <dd className="mt-2 flex flex-wrap gap-2">
+                    {server.data.onlinePlayers?.length ? (
+                      server.data.onlinePlayers.map((player) => (
+                        <span
+                          className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200"
+                          key={player}
+                        >
+                          {player}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-zinc-400">
+                        {server.data.rconAvailable === false
+                          ? "RCON indisponível"
+                          : "Nenhum jogador conectado"}
+                      </span>
+                    )}
                   </dd>
                 </div>
                 <div>
@@ -690,9 +734,21 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
           ) : null}
         </section>
 
+        <ServerConfiguration
+          busy={Boolean(activeOperation) || operationMutation.isPending}
+          onQueue={(payload: ConfigUpdatePayload) =>
+            operationMutation.mutateAsync({ kind: "config.update", payload })
+          }
+          serverId={SERVER_ID}
+          user={user}
+        />
+
         <ServerConsole serverId={SERVER_ID} enabled={Boolean(user)} />
 
-        <section className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20">
+        <section
+          className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl shadow-black/20"
+          id="server-tools"
+        >
           <h2 className="text-lg font-medium">Server tools</h2>
           <div className="mt-5 grid gap-5 md:grid-cols-2">
             <form
