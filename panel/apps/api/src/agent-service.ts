@@ -251,6 +251,17 @@ export class DatabaseAgentService implements AgentService {
     }
   }
 
+  private async trimConsoleResyncs(database: Database, serverId: string) {
+    await database
+      .delete(consoleLogResyncs)
+      .where(
+        and(
+          eq(consoleLogResyncs.serverId, serverId),
+          lt(consoleLogResyncs.createdAt, new Date(this.now().getTime() - 24 * 60 * 60 * 1000)),
+        ),
+      );
+  }
+
   private async trimConsoleLogs(database: Database, serverId: string) {
     const maxLogs = 2_000;
     const retained = await database
@@ -819,24 +830,9 @@ export class DatabaseAgentService implements AgentService {
           .limit(1);
         if (existingResync) return existingResync.cursor;
 
-        // The new tail can overlap the bounded history after an agent state loss. Retain only
-        // the non-overlapping suffix; matching is restricted to the contiguous history suffix so
-        // repeated, legitimate log messages elsewhere are never discarded.
-        const recent = await transaction
-          .select({ line: consoleLogEntries.line })
-          .from(consoleLogEntries)
-          .where(eq(consoleLogEntries.serverId, server.id))
-          .orderBy(desc(consoleLogEntries.id))
-          .limit(lines.length);
-        const previousLines = recent.reverse().map((entry) => entry.line);
-        const maximumOverlap = Math.min(previousLines.length, lines.length);
+        // The request key identifies the source range. Never infer physical overlap from text:
+        // identical lines are valid after a rotation or at the beginning of a new log file.
         firstLine = 0;
-        for (let overlap = maximumOverlap; overlap > 0; overlap--) {
-          if (previousLines.slice(-overlap).every((line, index) => line === lines[index])) {
-            firstLine = overlap;
-            break;
-          }
-        }
       }
 
       const appendedLines = lines.slice(firstLine);
@@ -869,6 +865,7 @@ export class DatabaseAgentService implements AgentService {
       return nextCursor;
     });
     await this.trimConsoleLogs(database, server.id);
+    await this.trimConsoleResyncs(database, server.id);
     return acceptedCursor;
   }
 

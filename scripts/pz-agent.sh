@@ -383,16 +383,22 @@ initial_console_position() {
 import hashlib
 import os
 
+MISSING_RESYNC_ID = hashlib.sha256(b"missing-console-file").hexdigest()
 base = os.path.realpath(os.environ["LOG_BASE"])
 path = os.path.realpath(os.environ["LOG_FILE"])
 if os.path.commonpath((base, path)) != base:
-    print("0 0 0 1 -")
+    print(f"0 0 0 1 - {MISSING_RESYNC_ID}")
     raise SystemExit
 try:
     stat = os.stat(path)
 except OSError:
-    print("0 0 0 1 -")
+    print(f"0 0 0 1 - {MISSING_RESYNC_ID}")
     raise SystemExit
+try:
+    with open(path, "rb") as handle:
+        source_fingerprint = hashlib.sha256(handle.read(64)).hexdigest()
+except OSError:
+    source_fingerprint = "-"
 
 start = max(0, stat.st_size - 256 * 1024)
 try:
@@ -400,7 +406,7 @@ try:
         handle.seek(start)
         raw = handle.read()
 except OSError:
-    print(f"{stat.st_ino} {stat.st_size} 0 1 -")
+    print(f"{stat.st_ino} {stat.st_size} 0 1 - {MISSING_RESYNC_ID}")
     raise SystemExit
 if start:
     newline = raw.find(b"\n")
@@ -484,6 +490,11 @@ try:
 except OSError:
     print(json.dumps({"inode": 0, "cursor": 0, "fingerprint": "-", "lines": []}, separators=(",", ":")))
     raise SystemExit
+try:
+    with open(path, "rb") as handle:
+        source_fingerprint = hashlib.sha256(handle.read(64)).hexdigest()
+except OSError:
+    source_fingerprint = "-"
 
 inode = str(stat.st_ino)
 offset = int(os.environ.get("LOG_CURSOR", "0"))
@@ -502,7 +513,7 @@ try:
         handle.seek(offset)
         raw = handle.read(MAX_BYTES)
 except OSError:
-    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": "-", "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": "-", "sourceFingerprint": source_fingerprint, "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 if not raw:
@@ -512,7 +523,7 @@ if not raw:
             fingerprint = hashlib.sha256(handle.read(offset - max(0, offset - 64))).hexdigest()
     except OSError:
         fingerprint = "-"
-    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": fingerprint, "lines": []}, separators=(",", ":")))
+    print(json.dumps({"inode": inode, "cursor": offset, "fingerprint": fingerprint, "sourceFingerprint": source_fingerprint, "lines": []}, separators=(",", ":")))
     raise SystemExit
 
 flush = os.environ.get("LOG_FLUSH") == "1"
@@ -548,7 +559,7 @@ try:
         fingerprint = hashlib.sha256(handle.read(next_offset - max(0, next_offset - 64))).hexdigest()
 except OSError:
     fingerprint = "-"
-print(json.dumps({"inode": inode, "cursor": next_offset, "fingerprint": fingerprint, "lines": lines}, separators=(",", ":")))
+print(json.dumps({"inode": inode, "cursor": next_offset, "fingerprint": fingerprint, "sourceFingerprint": source_fingerprint, "lines": lines}, separators=(",", ":")))
 PY
 }
 
@@ -579,15 +590,24 @@ PY
 
 send_live_console_delta() {
   local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" resync="$7" fingerprint="$8" resync_id="$9" flush="${10}"
-  local delta lines_json next_file_cursor next_inode next_fingerprint line_count next_event_cursor body response accepted_cursor
+  local delta lines_json next_file_cursor next_inode next_fingerprint source_fingerprint line_count next_event_cursor body response accepted_cursor
   delta="$(read_console_delta "$file_cursor" "$inode" "$flush" "$fingerprint")" || return 1
   next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
   next_inode="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["inode"])')"
   next_fingerprint="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["fingerprint"])')"
+  source_fingerprint="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"]).get("sourceFingerprint", "-"))')"
   lines_json="$(DELTA="$delta" python3 -c 'import json, os; print(json.dumps(json.loads(os.environ["DELTA"])["lines"], separators=(",", ":")))')"
   line_count="$(LINES="$lines_json" python3 -c 'import json, os; print(len(json.loads(os.environ["LINES"])))')"
   next_event_cursor=$((event_cursor + line_count))
   if [ "$lines_json" != "[]" ]; then
+    if [ "$resync" = 1 ]; then
+      resync_id="$(INODE="$next_inode" START="$file_cursor" END="$next_file_cursor" SOURCE="$source_fingerprint" LINES="$lines_json" python3 - <<'PY'
+import hashlib
+import os
+print(hashlib.sha256("\\0".join([os.environ["INODE"], os.environ["START"], os.environ["END"], os.environ["SOURCE"], os.environ["LINES"]]).encode()).hexdigest())
+PY
+      )"
+    fi
     body="$(SERVER_ID="$PZ_SERVER_ID" CURSOR="$next_event_cursor" RESYNC="$resync" RESYNC_ID="$resync_id" LINES="$lines_json" python3 - <<'PY'
 import json
 import os
