@@ -290,14 +290,7 @@ export function ServerConfiguration({
   const commonFields = useMemo(
     () =>
       fields
-        .filter((field) => {
-          const searchable = `${field.path} ${field.label}`.toLocaleLowerCase();
-          return (
-            (COMMON_PATHS.has(field.path) || /sleep|pvp/.test(searchable)) &&
-            field.editable &&
-            !field.sensitive
-          );
-        })
+        .filter((field) => COMMON_PATHS.has(field.path) && field.editable && !field.sensitive)
         .slice(0, 12),
     [fields],
   );
