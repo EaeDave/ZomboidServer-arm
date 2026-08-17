@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/capabilities"
@@ -17,6 +19,16 @@ func testExecutor(t *testing.T) *Executor {
 	privilegedScript := `#!/bin/sh
 set -eu
 operation="$1"
+if [ "$operation" = world-save ]; then
+  printf '{"status":"failed","message":"RCON unavailable"}\n'
+  exit 0
+fi
+if [ "$operation" = mods-list ] && [ "${PZ_TEST_LARGE:-0}" = 1 ]; then
+  printf '{"output":"'
+  dd if=/dev/zero bs=1024 count=901 2>/dev/null | tr '\000' x
+  printf '"}\n'
+  exit 0
+fi
 payload="$(cat)"
 [ -n "$payload" ] || payload='{}'
 printf '{"status":"succeeded","operation":"%s","payload":%s}\n' "$operation" "$payload"
@@ -74,17 +86,44 @@ func TestExecuteRejectsUnknownAndInvalidInput(t *testing.T) {
 	if _, err := executor.Execute(context.Background(), "server.status", input(map[string]any{"command": "id"})); err == nil {
 		t.Fatal("unexpected capability argument succeeded")
 	}
+	if _, err := executor.Execute(context.Background(), "server.start", input(nil)); err == nil {
+		t.Fatal("job capability succeeded on the direct path")
+	}
+	if _, err := executor.Execute(context.Background(), "world.save", input(nil)); err == nil || !strings.Contains(err.Error(), "RCON unavailable") {
+		t.Fatalf("structured host failure error = %v", err)
+	}
+	t.Setenv("PZ_TEST_LARGE", "1")
+	if _, err := executor.Execute(context.Background(), "mods.list", input(nil)); err == nil || !strings.Contains(err.Error(), "output exceeded") {
+		t.Fatalf("oversized output error = %v", err)
+	}
 }
 
 func TestRegistryIdentifiersAreUnique(t *testing.T) {
+	identifier := regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 	seen := make(map[string]bool)
 	for _, capability := range capabilities.Registry {
 		if seen[capability.ID] {
 			t.Fatalf("duplicate capability %q", capability.ID)
 		}
 		seen[capability.ID] = true
+		if !identifier.MatchString(capability.ID) || capability.Description == "" {
+			t.Fatalf("capability %q violates the panel contract", capability.ID)
+		}
 		if capability.Mode != "direct" && capability.Mode != "job" {
 			t.Fatalf("capability %q has invalid mode %q", capability.ID, capability.Mode)
+		}
+		if capability.Mode == "job" && capability.OperationKind == "" {
+			t.Fatalf("job capability %q has no operation kind", capability.ID)
+		}
+		if len(capability.Effects) > 10 || len(capability.Arguments) > 20 {
+			t.Fatalf("capability %q exceeds panel collection bounds", capability.ID)
+		}
+		effects := make(map[string]bool, len(capability.Effects))
+		for _, effect := range capability.Effects {
+			if effects[effect] {
+				t.Fatalf("capability %q repeats effect %q", capability.ID, effect)
+			}
+			effects[effect] = true
 		}
 	}
 }

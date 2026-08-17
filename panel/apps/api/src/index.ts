@@ -689,22 +689,56 @@ export function createApp(
           return { error: { code: "forbidden", message: "Insufficient role for this command" } };
         }
         try {
-          const result = await realtime.execute(params.serverId, body, user.role);
           await audit.record({
-            action: "server.command",
+            action: "server.command.requested",
             actorUserId: user.id,
-            metadata: {
-              serverId: params.serverId,
-              capabilityId: body.capabilityId,
-              requestId: result.requestId,
-              durationMs: result.durationMs,
-            },
+            metadata: { serverId: params.serverId, capabilityId: body.capabilityId },
           });
+        } catch {
+          set.status = 503;
+          return { error: { code: "audit_unavailable", message: "Audit storage is unavailable" } };
+        }
+        try {
+          const result = await realtime.execute(params.serverId, body, user.role);
+          try {
+            await audit.record({
+              action: "server.command.completed",
+              actorUserId: user.id,
+              metadata: {
+                serverId: params.serverId,
+                capabilityId: body.capabilityId,
+                requestId: result.requestId,
+                durationMs: result.durationMs,
+              },
+            });
+          } catch (error) {
+            console.error("failed to record realtime command completion", error);
+          }
           return result;
         } catch (error) {
           if (error instanceof RealtimeCapabilityError) {
             set.status = 400;
             return { error: { code: "unsupported_capability", message: error.message } };
+          }
+          try {
+            await audit.record({
+              action: "server.command.failed",
+              actorUserId: user.id,
+              metadata: {
+                serverId: params.serverId,
+                capabilityId: body.capabilityId,
+                errorType: error instanceof Error ? error.name : "unknown",
+              },
+            });
+          } catch (auditError) {
+            console.error("failed to record realtime command failure", auditError);
+          }
+          if (error instanceof RealtimeCommandError) {
+            console.error("realtime host command failed", {
+              serverId: params.serverId,
+              capabilityId: body.capabilityId,
+              message: error.message,
+            });
           }
           set.status =
             error instanceof RealtimeAgentUnavailableError
@@ -720,7 +754,10 @@ export function createApp(
                   : error instanceof RealtimeCommandError
                     ? "command_failed"
                     : "command_error",
-              message: error instanceof Error ? error.message : "Realtime command failed",
+              message:
+                error instanceof RealtimeAgentUnavailableError
+                  ? error.message
+                  : "Realtime command failed",
             },
           };
         }
@@ -1279,6 +1316,7 @@ export function createApp(
             params.serverId,
             { capabilityId: "config.read", input: {} },
             user.role,
+            90_000,
           );
           if (!Value.Check(configSnapshotSchema, response.result)) {
             throw new RealtimeCommandError("Host returned an invalid configuration snapshot");
@@ -1295,7 +1333,7 @@ export function createApp(
           return {
             error: {
               code: error instanceof RealtimeCommandError ? "command_failed" : "agent_unavailable",
-              message: error instanceof Error ? error.message : "Configuration is unavailable",
+              message: "Configuration is unavailable",
             },
           };
         }
@@ -1340,6 +1378,7 @@ export function createApp(
             params.serverId,
             { capabilityId: "settings.read", input: {} },
             user.role,
+            30_000,
           );
           if (!Value.Check(agentSettingsRevealSchema, response.result)) {
             throw new RealtimeCommandError("Host returned invalid access settings");
@@ -1356,7 +1395,7 @@ export function createApp(
           return {
             error: {
               code: error instanceof RealtimeCommandError ? "command_failed" : "agent_unavailable",
-              message: error instanceof Error ? error.message : "Settings are unavailable",
+              message: "Settings are unavailable",
             },
           };
         }

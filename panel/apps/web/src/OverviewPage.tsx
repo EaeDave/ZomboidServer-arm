@@ -46,13 +46,15 @@ function playerSummary(server?: AgentStatus) {
   return `${server.playerCount} ${server.playerCount === 1 ? "player" : "players"}`;
 }
 
-function operationLabel(kind: OperationKind) {
-  const labels: Partial<Record<OperationKind, string>> = {
+function operationLabel(kind: OperationRecord["kind"]) {
+  const labels: Partial<Record<OperationRecord["kind"], string>> = {
     start: "Start server",
     stop: "Stop server",
     restart: "Restart server",
     "build.update": "Update game build",
     backup: "Create backup",
+    "world.save": "Save world",
+    "rcon.command": "RCON command",
   };
   return labels[kind] ?? kind;
 }
@@ -261,6 +263,8 @@ export function OverviewPage({
   operations,
   operationMessage,
   operationPending,
+  realtimeConnected,
+  worldSavePending,
   onRefresh,
   onQueue,
   onSaveWorld,
@@ -277,6 +281,8 @@ export function OverviewPage({
   operations?: OperationRecord[];
   operationMessage?: string;
   operationPending: boolean;
+  realtimeConnected: boolean;
+  worldSavePending: boolean;
   onRefresh: () => void;
   onQueue: (
     kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
@@ -287,7 +293,7 @@ export function OverviewPage({
 }) {
   const [editingAccess, setEditingAccess] = useState(false);
   const running = server?.state === "active";
-  const busy = operationPending || Boolean(activeOperation);
+  const busy = operationPending || worldSavePending || Boolean(activeOperation);
   const statusLabel = running ? (server?.listening ? "Running" : "Starting") : "Stopped";
   const statusTone: Tone = running ? (server?.listening ? "success" : "warning") : "danger";
   const recentOperations =
@@ -410,7 +416,13 @@ export function OverviewPage({
             <div className="absolute right-0 z-10 mt-2 w-48 rounded-xl border border-zinc-700 bg-zinc-900 p-1.5 shadow-2xl">
               <button
                 className="block w-full rounded-lg px-3 py-2 text-left text-sm text-emerald-200 hover:bg-emerald-400/10 disabled:opacity-40"
-                disabled={!canOperate || busy || !running || server?.rconAvailable === false}
+                disabled={
+                  !canOperate ||
+                  busy ||
+                  !running ||
+                  !realtimeConnected ||
+                  server?.rconAvailable !== true
+                }
                 onClick={onSaveWorld}
                 title={
                   server?.rconAvailable === false

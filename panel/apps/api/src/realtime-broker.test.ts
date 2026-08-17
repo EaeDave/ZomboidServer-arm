@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import type { AgentCapability } from "@zomboid/contracts";
 import {
   RealtimeAgentUnavailableError,
@@ -127,7 +127,7 @@ describe("RealtimeBroker", () => {
   });
 
   it("times out commands and ignores a late response", async () => {
-    vi.useFakeTimers();
+    jest.useFakeTimers();
     try {
       const broker = new RealtimeBroker();
       const socket = new FakeSocket();
@@ -140,7 +140,7 @@ describe("RealtimeBroker", () => {
       );
       const message = socket.take();
 
-      vi.advanceTimersByTime(2_001);
+      jest.advanceTimersByTime(2_001);
       await expect(pending).rejects.toMatchObject({
         message: "The host did not answer the realtime command in time",
       });
@@ -153,8 +153,26 @@ describe("RealtimeBroker", () => {
         }),
       ).not.toThrow();
     } finally {
-      vi.useRealTimers();
+      jest.useRealTimers();
     }
+  });
+
+  it("bounds pending commands per server", async () => {
+    const broker = new RealtimeBroker();
+    const socket = new FakeSocket();
+    connect(broker, socket);
+    const pending = Array.from({ length: 32 }, () =>
+      broker.execute("production", { capabilityId: "server.status", input: {} }, "viewer"),
+    );
+
+    await expect(
+      broker.execute("production", { capabilityId: "server.status", input: {} }, "viewer"),
+    ).rejects.toMatchObject({
+      message: "Too many realtime commands are already in flight",
+    });
+    broker.disconnect("production", socket);
+    const settled = await Promise.allSettled(pending);
+    expect(settled.every((result) => result.status === "rejected")).toBe(true);
   });
 
   it("surfaces structured agent failures", async () => {

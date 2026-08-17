@@ -53,6 +53,7 @@ export class RealtimeCommandError extends Error {
 export class RealtimeBroker {
   private readonly connections = new Map<string, AgentConnection>();
   private readonly pending = new Map<string, PendingCommand>();
+  private static readonly maxPendingPerServer = 32;
 
   connect(serverId: string, socket: RealtimeSocket) {
     const previous = this.connections.get(serverId);
@@ -139,6 +140,15 @@ export class RealtimeBroker {
   ) {
     const connection = this.connections.get(serverId);
     if (!connection) return Promise.reject(new RealtimeAgentUnavailableError());
+    let pendingForServer = 0;
+    for (const command of this.pending.values()) {
+      if (command.serverId === serverId) pendingForServer += 1;
+    }
+    if (pendingForServer >= RealtimeBroker.maxPendingPerServer) {
+      return Promise.reject(
+        new RealtimeAgentUnavailableError("Too many realtime commands are already in flight"),
+      );
+    }
     const capability = connection.capabilities.find((item) => item.id === request.capabilityId);
     if (!capability) {
       return Promise.reject(

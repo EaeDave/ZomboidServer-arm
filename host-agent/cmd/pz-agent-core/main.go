@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"time"
 
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/capabilities"
@@ -18,6 +19,8 @@ type directRequest struct {
 	Input        map[string]json.RawMessage `json:"input"`
 	TimeoutMS    int                        `json:"timeoutMs,omitempty"`
 }
+
+var trustedLocalUser string
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -50,6 +53,16 @@ func run(args []string) error {
 		}
 		if request.Input == nil {
 			request.Input = map[string]json.RawMessage{}
+		}
+		capability, ok := capabilities.Find(request.CapabilityID)
+		if !ok || capability.Mode != "direct" {
+			return fmt.Errorf("capability %q is not a direct command", request.CapabilityID)
+		}
+		if capability.Role == "admin" {
+			current, err := user.Current()
+			if err != nil || trustedLocalUser == "" || current.Username != trustedLocalUser {
+				return fmt.Errorf("admin capabilities require the configured local server owner")
+			}
 		}
 		timeout := time.Duration(request.TimeoutMS) * time.Millisecond
 		if timeout < time.Second || timeout > 120*time.Second {

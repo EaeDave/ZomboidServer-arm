@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/capabilities"
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/executor"
@@ -74,11 +75,15 @@ func New(config Config) *Client {
 func (c *Client) Run(ctx context.Context) error {
 	backoff := time.Second
 	for ctx.Err() == nil {
+		startedAt := time.Now()
 		err := c.runConnection(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}
 		log.Printf("realtime connection closed: %v", err)
+		if time.Since(startedAt) >= time.Minute {
+			backoff = time.Second
+		}
 		jitter := time.Duration(rand.IntN(500)) * time.Millisecond
 		select {
 		case <-time.After(backoff + jitter):
@@ -102,14 +107,18 @@ func (c *Client) runConnection(ctx context.Context) error {
 	}
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.config.AccessToken)
-	connection, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: header})
+	dialCtx, cancelDial := context.WithTimeout(ctx, 10*time.Second)
+	connection, _, err := websocket.Dial(dialCtx, endpoint, &websocket.DialOptions{HTTPHeader: header})
+	cancelDial()
 	if err != nil {
 		return fmt.Errorf("dial realtime API: %w", err)
 	}
 	defer connection.CloseNow()
 	connection.SetReadLimit(1 << 20)
 
-	_, ready, err := connection.Read(ctx)
+	readyCtx, cancelReady := context.WithTimeout(ctx, 10*time.Second)
+	_, ready, err := connection.Read(readyCtx)
+	cancelReady()
 	if err != nil {
 		return fmt.Errorf("read control readiness: %w", err)
 	}
@@ -146,6 +155,7 @@ func (c *Client) runConnection(ctx context.Context) error {
 				writeMu.Unlock()
 				cancel()
 				if err != nil {
+					connection.CloseNow()
 					return
 				}
 			case <-pingCtx.Done():
@@ -169,40 +179,52 @@ func (c *Client) runConnection(ctx context.Context) error {
 		if err := json.Unmarshal(payload, &message); err != nil || message.Type != "command.execute" || message.RequestID == "" {
 			continue
 		}
-		go c.execute(pingCtx, connection, &writeMu, message)
+		select {
+		case c.commands <- struct{}{}:
+			go c.execute(pingCtx, connection, &writeMu, message)
+		default:
+			c.writeResult(
+				pingCtx,
+				connection,
+				&writeMu,
+				message.RequestID,
+				nil,
+				fmt.Errorf("too many realtime commands are already running"),
+			)
+		}
 	}
 }
 
 func (c *Client) execute(parent context.Context, connection *websocket.Conn, writeMu *sync.Mutex, message executeMessage) {
+	defer func() { <-c.commands }()
 	timeout := time.Duration(message.TimeoutMS) * time.Millisecond
 	if timeout < time.Second || timeout > 120*time.Second {
 		timeout = 15 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
-	acquired := false
-	select {
-	case c.commands <- struct{}{}:
-		acquired = true
-		defer func() { <-c.commands }()
-	case <-ctx.Done():
-	}
 	var result any
 	var err error
-	if !acquired {
-		err = fmt.Errorf("command timed out waiting for an execution slot")
+	capability, known := capabilities.Find(message.CapabilityID)
+	if !known || !roleAtLeast(message.ActorRole, capability.Role) {
+		err = fmt.Errorf("actor role is not allowed to execute %s", message.CapabilityID)
+	} else {
+		result, err = c.executor.Execute(ctx, message.CapabilityID, message.Input)
 	}
-	if acquired {
-		capability, known := capabilities.Find(message.CapabilityID)
-		if !known || !roleAtLeast(message.ActorRole, capability.Role) {
-			err = fmt.Errorf("actor role is not allowed to execute %s", message.CapabilityID)
-		} else {
-			result, err = c.executor.Execute(ctx, message.CapabilityID, message.Input)
-		}
-	}
-	response := resultMessage{Type: "command.result", RequestID: message.RequestID, OK: err == nil, Result: result}
-	if err != nil {
-		response.Error = err.Error()
+	c.writeResult(parent, connection, writeMu, message.RequestID, result, err)
+}
+
+func (c *Client) writeResult(
+	parent context.Context,
+	connection *websocket.Conn,
+	writeMu *sync.Mutex,
+	requestID string,
+	result any,
+	commandError error,
+) {
+	response := resultMessage{Type: "command.result", RequestID: requestID, OK: commandError == nil, Result: result}
+	if commandError != nil {
+		response.Error = boundedError(commandError.Error())
 	}
 	payload, _ := json.Marshal(response)
 	writeCtx, cancelWrite := context.WithTimeout(parent, 5*time.Second)
@@ -210,8 +232,16 @@ func (c *Client) execute(parent context.Context, connection *websocket.Conn, wri
 	writeMu.Lock()
 	defer writeMu.Unlock()
 	if err := connection.Write(writeCtx, websocket.MessageText, payload); err != nil {
-		log.Printf("send command result %s: %v", message.RequestID, err)
+		log.Printf("send command result %s: %v", requestID, err)
 	}
+}
+
+func boundedError(message string) string {
+	const limit = 2000
+	if utf8.RuneCountInString(message) <= limit {
+		return message
+	}
+	return string([]rune(message)[:limit])
 }
 
 func roleAtLeast(actual, required string) bool {
@@ -253,7 +283,7 @@ func (c *Client) endpoint() (string, error) {
 	default:
 		return "", fmt.Errorf("PZ_AGENT_URL must use https or wss")
 	}
-	endpoint.Path = path.Join(endpoint.Path, "api", "agents", c.config.AgentID, "realtime")
+	endpoint.Path = path.Join("/", endpoint.Path, "api", "agents", c.config.AgentID, "realtime")
 	query := endpoint.Query()
 	query.Set("serverId", c.config.ServerID)
 	endpoint.RawQuery = query.Encode()

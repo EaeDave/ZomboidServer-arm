@@ -25,6 +25,7 @@ func TestRoleAtLeast(t *testing.T) {
 }
 
 func TestEndpointRequiresTLSAndPreservesBasePath(t *testing.T) {
+	t.Setenv("PZ_AGENT_ALLOW_INSECURE", "")
 	client := New(Config{
 		URL:         "https://panel.example.com/control",
 		AgentID:     "agent one",
@@ -42,5 +43,34 @@ func TestEndpointRequiresTLSAndPreservesBasePath(t *testing.T) {
 	client.config.URL = "http://panel.example.com"
 	if _, err := client.endpoint(); err == nil || !strings.Contains(err.Error(), "https or wss") {
 		t.Fatalf("insecure endpoint error = %v", err)
+	}
+
+	t.Setenv("PZ_AGENT_ALLOW_INSECURE", "1")
+	for _, rawURL := range []string{"http://panel.example.com", "ws://panel.example.com"} {
+		client.config.URL = rawURL
+		if _, err := client.endpoint(); err != nil {
+			t.Fatalf("development endpoint %q: %v", rawURL, err)
+		}
+	}
+	client.config.URL = "ftp://panel.example.com"
+	if _, err := client.endpoint(); err == nil {
+		t.Fatal("unsupported endpoint scheme succeeded")
+	}
+
+	client.config.URL = "https://panel.example.com"
+	endpoint, err = client.endpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(endpoint, "wss://panel.example.com/api/agents/") {
+		t.Fatalf("root endpoint = %q", endpoint)
+	}
+}
+
+func TestBoundedErrorPreservesUTF8(t *testing.T) {
+	message := strings.Repeat("á", 2001)
+	bounded := boundedError(message)
+	if len([]rune(bounded)) != 2000 || !strings.HasSuffix(bounded, "á") {
+		t.Fatalf("bounded error has %d characters", len([]rune(bounded)))
 	}
 }

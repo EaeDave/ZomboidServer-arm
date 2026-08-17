@@ -18,7 +18,7 @@ export PZCTL_ENV="$ENVF"
 pz_load_env
 PZ_MODUPDATE="${PZ_MODUPDATE:-/usr/local/sbin/pz-modupdate}"
 PZ_BUILDUPDATE="${PZ_BUILDUPDATE:-/usr/local/sbin/pz-build-update}"
-PZ_AGENT_CORE="${PZ_REALTIME_AGENT:-/usr/local/sbin/pz-agent-core}"
+PZ_AGENT_CORE="${PZ_AGENT_CORE:-${PZ_REALTIME_AGENT:-/usr/local/sbin/pz-agent-core}}"
 
 cli_mods_list_json() {
   local active disabled disk tracked
@@ -537,19 +537,19 @@ cli_logs_json() {
   [ "$lines" -ge 1 ] && [ "$lines" -le 1000 ] || return 64
   tail -n "$lines" "$PZ_CONSOLE" 2>/dev/null | python3 -c 'import json, sys; print(json.dumps({"lines": sys.stdin.read().splitlines()}, separators=(",", ":")))'
 }
+require_agent_core() {
+  [ -x "$PZ_AGENT_CORE" ] && return 0
+  printf 'pzctl: realtime agent core is not installed: %s\n' "$PZ_AGENT_CORE" >&2
+  return 1
+}
+
 cli_capabilities_json() {
-  [ -x "$PZ_AGENT_CORE" ] || {
-    printf 'pzctl: realtime agent core is not installed: %s\n' "$PZ_AGENT_CORE" >&2
-    return 1
-  }
+  require_agent_core || return 1
   "$PZ_AGENT_CORE" capabilities
 }
 
 cli_direct_json() {
-  [ -x "$PZ_AGENT_CORE" ] || {
-    printf 'pzctl: realtime agent core is not installed: %s\n' "$PZ_AGENT_CORE" >&2
-    return 1
-  }
+  require_agent_core || return 1
   "$PZ_AGENT_CORE" direct
 }
 

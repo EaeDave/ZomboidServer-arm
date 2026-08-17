@@ -31,6 +31,15 @@ step() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!!!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mXXX %s\033[0m\n' "$*" >&2; exit 1; }
 ask()  { local p="$1" d="${2:-}" a; read -rp "$(printf '\033[1;36m?\033[0m') $p ${d:+[$d] }" a; printf '%s' "${a:-$d}"; }
+go_122_or_newer() {
+  local version major minor
+  version="$("$1" env GOVERSION 2>/dev/null)" || return 1
+  version="${version#go}"
+  major="${version%%.*}"
+  minor="${version#*.}"; minor="${minor%%.*}"
+  [ "$major" -gt 1 ] 2>/dev/null || { [ "$major" -eq 1 ] 2>/dev/null && [ "$minor" -ge 22 ] 2>/dev/null; }
+}
+
 
 cat <<'EOF'
 
@@ -333,10 +342,6 @@ sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__ENVFILE__|$(esc "$ENVFILE")|
     -e "s|__AGENT_ENVFILE__|$(esc "$AGENT_ENVFILE")|g" -e "s|__CACHEDIR__|$(esc "$CACHEDIR")|g" \
     -e "s|__BACKUPS__|$(esc "$BACKUPS")|g" -e "s|__AGENT__|$(esc "$BIN_AGENT")|g" \
     "$REPO_DIR/templates/zomboid-agent.service" > "/etc/systemd/system/$SVC-agent.service"
-sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" \
-    -e "s|__AGENT_ENVFILE__|$(esc "$AGENT_ENVFILE")|g" -e "s|__CACHEDIR__|$(esc "$CACHEDIR")|g" \
-    -e "s|__BACKUPS__|$(esc "$BACKUPS")|g" -e "s|__REALTIME_AGENT__|$(esc "$BIN_REALTIME_AGENT")|g" \
-    "$REPO_DIR/templates/zomboid-realtime-agent.service" > "/etc/systemd/system/$SVC-realtime-agent.service"
 install -m755 "$REPO_DIR/scripts/zomboid-watchdog.sh" "$BIN_WATCHDOG"
 install -m755 "$REPO_DIR/scripts/boot-retry.sh"       "$BIN_BOOTRETRY"
 install -m755 "$REPO_DIR/scripts/pz-build-update.sh" "$BIN_BUILDUPDATE"
@@ -345,14 +350,25 @@ install -m755 "$REPO_DIR/pzctl"                       "$BIN_PZCTL"
 install -m755 "$REPO_DIR/scripts/pz-agent.sh"          "$BIN_AGENT"
 install -m755 "$REPO_DIR/scripts/pz-agent-priv.sh"      "$BIN_AGENT_PRIV"
 if [ "${PZ_AGENT_ENABLE:-0}" = 1 ]; then
-  if ! command -v go >/dev/null 2>&1; then
-    step "Installing Go toolchain for the realtime host agent"
-    apt-get install -y -qq golang-go >/dev/null || die "Could not install Go for the realtime host agent"
+  GO_BIN="$(command -v go 2>/dev/null || true)"
+  if [ -z "$GO_BIN" ] || ! go_122_or_newer "$GO_BIN"; then
+    step "Installing Go 1.22 toolchain for the realtime host agent"
+    apt-get install -y -qq golang-1.22-go >/dev/null ||
+      die "Go 1.22+ is required. Install it, then rerun with PZ_AGENT_ENABLE=1."
+    GO_BIN=/usr/lib/go-1.22/bin/go
   fi
+  go_122_or_newer "$GO_BIN" || die "Go 1.22 or newer is required for the realtime host agent"
   step "Building realtime host agent"
-  (cd "$REPO_DIR/host-agent" && go build -trimpath -ldflags='-s -w' -o "$BIN_REALTIME_AGENT" ./cmd/pz-agent-core) ||
+  (cd "$REPO_DIR/host-agent" && "$GO_BIN" build -trimpath -ldflags="-s -w -X main.trustedLocalUser=$TARGET_USER" -o "$BIN_REALTIME_AGENT" ./cmd/pz-agent-core) ||
     die "Could not build the realtime host agent"
   chmod 755 "$BIN_REALTIME_AGENT"
+  sed -e "s|__USER__|$(esc "$TARGET_USER")|g" -e "s|__ENVFILE__|$(esc "$ENVFILE")|g" \
+      -e "s|__AGENT_ENVFILE__|$(esc "$AGENT_ENVFILE")|g" -e "s|__CACHEDIR__|$(esc "$CACHEDIR")|g" \
+      -e "s|__BACKUPS__|$(esc "$BACKUPS")|g" -e "s|__REALTIME_AGENT__|$(esc "$BIN_REALTIME_AGENT")|g" \
+      "$REPO_DIR/templates/zomboid-realtime-agent.service" > "/etc/systemd/system/$SVC-realtime-agent.service"
+else
+  systemctl disable --now "$SVC-realtime-agent.service" >/dev/null 2>&1 || true
+  rm -f "$BIN_REALTIME_AGENT" "/etc/systemd/system/$SVC-realtime-agent.service"
 fi
 mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
@@ -456,7 +472,7 @@ systemctl start  "$SVC-ciopfs.service"
 if [ "${PZ_AGENT_ENABLE:-0}" = 1 ]; then
   systemctl enable --now "$SVC-agent.service" "$SVC-realtime-agent.service"
 else
-  say "Host agent units installed but disabled. Configure $AGENT_ENVFILE, then rerun with PZ_AGENT_ENABLE=1 to install the sudoers rule and enable both agent services."
+  say "Host heartbeat agent unit installed but disabled. Configure $AGENT_ENVFILE, then rerun with PZ_AGENT_ENABLE=1 to install and enable both host agents."
 fi
 
 # ----------------------------------------------------------------- 6b. local firewall (iptables)

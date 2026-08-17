@@ -9,6 +9,7 @@ import {
   agentJobCompleteRequestSchema,
   agentConsoleLogRequestSchema,
   operationCreateRequestSchema,
+  operationRecordSchema,
   configSnapshotSchema,
   modsUpdateApplyResultSchema,
   modsUpdateCheckResultSchema,
@@ -134,6 +135,76 @@ describe("agent operation contracts", () => {
       }),
     ).toBe(true);
     expect(
+      Value.Check(agentRealtimeExecuteSchema, {
+        type: "command.execute",
+        requestId: "request-low-timeout",
+        capabilityId: "rcon.players",
+        input: {},
+        actorRole: "viewer",
+        timeoutMs: 999,
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(agentRealtimeExecuteSchema, {
+        type: "command.execute",
+        requestId: "request-high-timeout",
+        capabilityId: "rcon.players",
+        input: {},
+        actorRole: "viewer",
+        timeoutMs: 120_001,
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(agentRealtimeInboundSchema, {
+        type: "agent.hello",
+        protocolVersion: 1,
+        serverId: "production",
+        capabilities: [
+          {
+            id: "server.status",
+            title: "Server status",
+            description: "Read status",
+            category: "Server",
+            mode: "direct",
+            role: "viewer",
+            effects: ["read"],
+            arguments: [],
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(agentRealtimeInboundSchema, {
+        type: "agent.hello",
+        protocolVersion: 1,
+        serverId: "production",
+        capabilities: [
+          {
+            id: "Invalid_ID",
+            title: "Invalid",
+            description: "Invalid capability",
+            category: "Server",
+            mode: "direct",
+            role: "viewer",
+            effects: [],
+            arguments: [],
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(agentRealtimeInboundSchema, {
+        type: "agent.unknown",
+        requestId: "request-1",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(directCommandRequestSchema, {
+        capabilityId: "server.status",
+        input: { ["A".repeat(65)]: true },
+      }),
+    ).toBe(false);
+    expect(
       Value.Check(agentRealtimeInboundSchema, {
         type: "command.result",
         requestId: "request-1",
@@ -148,6 +219,24 @@ describe("agent operation contracts", () => {
         ok: true,
       }),
     ).toBe(false);
+  });
+
+  it("accepts historical operation records without allowing new legacy jobs", () => {
+    for (const kind of ["world.save", "rcon.command"]) {
+      expect(
+        Value.Check(operationRecordSchema, {
+          operationId: `historical-${kind}`,
+          serverId: "production",
+          kind,
+          status: "succeeded",
+          createdAt: "2026-08-17T00:00:00Z",
+          startedAt: "2026-08-17T00:00:00Z",
+          finishedAt: "2026-08-17T00:00:01Z",
+          error: null,
+        }),
+      ).toBe(true);
+      expect(Value.Check(operationCreateRequestSchema, { kind, payload: {} })).toBe(false);
+    }
   });
 
   it("accepts workshop update operations and bounded results", () => {

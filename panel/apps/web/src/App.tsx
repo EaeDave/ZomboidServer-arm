@@ -5,8 +5,6 @@ import type {
   AuditEvent,
   AuthUser,
   ConfigUpdatePayload,
-  DirectCommandRequest,
-  DirectCommandResponse,
   HealthResponse,
   OperationCreateRequest,
   OperationEvent,
@@ -15,6 +13,7 @@ import type {
 import { useEffect, useState, type ReactNode } from "react";
 import { ActivityPage } from "./ActivityPage";
 import { throwApiError } from "./api-error";
+import { executeDirectCommand, getAgentCapabilities } from "./direct-command";
 import { ModsPage } from "./ModsPage";
 import { OverviewPage, type AccessUpdate } from "./OverviewPage";
 import { PageHeading, PanelHeader, usePanelPage } from "./PanelNav";
@@ -88,18 +87,6 @@ async function queueOperation(requestBody: OperationCreateRequest): Promise<Oper
   } & Partial<OperationRecord>;
   if (!response.ok) throwApiError(response, body.error?.message ?? "Operation could not be queued");
   return body as OperationRecord;
-}
-async function executeDirectCommand(
-  requestBody: DirectCommandRequest,
-): Promise<DirectCommandResponse> {
-  const response = await fetch(`/api/servers/${SERVER_ID}/commands`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(requestBody),
-  });
-  if (!response.ok) throwApiError(response, `Realtime command failed: ${response.status}`);
-  return response.json() as Promise<DirectCommandResponse>;
 }
 
 async function getOperations(serverId: string): Promise<OperationRecord[]> {
@@ -206,12 +193,18 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     },
   });
   const worldSaveMutation = useMutation({
-    mutationFn: () => executeDirectCommand({ capabilityId: "world.save", input: {} }),
+    mutationFn: () => executeDirectCommand(SERVER_ID, { capabilityId: "world.save", input: {} }),
     onMutate: () => setDirectMessage(undefined),
     onSuccess: (response) => {
       setDirectMessage(`World saved in ${response.durationMs} ms.`);
       void queryClient.invalidateQueries({ queryKey: ["server-status", SERVER_ID] });
     },
+  });
+  const agentCapabilities = useQuery({
+    queryKey: ["agent-capabilities", SERVER_ID],
+    queryFn: () => getAgentCapabilities(SERVER_ID),
+    enabled: Boolean(user),
+    refetchInterval: 5_000,
   });
   const operations = useQuery({
     queryKey: ["operations", SERVER_ID],
@@ -306,6 +299,8 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
         onRefresh={() => void server.refetch()}
         onRevealSettings={() => revealServerSettings(SERVER_ID)}
         onSaveWorld={() => worldSaveMutation.mutate()}
+        realtimeConnected={agentCapabilities.data?.connected === true}
+        worldSavePending={worldSaveMutation.isPending}
         onUpdateSettings={updateAccess}
         operationMessage={operationMessage}
         operationPending={operationMutation.isPending}

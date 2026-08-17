@@ -106,6 +106,11 @@ export const operationKindSchema = Type.Union([
   Type.Literal("config.update"),
   Type.Literal("world.reset"),
 ]);
+const operationRecordKindSchema = Type.Union([
+  operationKindSchema,
+  Type.Literal("world.save"),
+  Type.Literal("rcon.command"),
+]);
 
 export const capabilityModeSchema = Type.Union([Type.Literal("direct"), Type.Literal("job")]);
 export const capabilityRoleSchema = Type.Union([
@@ -160,7 +165,9 @@ export const agentCapabilitiesResponseSchema = Type.Object(
 export const directCommandRequestSchema = Type.Object(
   {
     capabilityId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9.-]*$" }),
-    input: Type.Record(Type.String({ maxLength: 64 }), Type.Unknown()),
+    input: Type.Record(Type.String({ pattern: "^[A-Za-z][A-Za-z0-9]{0,63}$" }), Type.Unknown(), {
+      additionalProperties: false,
+    }),
   },
   closedObjectOptions,
 );
@@ -201,7 +208,9 @@ export const agentRealtimeExecuteSchema = Type.Object(
     type: Type.Literal("command.execute"),
     requestId: Type.String({ minLength: 1 }),
     capabilityId: Type.String({ minLength: 1 }),
-    input: Type.Record(Type.String({ maxLength: 64 }), Type.Unknown()),
+    input: Type.Record(Type.String({ pattern: "^[A-Za-z][A-Za-z0-9]{0,63}$" }), Type.Unknown(), {
+      additionalProperties: false,
+    }),
     actorRole: capabilityRoleSchema,
     timeoutMs: Type.Integer({ minimum: 1_000, maximum: 120_000 }),
   },
@@ -958,7 +967,7 @@ export type OperationCreateRequest = Static<typeof operationCreateRequestSchema>
 export const operationRecordSchema = Type.Object({
   operationId: Type.String({ minLength: 1 }),
   serverId: Type.String({ minLength: 1 }),
-  kind: operationKindSchema,
+  kind: operationRecordKindSchema,
   status: operationStatusSchema,
   createdAt: Type.String({ minLength: 1 }),
   startedAt: Type.Union([Type.String(), Type.Null()]),

@@ -672,16 +672,25 @@ describe("control-plane API", () => {
     const realtimeSocket = {
       async send(data: string) {
         const command = JSON.parse(data) as { requestId: string; capabilityId: string };
-        const result =
-          command.capabilityId === "settings.read"
-            ? await agentService.readSettings?.("production", "admin-1")
-            : await agentService.readConfig?.("production", "admin-1");
-        realtime.receive("production", realtimeSocket, {
-          type: "command.result",
-          requestId: command.requestId,
-          ok: true,
-          result,
-        });
+        try {
+          const result =
+            command.capabilityId === "settings.read"
+              ? await agentService.readSettings?.("production", "admin-1")
+              : await agentService.readConfig?.("production", "admin-1");
+          realtime.receive("production", realtimeSocket, {
+            type: "command.result",
+            requestId: command.requestId,
+            ok: true,
+            result,
+          });
+        } catch (cause) {
+          realtime.receive("production", realtimeSocket, {
+            type: "command.result",
+            requestId: command.requestId,
+            ok: false,
+            error: cause instanceof Error ? cause.message : "failed",
+          });
+        }
       },
       close() {},
     };
@@ -985,6 +994,15 @@ describe("control-plane API", () => {
   });
   it("exposes authenticated capabilities and correlates a direct command response", async () => {
     const broker = new RealtimeBroker();
+    const auditActions: string[] = [];
+    const realtimeAudit: AuditService = {
+      async record(event) {
+        auditActions.push(event.action);
+      },
+      async list() {
+        return [];
+      },
+    };
     const sent: string[] = [];
     let notifySent: () => void = () => undefined;
     const commandSent = new Promise<void>((resolve) => {
@@ -1015,7 +1033,7 @@ describe("control-plane API", () => {
         },
       ],
     });
-    const realtimeApp = createApp(undefined, undefined, appAuth, undefined, appAudit, {
+    const realtimeApp = createApp(undefined, undefined, appAuth, undefined, realtimeAudit, {
       realtimeBroker: broker,
     });
     const headers = {
@@ -1054,5 +1072,28 @@ describe("control-plane API", () => {
       capabilityId: "server.status",
       result: { state: "active" },
     });
+    expect(auditActions).toEqual(["server.command.requested", "server.command.completed"]);
+
+    const unavailableAudit: AuditService = {
+      async record() {
+        throw new Error("audit unavailable");
+      },
+      async list() {
+        return [];
+      },
+    };
+    const blockedApp = createApp(undefined, undefined, appAuth, undefined, unavailableAudit, {
+      realtimeBroker: broker,
+    });
+    const sentBeforeBlockedRequest = sent.length;
+    const blocked = await blockedApp.handle(
+      new Request("http://localhost/api/servers/production/commands", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilityId: "server.status", input: {} }),
+      }),
+    );
+    expect(blocked.status).toBe(503);
+    expect(sent).toHaveLength(sentBeforeBlockedRequest);
   });
 });

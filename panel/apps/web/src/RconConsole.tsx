@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
-  AgentCapabilitiesResponse,
   AgentCapability,
   AgentStatus,
   AuthUser,
@@ -8,30 +7,8 @@ import type {
   DirectCommandResponse,
 } from "@zomboid/contracts";
 import { useMemo, useState } from "react";
-import { throwApiError } from "./api-error";
+import { executeDirectCommand, getAgentCapabilities } from "./direct-command";
 import type { PanelPage } from "./PanelNav";
-
-async function getCapabilities(serverId: string): Promise<AgentCapabilitiesResponse> {
-  const response = await fetch(`/api/servers/${serverId}/capabilities`, {
-    credentials: "same-origin",
-  });
-  if (!response.ok) throwApiError(response, `Capability request failed: ${response.status}`);
-  return response.json() as Promise<AgentCapabilitiesResponse>;
-}
-
-async function runCommand(
-  serverId: string,
-  request: DirectCommandRequest,
-): Promise<DirectCommandResponse> {
-  const response = await fetch(`/api/servers/${serverId}/commands`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(request),
-  });
-  if (!response.ok) throwApiError(response, `Realtime command failed: ${response.status}`);
-  return response.json() as Promise<DirectCommandResponse>;
-}
 
 const roleRank = { viewer: 0, operator: 1, admin: 2 } as const;
 
@@ -55,6 +32,43 @@ function commandOutput(response?: DirectCommandResponse) {
   }
   return JSON.stringify(result, null, 2);
 }
+function validateArguments(
+  capability: AgentCapability,
+  input: Record<string, string | boolean>,
+): string | undefined {
+  for (const argument of capability.arguments) {
+    const value = input[argument.name];
+    if (argument.type === "boolean") continue;
+    if (argument.type === "string-list") {
+      const entries = String(value ?? "")
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (argument.required && entries.length === 0) return `${argument.label} is required.`;
+      const maxLength = argument.maxLength;
+      if (maxLength !== undefined && entries.some((entry) => [...entry].length > maxLength)) {
+        return `${argument.label} contains a value longer than ${maxLength} characters.`;
+      }
+      continue;
+    }
+    const text = String(value ?? "").trim();
+    if (argument.required && text === "") return `${argument.label} is required.`;
+    if (text === "") continue;
+    if (argument.type === "integer") {
+      const number = Number(text);
+      if (!Number.isInteger(number)) return `${argument.label} must be an integer.`;
+      if (argument.minimum !== undefined && number < argument.minimum) {
+        return `${argument.label} must be at least ${argument.minimum}.`;
+      }
+      if (argument.maximum !== undefined && number > argument.maximum) {
+        return `${argument.label} must be at most ${argument.maximum}.`;
+      }
+    } else if (argument.maxLength !== undefined && [...text].length > argument.maxLength) {
+      return `${argument.label} must be at most ${argument.maxLength} characters.`;
+    }
+  }
+  return undefined;
+}
 
 export function RconConsole({
   serverId,
@@ -69,13 +83,15 @@ export function RconConsole({
 }) {
   const capabilities = useQuery({
     queryKey: ["agent-capabilities", serverId],
-    queryFn: () => getCapabilities(serverId),
+    queryFn: () => getAgentCapabilities(serverId),
+    enabled: role !== undefined,
     refetchInterval: 5_000,
   });
   const [selectedId, setSelectedId] = useState<string>();
   const [input, setInput] = useState<Record<string, string | boolean>>({});
+  const [validationError, setValidationError] = useState<string>();
   const command = useMutation({
-    mutationFn: (request: DirectCommandRequest) => runCommand(serverId, request),
+    mutationFn: (request: DirectCommandRequest) => executeDirectCommand(serverId, request),
   });
   const directCapabilities =
     capabilities.data?.capabilities.filter((item) => item.mode === "direct") ?? [];
@@ -100,11 +116,18 @@ export function RconConsole({
     }
     setSelectedId(capability.id);
     setInput({});
+    setValidationError(undefined);
     command.reset();
   };
 
   const submit = () => {
     if (!selected) return;
+    const error = validateArguments(selected, input);
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    setValidationError(undefined);
     const payload: Record<string, unknown> = {};
     for (const argument of selected.arguments) {
       const value = input[argument.name];
@@ -185,7 +208,12 @@ export function RconConsole({
                 {items.map((capability) => (
                   <button
                     aria-pressed={capability.mode === "direct" && selected?.id === capability.id}
-                    className={`rounded-xl border p-4 text-left transition ${capability.mode === "direct" && selected?.id === capability.id ? "border-emerald-400/60 bg-emerald-400/10" : "border-zinc-800 bg-zinc-950/50 hover:border-zinc-600"}`}
+                    className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-40 ${capability.mode === "direct" && selected?.id === capability.id ? "border-emerald-400/60 bg-emerald-400/10" : "border-zinc-800 bg-zinc-950/50 hover:border-zinc-600"}`}
+                    disabled={
+                      capability.mode === "direct" &&
+                      capability.id.startsWith("rcon.") &&
+                      server?.rconAvailable !== true
+                    }
                     key={capability.id}
                     onClick={() => select(capability)}
                     type="button"
@@ -281,7 +309,12 @@ export function RconConsole({
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
               className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={!realtimeConnected || !canRun(role, selected) || command.isPending}
+              disabled={
+                !realtimeConnected ||
+                !canRun(role, selected) ||
+                command.isPending ||
+                (selected.id.startsWith("rcon.") && server?.rconAvailable !== true)
+              }
               onClick={submit}
               type="button"
             >
@@ -296,6 +329,11 @@ export function RconConsole({
               </span>
             ) : null}
           </div>
+          {validationError ? (
+            <p className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-200">
+              {validationError}
+            </p>
+          ) : null}
           {command.error instanceof Error ? (
             <p className="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-sm text-rose-200">
               {command.error.message}

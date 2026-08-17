@@ -41,6 +41,10 @@ request has a correlation ID and timeout; the API and host both enforce the call
 capability registry drives the Console UI and `pzctl capabilities`, while the root-owned privileged
 wrapper remains the final allowlist. RCON and host files are never exposed to the browser.
 
+The realtime broker is process-local because WebSocket ownership cannot be shared between Bun
+processes. Deploy exactly one API replica. Horizontal scaling requires a shared command router and
+is intentionally unsupported until that transport exists.
+
 ## Deployment model
 
 Coolify builds the control-plane image from the repository. The image must not contain the PZ

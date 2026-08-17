@@ -10,12 +10,36 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/EaeDave/ZomboidServer-arm/host-agent/internal/capabilities"
 )
 
 type Executor struct {
 	PrivilegedCommand string
+}
+
+const maxCommandOutput = 900 << 10
+
+type boundedBuffer struct {
+	buffer bytes.Buffer
+	limit  int
+	over   bool
+}
+
+func (b *boundedBuffer) Write(data []byte) (int, error) {
+	remaining := b.limit - b.buffer.Len()
+	if remaining > 0 {
+		write := len(data)
+		if write > remaining {
+			write = remaining
+		}
+		_, _ = b.buffer.Write(data[:write])
+	}
+	if len(data) > remaining {
+		b.over = true
+	}
+	return len(data), nil
 }
 
 func New() *Executor {
@@ -41,7 +65,7 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 	case "server.status":
 		args = []string{"status"}
 	case "logs.tail":
-		lines, err := optionalInteger(input, "lines", 100, 1, 1000)
+		lines, err := optionalInteger(input, "lines", 50, 1, 1000)
 		if err != nil {
 			return nil, err
 		}
@@ -82,11 +106,15 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 
 	command := exec.CommandContext(ctx, "sudo", append([]string{"-n", e.PrivilegedCommand}, args...)...)
 	command.Stdin = bytes.NewReader(stdin)
-	var stdout bytes.Buffer
+	stdout := &boundedBuffer{limit: maxCommandOutput}
 	var stderr bytes.Buffer
-	command.Stdout = &stdout
+	command.Stdout = stdout
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	runError := command.Run()
+	if stdout.over {
+		return nil, fmt.Errorf("host command output exceeded %d bytes", maxCommandOutput)
+	}
+	if runError != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("command timed out")
 		}
@@ -95,14 +123,24 @@ func (e *Executor) Execute(ctx context.Context, capabilityID string, input map[s
 			message = message[:2000]
 		}
 		if message == "" {
-			message = err.Error()
+			message = runError.Error()
 		}
 		return nil, fmt.Errorf("host command failed: %s", message)
 	}
 
 	var result any
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+	if err := json.Unmarshal(stdout.buffer.Bytes(), &result); err != nil {
 		return nil, fmt.Errorf("host command returned invalid JSON")
+	}
+	if object, ok := result.(map[string]any); ok {
+		status, _ := object["status"].(string)
+		if status == "failed" || status == "blocked" || status == "unavailable" {
+			message, _ := object["message"].(string)
+			if message == "" {
+				message = "host operation failed"
+			}
+			return nil, fmt.Errorf("%s", message)
+		}
 	}
 	return result, nil
 }
@@ -111,16 +149,60 @@ func validateInput(capability capabilities.Capability, input map[string]json.Raw
 	arguments := make(map[string]capabilities.Argument, len(capability.Arguments))
 	for _, argument := range capability.Arguments {
 		arguments[argument.Name] = argument
-		if argument.Required {
-			if _, ok := input[argument.Name]; !ok {
+		raw, present := input[argument.Name]
+		if !present {
+			if argument.Required {
 				return fmt.Errorf("%s is required", argument.Name)
 			}
+			continue
+		}
+		if err := validateArgument(argument, raw); err != nil {
+			return err
 		}
 	}
 	for name := range input {
 		if _, ok := arguments[name]; !ok {
 			return fmt.Errorf("%s is not accepted by %s", name, capability.ID)
 		}
+	}
+	return nil
+}
+
+func validateArgument(argument capabilities.Argument, raw json.RawMessage) error {
+	switch argument.Type {
+	case "string":
+		var value string
+		if json.Unmarshal(raw, &value) != nil ||
+			(argument.Required && strings.TrimSpace(value) == "") ||
+			strings.ContainsAny(value, "\r\n") ||
+			(argument.MaxLength > 0 && utf8.RuneCountInString(value) > argument.MaxLength) {
+			return fmt.Errorf("%s is invalid", argument.Name)
+		}
+	case "integer":
+		var value int
+		if json.Unmarshal(raw, &value) != nil ||
+			(argument.Minimum != 0 && value < argument.Minimum) ||
+			(argument.Maximum != 0 && value > argument.Maximum) {
+			return fmt.Errorf("%s is outside its allowed range", argument.Name)
+		}
+	case "boolean":
+		var value bool
+		if json.Unmarshal(raw, &value) != nil {
+			return fmt.Errorf("%s must be a boolean", argument.Name)
+		}
+	case "string-list":
+		var values []string
+		if json.Unmarshal(raw, &values) != nil || (argument.Required && len(values) == 0) {
+			return fmt.Errorf("%s must be a non-empty list", argument.Name)
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" ||
+				(argument.MaxLength > 0 && utf8.RuneCountInString(value) > argument.MaxLength) {
+				return fmt.Errorf("%s contains an invalid value", argument.Name)
+			}
+		}
+	default:
+		return fmt.Errorf("%s has unsupported type %q", argument.Name, argument.Type)
 	}
 	return nil
 }
@@ -135,7 +217,7 @@ func requiredString(input map[string]json.RawMessage, name string, maxLength int
 		return "", fmt.Errorf("%s must be a string", name)
 	}
 	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\r\n") || len(value) > maxLength {
+	if value == "" || strings.ContainsAny(value, "\r\n") || utf8.RuneCountInString(value) > maxLength {
 		return "", fmt.Errorf("%s is invalid", name)
 	}
 	return value, nil
