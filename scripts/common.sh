@@ -36,6 +36,7 @@ pz_load_env() {
   PZ_WS="$PZ_INSTALL/steamapps/workshop/content/108600"
   PZ_CONF="${PZ_CONF:-$PZ_CACHEDIR/pzctl.conf}"
   PZ_MANIFEST="$PZ_MODS/.workshop-manifest.tsv"
+  PZ_COLLECTIONS="$PZ_MODS/.workshop-collections.tsv"
   PZ_DISABLED="$PZ_MODS/.disabled-mods"
   PZ_UPDATELOG="${PZ_UPDATELOG:-$PZ_CACHEDIR/mod-updates.log}"
   PZ_BACKUPS="${PZ_BACKUPS:-$PZ_HOME/pz_backups}"
@@ -370,6 +371,17 @@ manifest_prune() {
 }
 manifest_ids()  { [ -f "$PZ_MANIFEST" ] && cut -f1 "$PZ_MANIFEST" | grep -E '^[0-9]+$' || true; }
 manifest_row()  { [ -f "$PZ_MANIFEST" ] && grep -m1 "^$1	" "$PZ_MANIFEST" || true; }
+# collection manifest: <collection_id>\t<title>. Preserve the source collection separately from
+# its resolved Workshop children so the control plane can present one canonical Steam link.
+collection_set() {
+  mkdir -p "$PZ_MODS"; [ -f "$PZ_COLLECTIONS" ] || touch "$PZ_COLLECTIONS"
+  C="$1" N="$2" awk -F'\t' 'BEGIN { OFS="\t"; done=0 }
+    $1==ENVIRON["C"] { print ENVIRON["C"], ENVIRON["N"]; done=1; next }
+    NF { print }
+    END { if (!done) print ENVIRON["C"], ENVIRON["N"] }' "$PZ_COLLECTIONS" > "$PZ_COLLECTIONS.pztmp" &&
+    mv "$PZ_COLLECTIONS.pztmp" "$PZ_COLLECTIONS"
+  fix_owner "$PZ_COLLECTIONS"
+}
 
 # Download ONE workshop item and install every mod inside it as a LOCAL mod.
 # Echoes one installed mod id per line; returns non-zero if the download failed.

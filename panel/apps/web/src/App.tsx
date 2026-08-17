@@ -561,31 +561,44 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
               {server.data?.mods ? (
                 <div className="space-y-3 text-xs">
                   <div>
-                    <p className="mb-1 text-zinc-500">Workshop items</p>
+                    <p className="mb-1 text-zinc-500">Collections</p>
                     <div className="flex flex-wrap gap-2">
-                      {server.data.mods.workshopIds.length ? (
-                        server.data.mods.workshopIds.map((id) => (
+                      {server.data.mods.collections.length ? (
+                        server.data.mods.collections.map((collection) => (
                           <a
                             className="rounded-lg border border-zinc-700 px-2 py-1 text-emerald-300 hover:border-emerald-400"
-                            href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`}
-                            key={id}
+                            href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${collection.id}`}
+                            key={collection.id}
                             rel="noreferrer"
                             target="_blank"
                           >
-                            {id}
+                            {collection.title}
                           </a>
                         ))
                       ) : (
-                        <span className="text-zinc-600">None configured</span>
+                        <span className="text-zinc-600">No collection source recorded</span>
                       )}
                     </div>
                   </div>
-                  <div>
-                    <p className="mb-1 text-zinc-500">Active at next start</p>
-                    <p className="break-words text-zinc-300">
-                      {server.data.mods.activeModIds.join(", ") || "None configured"}
-                    </p>
-                  </div>
+                  <details className="rounded-lg border border-zinc-800 p-3">
+                    <summary className="cursor-pointer text-zinc-300">
+                      {server.data.mods.configuredItems.length} configured Workshop mods
+                    </summary>
+                    <div className="mt-3 grid max-h-56 gap-2 overflow-auto sm:grid-cols-2">
+                      {server.data.mods.configuredItems.map((item) => (
+                        <a
+                          className="rounded-md bg-zinc-950 px-2 py-1.5 text-zinc-300 hover:text-emerald-300"
+                          href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${item.workshopId}`}
+                          key={item.workshopId}
+                          rel="noreferrer"
+                          target="_blank"
+                          title={item.modIds.join(", ")}
+                        >
+                          {item.title}
+                        </a>
+                      ))}
+                    </div>
+                  </details>
                   {server.data.mods.inactiveModIds.length ? (
                     <div>
                       <p className="mb-1 text-zinc-500">Inactive</p>

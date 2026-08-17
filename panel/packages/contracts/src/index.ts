@@ -127,9 +127,20 @@ export const steamSessionStatusSchema = Type.Object({
   message: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
 });
 
+export const agentModCollectionSchema = Type.Object({
+  id: Type.String({ pattern: "^[0-9]{6,20}$" }),
+  title: Type.String({ minLength: 1, maxLength: 256 }),
+});
+
+export const agentModItemSchema = Type.Object({
+  workshopId: Type.String({ pattern: "^[0-9]{6,20}$" }),
+  title: Type.String({ minLength: 1, maxLength: 256 }),
+  modIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 100 }),
+});
+
 export const agentModsStatusSchema = Type.Object({
-  workshopIds: Type.Array(Type.String({ pattern: "^[0-9]{6,20}$" }), { maxItems: 500 }),
-  activeModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
+  collections: Type.Array(agentModCollectionSchema, { maxItems: 50 }),
+  configuredItems: Type.Array(agentModItemSchema, { maxItems: 500 }),
   inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
 });
 

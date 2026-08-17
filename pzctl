@@ -51,12 +51,16 @@ PY
 }
 
 cli_mods_add_json() {
-  local raw="${1:-}" id wid out installed="" failed="" tmp
+  local raw="${1:-}" id wid out installed="" failed="" tmp collection_title=""
   id="$(extract_ws_id "$raw")"
   [[ "$id" =~ ^[0-9]{6,20}$ ]] || return 64
   local -a workshop_ids=()
   mapfile -t workshop_ids < <(resolve_ws_ids "$id")
   [ "${#workshop_ids[@]}" -gt 0 ] || return 1
+  if [ "${#workshop_ids[@]}" -gt 1 ]; then
+    collection_title="$(ws_details "$id" | awk -F'\t' 'NR == 1 { print $3 }')"
+    collection_set "$id" "${collection_title:-Collection $id}"
+  fi
   for wid in "${workshop_ids[@]}"; do
     if out="$(install_workshop_item "$wid")"; then
       while IFS= read -r mod_id; do

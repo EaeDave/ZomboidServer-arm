@@ -131,7 +131,7 @@ PY
 }
 
 agent_mods_status_json() {
-  PZ_INI_PATH="${PZ_INI:-}" PZ_DISABLED_PATH="${PZ_DISABLED:-}" PZ_MANIFEST_PATH="${PZ_MANIFEST:-}" python3 - <<'PY'
+  PZ_INI_PATH="${PZ_INI:-}" PZ_DISABLED_PATH="${PZ_DISABLED:-}" PZ_MANIFEST_PATH="${PZ_MANIFEST:-}" PZ_COLLECTIONS_PATH="${PZ_COLLECTIONS:-}" python3 - <<'PY'
 import json
 import os
 
@@ -158,14 +158,29 @@ try:
         inactive = list(dict.fromkeys(line.strip() for line in source if line.strip()))
 except OSError:
     inactive = []
-workshops = [item for item in split(value(ini, "WorkshopItems"), ";,") if item.isdigit() and 6 <= len(item) <= 20]
+active = set(split(value(ini, "Mods"), ";,"))
+items = []
 try:
     with open(os.environ["PZ_MANIFEST_PATH"], encoding="utf-8", errors="replace") as source:
-        workshops.extend(line.split("\t", 1)[0].strip() for line in source)
+        for line in source:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 4 or not fields[0].isdigit() or not fields[3].strip():
+                continue
+            mod_ids = split(fields[2], ",")
+            if active.intersection(mod_ids):
+                items.append({"workshopId": fields[0], "title": fields[3].strip()[:256], "modIds": mod_ids[:100]})
 except OSError:
     pass
-workshops = list(dict.fromkeys(item for item in workshops if item.isdigit() and 6 <= len(item) <= 20))
-print(json.dumps({"workshopIds": workshops[:500], "activeModIds": split(value(ini, "Mods"), ";,")[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
+collections = []
+try:
+    with open(os.environ["PZ_COLLECTIONS_PATH"], encoding="utf-8", errors="replace") as source:
+        for line in source:
+            fields = line.rstrip("\n").split("\t", 1)
+            if fields and fields[0].isdigit() and 6 <= len(fields[0]) <= 20:
+                collections.append({"id": fields[0], "title": (fields[1].strip() if len(fields) > 1 else f"Collection {fields[0]}")[:256]})
+except OSError:
+    pass
+print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
 PY
 }
 
