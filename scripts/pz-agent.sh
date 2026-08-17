@@ -351,10 +351,10 @@ PY
 post_completion() {
   local url="$1" token="$2" body="$3" code attempt
   for attempt in 1 2 3; do
-    code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    code="$(printf '%s' "$body" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
       -H "authorization: Bearer $token" \
       -H 'content-type: application/json' \
-      --data "$body" "$url" 2>/dev/null || true)"
+      --data-binary @- "$url" 2>/dev/null || true)"
     case "$code" in
       2??|404) return 0 ;;
       401|403) return 2 ;;
@@ -1130,17 +1130,16 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
-            if completion="$(RESULT="$result_status" python3 - <<'PY'
+            if completion="$(printf '%s' "$result_status" | python3 -c '
 import json
-import os
+import sys
 
 try:
-    result = json.loads(os.environ["RESULT"])
+    result = json.load(sys.stdin)
 except json.JSONDecodeError:
     raise SystemExit(1)
 print(json.dumps({"status": "succeeded", "result": result}, separators=(",", ":")))
-PY
-            )"; then
+')"; then
               :
             else
               completion='{"status":"failed","error":"agent returned invalid JSON result"}'
