@@ -34,6 +34,9 @@ PROTECTED_SERVER_KEYS = {
     "RCONPassword",
     "DiscordToken",
     "WebhookAddress",
+    "SteamAuthKey",
+    "EncryptionKey",
+    "WSUseStaticIP",
     "Mods",
     "WorkshopItems",
     "Map",
@@ -43,6 +46,8 @@ SENSITIVE_SERVER_KEYS = {
     "RCONPassword",
     "DiscordToken",
     "WebhookAddress",
+    "SteamAuthKey",
+    "EncryptionKey",
 }
 PROTECTED_SANDBOX_PATHS = {"VERSION"}
 
@@ -354,7 +359,10 @@ def field_payload(field: ParsedField) -> dict[str, Any]:
     leaf = field.path.rsplit(".", 1)[-1].lower()
     sensitive = (
         field.source == SOURCE_SERVER and field.path in SENSITIVE_SERVER_KEYS
-    ) or any(marker in leaf for marker in ("password", "token", "secret", "webhook"))
+    ) or any(
+        marker in leaf
+        for marker in ("password", "token", "secret", "webhook", "authkey", "encryptionkey", "privatekey", "apikey")
+    )
     protected = sensitive or (
         field.source == SOURCE_SERVER and field.path in PROTECTED_SERVER_KEYS
     ) or (field.source == SOURCE_SANDBOX and field.path in PROTECTED_SANDBOX_PATHS)
@@ -448,6 +456,10 @@ def write_temp(path: Path, lines: list[str]) -> Path:
 
 def create_backup(path: Path, timestamp: str, keep: int = 10) -> Path:
     backup = path.with_name(f"{path.name}.bak.{timestamp}")
+    collision = 1
+    while backup.exists():
+        backup = path.with_name(f"{path.name}.bak.{timestamp}.{collision}")
+        collision += 1
     shutil.copy2(path, backup)
     existing = sorted(path.parent.glob(f"{path.name}.bak.*"), key=lambda item: item.stat().st_mtime_ns)
     for stale in existing[:-keep]:
@@ -560,8 +572,8 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
     create_backups = request.get("createBackup", True)
     if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ConfigError("expectedRevision must be a SHA-256 revision")
-    if not isinstance(create_backups, bool):
-        raise ConfigError("createBackup must be boolean")
+    if create_backups is not True:
+        raise ConfigError("createBackup must be true; every update requires recovery backups")
     if not isinstance(changes, list) or not 1 <= len(changes) <= 200:
         raise ConfigError("changes must contain between 1 and 200 entries")
 
@@ -606,7 +618,7 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
     if not changed_paths:
         return {"changed": [], "backupPaths": [], "revision": current["revision"], "requiresRestart": False}
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     backups: list[Path] = []
     if create_backups:
         backups = [create_backup(ini, timestamp), create_backup(sandbox, timestamp)]

@@ -97,8 +97,8 @@ is_listening() { read_ss -uln 2>/dev/null | grep -qE ":$PZ_PORT\b"; }
 svc_active() { [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = active ]; }
 
 # Machine-readable status for pzctl, the host agent and tests. The default path avoids RCON
-# so a status probe cannot block while the server is booting; set PZ_STATUS_RCON=1 when a
-# caller explicitly wants the player count as well.
+# while the server is booting. PZ_STATUS_RCON=1 enables player telemetry behind a strict
+# outer deadline and a 15-second cache, bounding both latency and query frequency.
 status_json() {
   local active sub state listening version active_enter uptime_seconds players runtime checked_at players_raw
   active="$(read_systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
@@ -130,7 +130,21 @@ status_json() {
   players=-1
   players_raw=""
   if [ "${PZ_STATUS_RCON:-0}" = 1 ] && [ "$active" = active ] && [ "$listening" = true ] && rcon_ready; then
-    players_raw="$(rcon_cmd_quick players 2>/dev/null || true)"
+    local players_cache cache_mtime now
+    players_cache="${PZ_STATUS_RCON_CACHE:-${PZ_CACHEDIR}/status-rcon-players.cache}"
+    cache_mtime="$(stat -c %Y "$players_cache" 2>/dev/null || printf 0)"
+    now="$(date +%s)"
+    if [ $((now - cache_mtime)) -lt 15 ]; then
+      players_raw="$(cat "$players_cache" 2>/dev/null || true)"
+    else
+      players_raw="$(rcon_cmd_quick players 2>/dev/null || true)"
+      if mkdir -p "$(dirname "$players_cache")" 2>/dev/null; then
+        printf '%s' "$players_raw" > "${players_cache}.pztmp" 2>/dev/null \
+          && chmod 600 "${players_cache}.pztmp" 2>/dev/null \
+          && mv "${players_cache}.pztmp" "$players_cache" 2>/dev/null \
+          || rm -f "${players_cache}.pztmp"
+      fi
+    fi
     players="$(printf '%s\n' "$players_raw" | grep -oE 'Players connected \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)"
     players="${players:--1}"
   fi
@@ -263,7 +277,7 @@ conf_set() { ini_set "$1" "$2" "$PZ_CONF"; fix_owner "$PZ_CONF"; }
 
 # Mods= helpers -------------------------------------------------------------
 mods_get() { ini_get Mods; }
-mods_set() { ini_set Mods "$1"; fix_owner "$PZ_INI"; }
+mods_set() { ini_set Mods "$1" || return; fix_owner "$PZ_INI"; }
 mods_has() { printf ';%s;' "$(mods_get)" | grep -qF ";$1;"; }
 mods_append() { local cur; cur="$(mods_get)"; mods_has "$1" || mods_set "${cur:+$cur;}$1"; }
 mod_disabled() { [ -f "$PZ_DISABLED" ] && grep -qxF "$1" "$PZ_DISABLED"; }
@@ -465,7 +479,8 @@ rcon_cmd_quick() {  # bounded read-only telemetry path; no retry
   port="$(ini_get RCONPort)"; port="${port:-$PZ_RCONPORT}"
   pw="$(ini_get RCONPassword)"
   [ -z "$pw" ] && return 3
-  RCON_PASSWORD="$pw" python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" --timeout 2 -- "$1" 2>/dev/null
+  RCON_PASSWORD="$pw" timeout --signal=TERM --kill-after=1s 2s \
+    python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" --timeout 2 -- "$1" 2>/dev/null
 }
 rcon_cmd() {  # rcon_cmd "command with args"  -> stdout; rc!=0 on failure
   local port pw rc

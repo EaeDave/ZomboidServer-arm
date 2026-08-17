@@ -158,7 +158,8 @@ try:
         inactive = list(dict.fromkeys(line.strip() for line in source if line.strip()))
 except OSError:
     inactive = []
-active = set(split(value(ini, "Mods"), ";,"))
+active = split(value(ini, "Mods"), ";,")
+active_set = set(active)
 items = []
 try:
     with open(os.environ["PZ_MANIFEST_PATH"], encoding="utf-8", errors="replace") as source:
@@ -167,7 +168,7 @@ try:
             if len(fields) < 4 or not fields[0].isdigit() or not fields[3].strip():
                 continue
             mod_ids = split(fields[2], ",")
-            if active.intersection(mod_ids):
+            if active_set.intersection(mod_ids):
                 items.append({"workshopId": fields[0], "title": fields[3].strip()[:256], "modIds": mod_ids[:100]})
 except OSError:
     pass
@@ -180,7 +181,7 @@ try:
                 collections.append({"id": fields[0], "title": (fields[1].strip() if len(fields) > 1 else f"Collection {fields[0]}")[:256]})
 except OSError:
     pass
-print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "workshopIds": [item["workshopId"] for item in items[:500]], "activeModIds": list(active)[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
+print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "workshopIds": [item["workshopId"] for item in items[:500]], "activeModIds": active[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
 PY
 }
 

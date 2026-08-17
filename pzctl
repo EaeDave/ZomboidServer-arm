@@ -139,7 +139,7 @@ PY
     fi
     if [ "$found" = 1 ]; then removed+="${id}"$'\n'; else missing+="${id}"$'\n'; fi
   done
-  mods_set "$active"
+  mods_set "$active" || return 1
   manifest_prune
   fix_owner "$PZ_MODS" "$PZ_INI" "$PZ_DISABLED"
   MODS_REMOVED="$removed" MODS_MISSING="$missing" python3 - <<'PY'

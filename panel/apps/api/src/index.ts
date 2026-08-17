@@ -498,7 +498,9 @@ export function createApp(
         if (
           body.kind === "config.update" &&
           body.payload.changes.some((change) =>
-            /(password|token|secret|webhook)/i.test(change.path),
+            /(password|token|secret|webhook|auth.?key|encryption.?key|private.?key|api.?key|static.?ip)/i.test(
+              change.path,
+            ),
           )
         ) {
           set.status = 400;

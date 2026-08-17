@@ -264,7 +264,7 @@ export const configChangeSchema = Type.Object(
 export const configUpdatePayloadSchema = Type.Object(
   {
     expectedRevision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" }),
-    createBackup: Type.Optional(Type.Boolean()),
+    createBackup: Type.Optional(Type.Literal(true)),
     changes: Type.Array(configChangeSchema, { minItems: 1, maxItems: 200 }),
   },
   { additionalProperties: false },
@@ -445,6 +445,8 @@ export const modsConfigurePayloadSchema = Type.Object(
   },
   closedObjectOptions,
 );
+// Cross-array disjointness is not expressible in JSON Schema. The API rejects
+// overlap before enqueueing, and pzctl validates it again at the host boundary.
 
 export const modsConfigureOperationRequestSchema = Type.Object(
   {

@@ -80,6 +80,8 @@ class ConfigTest(unittest.TestCase):
 
     def test_applies_typed_changes_with_backups_and_new_revision(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        original_ini = self.ini.read_bytes()
+        original_sandbox = self.sandbox.read_bytes()
         result = pz_config.apply_update(
             self.ini,
             self.sandbox,
@@ -105,6 +107,8 @@ class ConfigTest(unittest.TestCase):
         self.assertIn('Name = "Safe House",', sandbox)
         for backup in result["backupPaths"]:
             self.assertTrue(Path(backup).exists())
+        self.assertEqual(Path(result["backupPaths"][0]).read_bytes(), original_ini)
+        self.assertEqual(Path(result["backupPaths"][1]).read_bytes(), original_sandbox)
 
     def test_rejects_stale_revision(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
@@ -153,6 +157,19 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(result["changed"], [])
         self.assertEqual(result["backupPaths"], [])
         self.assertFalse(result["requiresRestart"])
+
+    def test_rejects_disabling_recovery_backups(self):
+        before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
+        with self.assertRaisesRegex(pz_config.ConfigError, "requires recovery backups"):
+            pz_config.apply_update(
+                self.ini,
+                self.sandbox,
+                {
+                    "expectedRevision": before["revision"],
+                    "createBackup": False,
+                    "changes": [{"source": "server", "path": "SleepAllowed", "value": True}],
+                },
+            )
 
     def test_whole_number_update_remains_a_number(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)

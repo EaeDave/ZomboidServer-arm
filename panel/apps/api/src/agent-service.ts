@@ -313,7 +313,7 @@ export class DatabaseAgentService implements AgentService {
       const timer = setTimeout(() => {
         this.configReadWaiters.delete(operation.operationId);
         reject(new AgentUnavailableError());
-      }, 30_000);
+      }, 90_000);
       const finish = (callback: (value: ConfigSnapshot) => void, value: ConfigSnapshot) => {
         clearTimeout(timer);
         this.configReadWaiters.delete(operation.operationId);

@@ -43,6 +43,16 @@ describe("agent operation contracts", () => {
     expect(
       Value.Check(operationCreateRequestSchema, {
         kind: "config.update",
+        payload: {
+          expectedRevision: "a".repeat(64),
+          createBackup: false,
+          changes: [{ source: "server", path: "SleepAllowed", value: true }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "config.update",
         payload: { expectedRevision: "a".repeat(64), changes: [] },
       }),
     ).toBe(false);

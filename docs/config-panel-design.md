@@ -100,7 +100,7 @@ The host must:
 2. reject stale revisions;
 3. reject duplicate, unknown, protected, sensitive or type-invalid changes;
 4. validate numeric bounds when generated metadata provides them;
-5. write timestamped backups when requested;
+5. always write timestamped recovery backups before replacing prior state;
 6. apply changes to temporary files;
 7. parse and validate the temporary results;
 8. hold one exclusive configuration lock across read, revision check and write;
@@ -132,7 +132,7 @@ Future realtime mutations must be individual typed operations with command-speci
 - **Console:** bounded live server output.
 - **Audit:** actor and operation history.
 
-Configuration editing uses a draft. The user searches/filters, edits fields, reviews a semantic diff, chooses backup creation, applies, and then chooses whether to restart. Production always receives an explicit confirmation.
+Configuration editing uses a draft. The user searches/filters, edits fields, reviews a semantic diff, applies with mandatory recovery backups, and then chooses whether to restart. Production always receives an explicit confirmation.
 
 ## Rollout
 

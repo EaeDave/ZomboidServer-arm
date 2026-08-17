@@ -47,10 +47,10 @@ export function ModManager({
     },
   });
   useEffect(() => {
-    if (!mods) return;
+    if (!mods || mods.activeModIds === undefined) return;
     if (pending) {
       if (
-        sameIds(mods.activeModIds ?? [], pending.activeModIds) &&
+        sameIds(mods.activeModIds, pending.activeModIds) &&
         sameIds(mods.inactiveModIds, pending.inactiveModIds)
       ) {
         setPending(undefined);
@@ -59,7 +59,7 @@ export function ModManager({
       return;
     }
     if (dirty) return;
-    setActive(mods.activeModIds ?? []);
+    setActive(mods.activeModIds);
     setInactive(mods.inactiveModIds);
   }, [dirty, mods, pending]);
   useEffect(() => {
@@ -71,6 +71,14 @@ export function ModManager({
     }
   }, [pending, pendingOperation.data]);
   if (!mods) return <p className="text-xs text-zinc-600">Waiting for the agent inventory…</p>;
+  if (mods.activeModIds === undefined) {
+    return (
+      <p className="text-xs text-amber-300">
+        This agent does not report ordered active mods. Upgrade the agent before editing mod state.
+      </p>
+    );
+  }
+  const reportedActiveModIds = mods.activeModIds;
   const locked = busy || Boolean(pending);
 
   const move = (index: number, offset: number) => {
@@ -170,7 +178,7 @@ export function ModManager({
             className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"
             disabled={locked}
             onClick={() => {
-              setActive(mods.activeModIds ?? []);
+              setActive(reportedActiveModIds);
               setInactive(mods.inactiveModIds);
               setDirty(false);
             }}

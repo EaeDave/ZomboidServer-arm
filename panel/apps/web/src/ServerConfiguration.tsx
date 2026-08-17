@@ -134,9 +134,9 @@ export function ServerConfiguration({
   const [source, setSource] = useState<"all" | "server" | "sandbox">("all");
   const [category, setCategory] = useState<string>("sleep");
   const [changedOnly, setChangedOnly] = useState(false);
-  const [createBackup, setCreateBackup] = useState(true);
   const [operationId, setOperationId] = useState<string>();
   const [submitError, setSubmitError] = useState<string>();
+  const [successMessage, setSuccessMessage] = useState<string>();
   const operation = useQuery({
     queryKey: ["config-operation", operationId],
     queryFn: () => readOperation(operationId!),
@@ -152,6 +152,9 @@ export function ServerConfiguration({
   useEffect(() => {
     if (operation.data?.status === "succeeded") {
       setDraft({});
+      setSuccessMessage(
+        "Configuration saved and re-read from the host. Restart the server when ready.",
+      );
       void config.refetch();
     }
   }, [operation.data?.status]);
@@ -194,6 +197,7 @@ export function ServerConfiguration({
   }, [category, changed, changedOnly, fields, search, source]);
 
   const setValue = (field: ConfigField, value: Scalar) => {
+    setSuccessMessage(undefined);
     setDraft((current) => ({ ...current, [identity(field)]: value }));
   };
   const applySleepPreset = (allowed: boolean, needed: boolean) => {
@@ -262,6 +266,21 @@ export function ServerConfiguration({
         <p className="m-6 rounded-xl border border-rose-400/20 bg-rose-400/5 p-4 text-sm text-rose-200">
           {config.error.message}
         </p>
+      ) : null}
+      {successMessage ? (
+        <p className="m-6 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-sm text-emerald-300">
+          {successMessage}
+        </p>
+      ) : null}
+      {config.data?.warnings.length ? (
+        <div className="m-6 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-sm text-amber-200">
+          <p className="font-medium">Some configuration entries could not be parsed:</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {config.data.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       {!canEdit ? (
         <p className="p-6 text-sm text-zinc-400">
@@ -434,14 +453,7 @@ export function ServerConfiguration({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <label className="flex items-center gap-2 text-sm text-zinc-300">
-                <input
-                  checked={createBackup}
-                  onChange={(event) => setCreateBackup(event.target.checked)}
-                  type="checkbox"
-                />
-                Create file backups
-              </label>
+              <span className="text-sm text-zinc-400">Recovery backups are always created.</span>
               <button
                 className="rounded-xl border border-zinc-700 px-4 py-2 text-sm"
                 disabled={applying}
@@ -460,7 +472,7 @@ export function ServerConfiguration({
                   try {
                     const queued = await onQueue({
                       expectedRevision: config.data!.revision,
-                      createBackup,
+                      createBackup: true,
                       changes: changed.map((field) => ({
                         source: field.source,
                         path: field.path,
@@ -486,11 +498,6 @@ export function ServerConfiguration({
           {operation.data?.status === "failed" ? (
             <p className="mx-auto mt-3 max-w-5xl text-sm text-rose-300">
               Host failure: {operation.data.error}
-            </p>
-          ) : null}
-          {operation.data?.status === "succeeded" ? (
-            <p className="mx-auto mt-3 max-w-5xl text-sm text-emerald-300">
-              Configuration saved and re-read from the host. Restart the server when ready.
             </p>
           ) : null}
         </footer>

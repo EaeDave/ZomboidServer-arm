@@ -574,7 +574,9 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                       <span className="text-sm text-zinc-400">
                         {server.data.rconAvailable !== true || server.data.playerCount < 0
                           ? "RCON unavailable"
-                          : "No players connected"}
+                          : server.data.playerCount > 0
+                            ? `${server.data.playerCount} player(s) connected; names unavailable`
+                            : "No players connected"}
                       </span>
                     )}
                   </dd>
