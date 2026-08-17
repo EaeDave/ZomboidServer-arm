@@ -76,6 +76,7 @@ export const operationKinds = [
   "mods.list",
   "mods.add",
   "mods.remove",
+  "mods.configure",
   "settings.update",
   "config.update",
   "world.reset",
@@ -92,6 +93,7 @@ export const operationKindSchema = Type.Union([
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
+  Type.Literal("mods.configure"),
   Type.Literal("settings.update"),
   Type.Literal("config.update"),
   Type.Literal("world.reset"),
@@ -421,6 +423,29 @@ export const modsRemoveOperationRequestSchema = Type.Object(
   closedObjectOptions,
 );
 
+export const modsConfigurePayloadSchema = Type.Object(
+  {
+    activeModIds: Type.Array(Type.String({ pattern: "^[A-Za-z0-9_.-]+$", maxLength: 128 }), {
+      maxItems: 1_000,
+      uniqueItems: true,
+    }),
+    inactiveModIds: Type.Array(Type.String({ pattern: "^[A-Za-z0-9_.-]+$", maxLength: 128 }), {
+      maxItems: 1_000,
+      uniqueItems: true,
+    }),
+  },
+  closedObjectOptions,
+);
+
+export const modsConfigureOperationRequestSchema = Type.Object(
+  {
+    ...operationBaseSchema,
+    kind: Type.Literal("mods.configure"),
+    payload: modsConfigurePayloadSchema,
+  },
+  closedObjectOptions,
+);
+
 export const settingsUpdateOperationRequestSchema = Type.Object(
   {
     ...operationBaseSchema,
@@ -471,6 +496,7 @@ export const agentOperationRequestSchema = Type.Union([
   modsListOperationRequestSchema,
   modsAddOperationRequestSchema,
   modsRemoveOperationRequestSchema,
+  modsConfigureOperationRequestSchema,
   settingsReadOperationRequestSchema,
   settingsUpdateOperationRequestSchema,
   configReadOperationRequestSchema,
@@ -518,6 +544,7 @@ const nonStatusOperationKindSchema = Type.Union([
   Type.Literal("mods.list"),
   Type.Literal("mods.add"),
   Type.Literal("mods.remove"),
+  Type.Literal("mods.configure"),
   Type.Literal("settings.read"),
   Type.Literal("settings.update"),
   Type.Literal("config.read"),
@@ -601,6 +628,13 @@ export const operationCreateRequestSchema = Type.Union([
         },
         closedObjectOptions,
       ),
+    },
+    closedObjectOptions,
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("mods.configure"),
+      payload: modsConfigurePayloadSchema,
     },
     closedObjectOptions,
   ),

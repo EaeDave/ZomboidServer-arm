@@ -1,0 +1,165 @@
+import type { AgentStatus, OperationCreateRequest, OperationRecord } from "@zomboid/contracts";
+import { useEffect, useState } from "react";
+
+type Mods = NonNullable<AgentStatus["mods"]>;
+
+export function ModManager({
+  mods,
+  canOperate,
+  busy,
+  onQueue,
+}: {
+  mods?: Mods;
+  canOperate: boolean;
+  busy: boolean;
+  onQueue: (request: OperationCreateRequest) => Promise<OperationRecord>;
+}) {
+  const [active, setActive] = useState<string[]>([]);
+  const [inactive, setInactive] = useState<string[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!mods || dirty) return;
+    setActive(mods.activeModIds ?? []);
+    setInactive(mods.inactiveModIds);
+  }, [dirty, mods]);
+  if (!mods) return <p className="text-xs text-zinc-600">Aguardando inventário do agente…</p>;
+
+  const move = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= active.length) return;
+    const next = [...active];
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    setActive(next);
+    setDirty(true);
+  };
+  const disable = (id: string) => {
+    setActive((items) => items.filter((item) => item !== id));
+    setInactive((items) => [...items, id]);
+    setDirty(true);
+  };
+  const enable = (id: string) => {
+    setInactive((items) => items.filter((item) => item !== id));
+    setActive((items) => [...items, id]);
+    setDirty(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Ordem de carregamento</p>
+          <p className="text-xs text-zinc-500">
+            Mods posteriores podem sobrescrever os anteriores.
+          </p>
+        </div>
+        {dirty ? (
+          <span className="rounded-full bg-amber-400/10 px-2 py-1 text-xs text-amber-200">
+            não salvo
+          </span>
+        ) : null}
+      </div>
+      <ol className="max-h-80 space-y-2 overflow-auto pr-1">
+        {active.map((id, index) => (
+          <li
+            className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2 text-xs"
+            key={id}
+          >
+            <span className="w-6 text-center text-zinc-600">{index + 1}</span>
+            <span className="min-w-0 flex-1 truncate text-zinc-300" title={id}>
+              {id}
+            </span>
+            <button
+              aria-label={`Subir ${id}`}
+              className="px-2 py-1 text-zinc-400 hover:text-white disabled:opacity-20"
+              disabled={index === 0 || busy}
+              onClick={() => move(index, -1)}
+              type="button"
+            >
+              ↑
+            </button>
+            <button
+              aria-label={`Descer ${id}`}
+              className="px-2 py-1 text-zinc-400 hover:text-white disabled:opacity-20"
+              disabled={index === active.length - 1 || busy}
+              onClick={() => move(index, 1)}
+              type="button"
+            >
+              ↓
+            </button>
+            <button
+              className="rounded border border-zinc-700 px-2 py-1 text-amber-200"
+              disabled={busy}
+              onClick={() => disable(id)}
+              type="button"
+            >
+              Desativar
+            </button>
+          </li>
+        ))}
+      </ol>
+      {inactive.length ? (
+        <details className="rounded-lg border border-zinc-800 p-3">
+          <summary className="cursor-pointer text-xs text-zinc-400">
+            {inactive.length} desativado(s)
+          </summary>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {inactive.map((id) => (
+              <button
+                className="rounded-lg border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-emerald-400"
+                disabled={busy}
+                key={id}
+                onClick={() => enable(id)}
+                type="button"
+              >
+                Ativar {id}
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {dirty ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"
+            disabled={busy}
+            onClick={() => {
+              setActive(mods.activeModIds ?? []);
+              setInactive(mods.inactiveModIds);
+              setDirty(false);
+            }}
+            type="button"
+          >
+            Descartar
+          </button>
+          <button
+            className="rounded-lg bg-emerald-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
+            disabled={!canOperate || busy}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "Salvar a nova ordem/ativação de mods? Um reinício será necessário.",
+                )
+              )
+                return;
+              setError(undefined);
+              try {
+                await onQueue({
+                  kind: "mods.configure",
+                  payload: { activeModIds: active, inactiveModIds: inactive },
+                });
+                setDirty(false);
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "Não foi possível salvar mods");
+              }
+            }}
+            type="button"
+          >
+            Salvar configuração de mods
+          </button>
+        </div>
+      ) : null}
+      {error ? <p className="text-xs text-rose-300">{error}</p> : null}
+    </div>
+  );
+}

@@ -1106,6 +1106,9 @@ PY
             mods.remove)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-remove 2>/dev/null)"; then :; else result_status=""; fi
               ;;
+            mods.configure)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-configure 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
             settings.update)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" settings 2>/dev/null)"; then :; else result_status=""; fi
               ;;

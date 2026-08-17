@@ -13,6 +13,7 @@ import type {
 import { useEffect, useRef, useState } from "react";
 import { ServerConsole } from "./ServerConsole";
 import { ServerConfiguration } from "./ServerConfiguration";
+import { ModManager } from "./ModManager";
 
 const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
 
@@ -843,6 +844,14 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
                 <p className="text-xs text-zinc-600">Waiting for the agent mod snapshot…</p>
               )}
             </div>
+          </div>
+          <div className="mt-5 border-t border-zinc-800 pt-5">
+            <ModManager
+              busy={Boolean(activeOperation) || operationMutation.isPending}
+              canOperate={Boolean(canOperate)}
+              mods={server.data?.mods}
+              onQueue={(request) => operationMutation.mutateAsync(request)}
+            />
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-zinc-800 pt-5">
             <label className="flex items-center gap-2 text-sm text-zinc-400">

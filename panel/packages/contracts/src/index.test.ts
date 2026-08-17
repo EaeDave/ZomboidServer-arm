@@ -227,4 +227,19 @@ describe("agent operation contracts", () => {
       }),
     ).toBe(false);
   });
+
+  it("accepts a complete and deduplicated mod configuration payload shape", () => {
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: ["Alpha", "Beta"], inactiveModIds: ["Gamma"] },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: ["bad/id"], inactiveModIds: [] },
+      }),
+    ).toBe(false);
+  });
 });

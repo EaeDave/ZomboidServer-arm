@@ -75,6 +75,7 @@ const supportedOperationKinds = new Set([
   "mods.list",
   "mods.add",
   "mods.remove",
+  "mods.configure",
   "settings.update",
   "config.update",
   "world.reset",
