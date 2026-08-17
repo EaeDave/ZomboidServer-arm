@@ -47,6 +47,19 @@ become a general-purpose shell or Docker host controller.
 The realtime slice is ready for review and staging deployment. Production remains unchanged until
 this branch is approved and the migration/agent rollout is explicitly scheduled.
 
+## Current milestone: structured game administration
+
+- [x] Discover and describe all current server INI and Sandbox Lua scalar settings.
+- [x] Preserve and expose mod-defined sandbox settings without a static allowlist.
+- [x] Redact secrets and protect identity/network/mod-order keys behind dedicated workflows.
+- [x] Apply typed patches with bounds, SHA-256 optimistic concurrency, backups and atomic writes.
+- [x] Add the authenticated configuration read/update agent contracts and API boundary.
+- [x] Add a searchable, categorized, draft/diff configuration workspace with sleep presets.
+- [x] Report bounded online-player names and count through local read-only RCON telemetry.
+- [x] Manage active/inactive mods and load order through a typed operation.
+- [x] Validate local tests, large snapshots, real production reads and reversible staging writes.
+- [ ] Deploy the branch to the full staging control plane and run browser-to-host acceptance.
+
 ## Current milestone: foundation
 
 - [x] Choose PostgreSQL instead of SQLite.
