@@ -7,6 +7,7 @@ import type {
   AgentOperationRequest,
   AgentSettingsReveal,
   AgentStatus,
+  ConfigSnapshot,
   ConsoleLogEntry,
   OperationCreateRequest,
   OperationRecord,
@@ -32,6 +33,7 @@ export interface AgentService {
   heartbeat(agentId: string, accessToken: string, status: AgentStatus): Promise<void>;
   getStatus(serverId: string): Promise<AgentStatus>;
   readSettings?(serverId: string, actorUserId: string): Promise<AgentSettingsReveal>;
+  readConfig?(serverId: string, actorUserId: string): Promise<ConfigSnapshot>;
   enqueueOperation(
     serverId: string,
     actorUserId: string,
@@ -234,6 +236,14 @@ export class DatabaseAgentService implements AgentService {
     string,
     { settings: AgentSettingsReveal; expiresAt: number }
   >();
+  private readonly configReadWaiters = new Map<
+    string,
+    { resolve: (snapshot: ConfigSnapshot) => void; reject: (error: Error) => void }
+  >();
+  private readonly configReadResults = new Map<
+    string,
+    { snapshot: ConfigSnapshot; expiresAt: number }
+  >();
 
   constructor(
     private readonly getDatabase: () => Database,
@@ -248,6 +258,13 @@ export class DatabaseAgentService implements AgentService {
     const now = this.now().getTime();
     for (const [operationId, result] of this.settingsReadResults) {
       if (result.expiresAt <= now) this.settingsReadResults.delete(operationId);
+    }
+  }
+
+  private clearExpiredConfigReads() {
+    const now = this.now().getTime();
+    for (const [operationId, result] of this.configReadResults) {
+      if (result.expiresAt <= now) this.configReadResults.delete(operationId);
     }
   }
 
@@ -282,6 +299,38 @@ export class DatabaseAgentService implements AgentService {
       if (cached) {
         this.settingsReadResults.delete(operation.operationId);
         finish(resolve, cached.settings);
+      }
+    });
+  }
+
+  async readConfig(serverId: string, actorUserId: string): Promise<ConfigSnapshot> {
+    this.clearExpiredConfigReads();
+    const operation = await this.enqueueOperation(serverId, actorUserId, {
+      kind: "config.read",
+      payload: {},
+    } as unknown as OperationCreateRequest);
+    return await new Promise<ConfigSnapshot>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.configReadWaiters.delete(operation.operationId);
+        reject(new AgentUnavailableError());
+      }, 90_000);
+      const finish = (callback: (value: ConfigSnapshot) => void, value: ConfigSnapshot) => {
+        clearTimeout(timer);
+        this.configReadWaiters.delete(operation.operationId);
+        callback(value);
+      };
+      this.configReadWaiters.set(operation.operationId, {
+        resolve: (snapshot) => finish(resolve, snapshot),
+        reject: (error) => {
+          clearTimeout(timer);
+          this.configReadWaiters.delete(operation.operationId);
+          reject(error);
+        },
+      });
+      const cached = this.configReadResults.get(operation.operationId);
+      if (cached) {
+        this.configReadResults.delete(operation.operationId);
+        finish(resolve, cached.snapshot);
       }
     });
   }
@@ -606,7 +655,13 @@ export class DatabaseAgentService implements AgentService {
       })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
-      .where(and(eq(operations.id, operationId), ne(operations.kind, "settings.read")))
+      .where(
+        and(
+          eq(operations.id, operationId),
+          ne(operations.kind, "settings.read"),
+          ne(operations.kind, "config.read"),
+        ),
+      )
       .limit(1);
 
     if (!row) throw new OperationNotFoundError();
@@ -632,7 +687,13 @@ export class DatabaseAgentService implements AgentService {
       })
       .from(operations)
       .innerJoin(serverInstances, eq(operations.serverId, serverInstances.id))
-      .where(and(eq(serverInstances.serviceName, serverId), ne(operations.kind, "settings.read")))
+      .where(
+        and(
+          eq(serverInstances.serviceName, serverId),
+          ne(operations.kind, "settings.read"),
+          ne(operations.kind, "config.read"),
+        ),
+      )
       .orderBy(desc(operations.createdAt))
       .limit(boundedLimit);
     return rows.map(operationRecord);
@@ -966,13 +1027,27 @@ export class DatabaseAgentService implements AgentService {
       this.settingsReadWaiters.get(operation.id)?.reject(new AgentUnavailableError());
     }
 
+    if (operation.kind === "config.read" && result.status === "succeeded") {
+      const snapshot = result.result as ConfigSnapshot;
+      this.clearExpiredConfigReads();
+      const waiter = this.configReadWaiters.get(operation.id);
+      if (waiter) waiter.resolve(snapshot);
+      else
+        this.configReadResults.set(operation.id, {
+          snapshot,
+          expiresAt: this.now().getTime() + 30_000,
+        });
+    } else if (operation.kind === "config.read") {
+      this.configReadWaiters.get(operation.id)?.reject(new AgentUnavailableError());
+    }
+
     await database.transaction(async (transaction) => {
       const [completed] = await transaction
         .update(operations)
         .set({
           status: result.status,
           result:
-            operation.kind === "settings.read"
+            operation.kind === "settings.read" || operation.kind === "config.read"
               ? null
               : result.status === "succeeded"
                 ? result.result

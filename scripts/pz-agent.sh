@@ -158,7 +158,8 @@ try:
         inactive = list(dict.fromkeys(line.strip() for line in source if line.strip()))
 except OSError:
     inactive = []
-active = set(split(value(ini, "Mods"), ";,"))
+active = split(value(ini, "Mods"), ";,")
+active_set = set(active)
 items = []
 try:
     with open(os.environ["PZ_MANIFEST_PATH"], encoding="utf-8", errors="replace") as source:
@@ -167,7 +168,7 @@ try:
             if len(fields) < 4 or not fields[0].isdigit() or not fields[3].strip():
                 continue
             mod_ids = split(fields[2], ",")
-            if active.intersection(mod_ids):
+            if active_set.intersection(mod_ids):
                 items.append({"workshopId": fields[0], "title": fields[3].strip()[:256], "modIds": mod_ids[:100]})
 except OSError:
     pass
@@ -180,7 +181,7 @@ try:
                 collections.append({"id": fields[0], "title": (fields[1].strip() if len(fields) > 1 else f"Collection {fields[0]}")[:256]})
 except OSError:
     pass
-print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "workshopIds": [item["workshopId"] for item in items[:500]], "activeModIds": list(active)[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
+print(json.dumps({"collections": collections[:50], "configuredItems": items[:500], "workshopIds": [item["workshopId"] for item in items[:500]], "activeModIds": active[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
 PY
 }
 
@@ -351,10 +352,10 @@ PY
 post_completion() {
   local url="$1" token="$2" body="$3" code attempt
   for attempt in 1 2 3; do
-    code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    code="$(printf '%s' "$body" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
       -H "authorization: Bearer $token" \
       -H 'content-type: application/json' \
-      --data "$body" "$url" 2>/dev/null || true)"
+      --data-binary @- "$url" 2>/dev/null || true)"
     case "$code" in
       2??|404) return 0 ;;
       401|403) return 2 ;;
@@ -1106,11 +1107,20 @@ PY
             mods.remove)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-remove 2>/dev/null)"; then :; else result_status=""; fi
               ;;
+            mods.configure)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" mods-configure 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
             settings.update)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" settings 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             settings.read)
               if result_status="$(sudo -n "$PZ_AGENT_PRIV" settings-read 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            config.read)
+              if result_status="$(sudo -n "$PZ_AGENT_PRIV" config-read 2>/dev/null)"; then :; else result_status=""; fi
+              ;;
+            config.update)
+              if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" config-update 2>/dev/null)"; then :; else result_status=""; fi
               ;;
             world.reset)
               if result_status="$(printf '%s' "$job_payload" | sudo -n "$PZ_AGENT_PRIV" world-reset 2>/dev/null)"; then :; else result_status=""; fi
@@ -1121,17 +1131,16 @@ PY
           esac
 
           if [ -n "$result_status" ]; then
-            if completion="$(RESULT="$result_status" python3 - <<'PY'
+            if completion="$(printf '%s' "$result_status" | python3 -c '
 import json
-import os
+import sys
 
 try:
-    result = json.loads(os.environ["RESULT"])
+    result = json.load(sys.stdin)
 except json.JSONDecodeError:
     raise SystemExit(1)
 print(json.dumps({"status": "succeeded", "result": result}, separators=(",", ":")))
-PY
-            )"; then
+')"; then
               :
             else
               completion='{"status":"failed","error":"agent returned invalid JSON result"}'

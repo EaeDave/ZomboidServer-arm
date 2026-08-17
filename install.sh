@@ -339,6 +339,7 @@ mkdir -p "$LIBDIR"
 install -m644 "$REPO_DIR/scripts/common.sh"  "$LIBDIR/common.sh"
 install -m755 "$REPO_DIR/scripts/zomboid-admin-bootstrap.sh" "$LIBDIR/zomboid-admin-bootstrap.sh"
 install -m755 "$REPO_DIR/scripts/pz-rcon.py" "$LIBDIR/pz-rcon.py"
+install -m755 "$REPO_DIR/scripts/pz-config.py" "$LIBDIR/pz-config.py"
 # namespaced installs: point the installed copies at their own env file
 if [ -n "$SFX" ]; then
   sed -i "s|/etc/zomboid-b42.env|$ENVFILE|g" "$BIN_PZCTL" "$BIN_MODUPDATE" "$BIN_AGENT"
@@ -387,6 +388,7 @@ PZ_FEX_START=$BIN_FEXSTART
 PZ_ANNOUNCED_IP=$ANNOUNCED_IP
 PZ_COMMON=$LIBDIR/common.sh
 PZ_RCON=$LIBDIR/pz-rcon.py
+PZ_CONFIG=$LIBDIR/pz-config.py
 PZ_BOOTRETRY=$BIN_BOOTRETRY
 PZ_WATCHDOG=$BIN_WATCHDOG
 PZ_MODUPDATE=$BIN_MODUPDATE

@@ -6,6 +6,7 @@ import {
   agentJobCompleteRequestSchema,
   agentConsoleLogRequestSchema,
   operationCreateRequestSchema,
+  configSnapshotSchema,
   worldResetOperationRequestSchema,
 } from "./index";
 
@@ -37,6 +38,22 @@ describe("agent operation contracts", () => {
       Value.Check(operationCreateRequestSchema, {
         kind: "restart",
         payload: { command: "rm -rf /" },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "config.update",
+        payload: {
+          expectedRevision: "a".repeat(64),
+          createBackup: false,
+          changes: [{ source: "server", path: "SleepAllowed", value: true }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "config.update",
+        payload: { expectedRevision: "a".repeat(64), changes: [] },
       }),
     ).toBe(false);
   });
@@ -178,6 +195,78 @@ describe("agent operation contracts", () => {
         payload: {
           confirm: false,
         },
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts bounded structured configuration snapshots and updates", () => {
+    expect(
+      Value.Check(configSnapshotSchema, {
+        revision: "a".repeat(64),
+        generatedAt: "2026-08-17T00:00:00Z",
+        warnings: [],
+        fields: [
+          {
+            source: "server",
+            path: "SleepAllowed",
+            label: "Permitir dormir",
+            category: "sleep",
+            categoryLabel: "Sono e passagem do tempo",
+            type: "boolean",
+            value: false,
+            configured: true,
+            description: "Permite dormir no multiplayer.",
+            editable: true,
+            sensitive: false,
+            requiresRestart: true,
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "config.update",
+        payload: {
+          expectedRevision: "a".repeat(64),
+          createBackup: true,
+          changes: [{ source: "server", path: "SleepAllowed", value: true }],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "config.update",
+        payload: {
+          expectedRevision: "invalid",
+          changes: [{ source: "server", path: "SleepAllowed", value: true }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts a complete and deduplicated mod configuration payload shape", () => {
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: ["Alpha", "Beta"], inactiveModIds: ["Gamma"] },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: ["bad/id"], inactiveModIds: [] },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: ["Alpha", "Alpha"], inactiveModIds: [] },
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(operationCreateRequestSchema, {
+        kind: "mods.configure",
+        payload: { activeModIds: [], inactiveModIds: ["Alpha", "Alpha"] },
       }),
     ).toBe(false);
   });

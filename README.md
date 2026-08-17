@@ -122,6 +122,23 @@ tick **`Use Steam Relay`** → Save → connect. Done.
 
 ## 🎮 Managing your server: `pzctl`
 
+### Web control plane
+
+This fork also includes the optional `panel/` control plane used for remote administration. It
+keeps the browser outside the VPS trust boundary: an outbound host agent accepts only typed,
+allowlisted operations.
+
+The structured configuration workspace reads the effective server INI and Sandbox Lua, including
+settings added by mods. It groups them by gameplay concept, explains generated bounds/defaults,
+supports search and sleep presets, and applies reviewed drafts with a backup and revision check.
+Secrets, world identity, network ports and mod load order are protected by dedicated workflows.
+The dashboard also reports current player count/names through a bounded local RCON query; RCON is
+never exposed to the browser or public network.
+
+See [`panel/README.md`](panel/README.md),
+[`docs/config-panel-design.md`](docs/config-panel-design.md) and
+[`docs/config-panel-validation.md`](docs/config-panel-validation.md).
+
 Everything is one menu. Just run:
 
 ```bash

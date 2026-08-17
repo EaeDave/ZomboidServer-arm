@@ -41,6 +41,9 @@ pz_load_env() {
   PZ_UPDATELOG="${PZ_UPDATELOG:-$PZ_CACHEDIR/mod-updates.log}"
   PZ_BACKUPS="${PZ_BACKUPS:-$PZ_HOME/pz_backups}"
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
+  # This executable crosses the sudo boundary in pz-agent-priv. Resolve it from
+  # this root-owned installed library, never from the user-editable env file.
+  PZ_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pz-config.py"
   PZ_BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
   # Steam Relay is a client connectivity requirement on Oracle/cloud NAT.  This setting only
@@ -96,10 +99,10 @@ is_listening() { read_ss -uln 2>/dev/null | grep -qE ":$PZ_PORT\b"; }
 svc_active() { [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = active ]; }
 
 # Machine-readable status for pzctl, the host agent and tests. The default path avoids RCON
-# so a status probe cannot block while the server is booting; set PZ_STATUS_RCON=1 when a
-# caller explicitly wants the player count as well.
+# while the server is booting. PZ_STATUS_RCON=1 enables player telemetry behind a strict
+# outer deadline and a 15-second cache, bounding both latency and query frequency.
 status_json() {
-  local active sub state listening version active_enter uptime_seconds players runtime checked_at
+  local active sub state listening version active_enter uptime_seconds players runtime checked_at players_raw rcon_available
   active="$(read_systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
   sub="$(read_systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
   case "$active" in
@@ -127,7 +130,54 @@ status_json() {
   fi
 
   players=-1
-  [ "${PZ_STATUS_RCON:-0}" = 1 ] && players="$(player_count)"
+  players_raw=""
+  rcon_available=false
+  if [ "${PZ_STATUS_RCON:-0}" = 1 ] && [ "$active" = active ] && [ "$listening" = true ] && rcon_ready; then
+    local players_cache players_meta cache_mtime now cached_active cached_ok players_lock_fd safe_service
+    safe_service="${PZ_SERVICE//[^A-Za-z0-9_.-]/_}"
+    # The privileged probe must never create predictable files in a directory
+    # writable by the game account. /run is root-owned and cleared on boot.
+    install -d -o root -g root -m 0700 /run/zomboid-arm
+    players_cache="/run/zomboid-arm/status-rcon-${safe_service}.cache"
+    players_meta="${players_cache}.meta"
+    if mkdir -p "$(dirname "$players_cache")" 2>/dev/null; then
+      exec {players_lock_fd}>"${players_cache}.lock"
+      if flock -w 3 "$players_lock_fd"; then
+        # Re-check freshness only after taking the lock so concurrent status
+        # probes cannot issue duplicate RCON requests or race cache writes.
+        cache_mtime="$(stat -c %Y "$players_cache" 2>/dev/null || printf 0)"
+        now="$(date +%s)"
+        cached_active="$(head -1 "$players_meta" 2>/dev/null || true)"
+        cached_ok="$(tail -n 1 "$players_meta" 2>/dev/null || true)"
+        if [ $((now - cache_mtime)) -lt 15 ] && [ "$cached_active" = "$active_enter" ] && [ "$cached_ok" = 1 ]; then
+          players_raw="$(head -c 32768 "$players_cache" 2>/dev/null || true)"
+          rcon_available=true
+        elif players_raw="$(rcon_cmd_quick players 2>/dev/null)"; then
+          players_raw="$(printf '%s' "$players_raw" | head -c 32768)"
+          if printf '%s\n' "$players_raw" | grep -qE 'Players connected \([0-9]+\)|^[[:space:]]*[-*][[:space:]]*[^[:space:]]'; then
+            rcon_available=true
+            printf '%s' "$players_raw" > "${players_cache}.pztmp"
+            printf '%s\n1\n' "$active_enter" > "${players_meta}.pztmp"
+            chmod 600 "${players_cache}.pztmp" "${players_meta}.pztmp"
+            mv "${players_cache}.pztmp" "$players_cache"
+            mv "${players_meta}.pztmp" "$players_meta"
+          else
+            players_raw=""
+            rm -f "$players_cache" "$players_meta"
+          fi
+        else
+          players_raw=""
+          rm -f "$players_cache" "$players_meta"
+        fi
+        flock -u "$players_lock_fd"
+      fi
+      exec {players_lock_fd}>&-
+    fi
+    if [ "$rcon_available" = true ]; then
+      players="$(printf '%s\n' "$players_raw" | grep -oE 'Players connected \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)"
+      players="${players:--1}"
+    fi
+  fi
   case "$PZ_RUNTIME" in fex|box64) runtime="$PZ_RUNTIME" ;; *) runtime=unknown ;; esac
   checked_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
@@ -140,6 +190,8 @@ status_json() {
   STATUS_VERSION="$version" \
   STATUS_UPTIME="$uptime_seconds" \
   STATUS_PLAYERS="$players" \
+  STATUS_PLAYERS_RAW="$players_raw" \
+  STATUS_RCON_AVAILABLE="$rcon_available" \
   STATUS_CHECKED_AT="$checked_at" \
   STATUS_STEAM_CHECK="$PZ_STEAM_SESSION_CHECK" \
   STATUS_STEAM_FILE="$PZ_STEAM_SESSION_STATUS" \
@@ -147,6 +199,7 @@ status_json() {
   python3 - <<'PY'
 import json
 import os
+import re
 
 
 def nullable(value):
@@ -154,6 +207,25 @@ def nullable(value):
 
 
 uptime = nullable(os.environ["STATUS_UPTIME"])
+
+
+def online_players():
+    raw = os.environ.get("STATUS_PLAYERS_RAW", "")
+    if not raw:
+        return []
+    names = []
+    for line in raw.splitlines():
+        match = re.match(r"^\s*[-*]\s*(\S.*)$", line)
+        if not match:
+            continue
+        candidate = match.group(1).strip()
+        # PZ commonly emits '-username'; keep only bounded display text.
+        candidate = candidate[:128]
+        if candidate not in names:
+            names.append(candidate)
+            if len(names) == 100:
+                break
+    return names[:100]
 
 
 def steam_session():
@@ -205,6 +277,8 @@ print(
             "gameVersion": nullable(os.environ["STATUS_VERSION"]),
             "uptimeSeconds": int(uptime) if uptime is not None else None,
             "playerCount": int(os.environ["STATUS_PLAYERS"]),
+            "onlinePlayers": online_players(),
+            "rconAvailable": os.environ["STATUS_RCON_AVAILABLE"] == "true",
             "checkedAt": os.environ["STATUS_CHECKED_AT"],
             "steamSession": steam_session(),
         },
@@ -236,7 +310,7 @@ conf_set() { ini_set "$1" "$2" "$PZ_CONF"; fix_owner "$PZ_CONF"; }
 
 # Mods= helpers -------------------------------------------------------------
 mods_get() { ini_get Mods; }
-mods_set() { ini_set Mods "$1"; fix_owner "$PZ_INI"; }
+mods_set() { ini_set Mods "$1" || return; fix_owner "$PZ_INI"; }
 mods_has() { printf ';%s;' "$(mods_get)" | grep -qF ";$1;"; }
 mods_append() { local cur; cur="$(mods_get)"; mods_has "$1" || mods_set "${cur:+$cur;}$1"; }
 mod_disabled() { [ -f "$PZ_DISABLED" ] && grep -qxF "$1" "$PZ_DISABLED"; }
@@ -433,6 +507,14 @@ install_workshop_item() {
 
 # ------------------------------------------------------------ RCON
 rcon_ready() { [ -n "$(ini_get RCONPassword)" ]; }
+rcon_cmd_quick() {  # bounded read-only telemetry path; no retry
+  local port pw
+  port="$(ini_get RCONPort)"; port="${port:-$PZ_RCONPORT}"
+  pw="$(ini_get RCONPassword)"
+  [ -z "$pw" ] && return 3
+  RCON_PASSWORD="$pw" timeout --signal=TERM --kill-after=1s 2s \
+    python3 "$PZ_RCON" --host 127.0.0.1 --port "$port" --timeout 2 -- "$1" 2>/dev/null
+}
 rcon_cmd() {  # rcon_cmd "command with args"  -> stdout; rc!=0 on failure
   local port pw rc
   port="$(ini_get RCONPort)"; port="${port:-$PZ_RCONPORT}"
