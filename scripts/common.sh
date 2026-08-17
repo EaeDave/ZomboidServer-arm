@@ -41,6 +41,7 @@ pz_load_env() {
   PZ_UPDATELOG="${PZ_UPDATELOG:-$PZ_CACHEDIR/mod-updates.log}"
   PZ_BACKUPS="${PZ_BACKUPS:-$PZ_HOME/pz_backups}"
   PZ_RCON="${PZ_RCON:-/usr/local/lib/zomboid-arm/pz-rcon.py}"
+  PZ_CONFIG="${PZ_CONFIG:-/usr/local/lib/zomboid-arm/pz-config.py}"
   PZ_BOOTRETRY="${PZ_BOOTRETRY:-/usr/local/sbin/pz-boot-retry}"
   PZ_BASEMAP="${PZ_BASEMAP:-Muldraugh, KY}"
   # Steam Relay is a client connectivity requirement on Oracle/cloud NAT.  This setting only
