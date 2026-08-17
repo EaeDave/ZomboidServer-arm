@@ -131,7 +131,7 @@ PY
 }
 
 agent_mods_status_json() {
-  PZ_INI_PATH="${PZ_INI:-}" PZ_DISABLED_PATH="${PZ_DISABLED:-}" python3 - <<'PY'
+  PZ_INI_PATH="${PZ_INI:-}" PZ_DISABLED_PATH="${PZ_DISABLED:-}" PZ_MANIFEST_PATH="${PZ_MANIFEST:-}" python3 - <<'PY'
 import json
 import os
 
@@ -159,6 +159,12 @@ try:
 except OSError:
     inactive = []
 workshops = [item for item in split(value(ini, "WorkshopItems"), ";,") if item.isdigit() and 6 <= len(item) <= 20]
+try:
+    with open(os.environ["PZ_MANIFEST_PATH"], encoding="utf-8", errors="replace") as source:
+        workshops.extend(line.split("\t", 1)[0].strip() for line in source)
+except OSError:
+    pass
+workshops = list(dict.fromkeys(item for item in workshops if item.isdigit() and 6 <= len(item) <= 20))
 print(json.dumps({"workshopIds": workshops[:500], "activeModIds": split(value(ini, "Mods"), ";,")[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
 PY
 }
