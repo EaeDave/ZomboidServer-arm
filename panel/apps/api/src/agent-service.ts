@@ -14,6 +14,7 @@ import {
   agents,
   auditEvents,
   consoleLogEntries,
+  consoleLogResyncs,
   operationEvents,
   operations,
   serverInstances,
@@ -60,6 +61,7 @@ export interface AgentService {
     cursor: number,
     lines: string[],
     resync: boolean,
+    resyncId?: string,
   ): Promise<number>;
   completeJob(
     agentId: string,
@@ -767,6 +769,7 @@ export class DatabaseAgentService implements AgentService {
     cursor: number,
     lines: string[],
     resync: boolean,
+    resyncId?: string,
   ): Promise<number> {
     const encodedBytes = Buffer.byteLength(JSON.stringify(lines), "utf8");
     if (
@@ -775,7 +778,8 @@ export class DatabaseAgentService implements AgentService {
       lines.length === 0 ||
       lines.length > 200 ||
       encodedBytes > 64 * 1024 ||
-      lines.some((line) => line.length > 2048)
+      lines.some((line) => line.length > 2048) ||
+      (resync && !/^[0-9a-f]{64}$/.test(resyncId ?? ""))
     ) {
       throw new AgentPayloadError();
     }
@@ -801,29 +805,67 @@ export class DatabaseAgentService implements AgentService {
       if (!resync && cursor <= storedCursor) return storedCursor;
       if (!resync && incomingStart > storedCursor + 1) throw new AgentCursorMismatchError();
 
-      // A missing or corrupt local state file requests a one-time rebase. Replays otherwise keep
-      // their original cursor range, allowing the overlapping prefix to remain idempotent.
-      const firstLine = resync ? 0 : Math.max(0, storedCursor - incomingStart + 1);
+      let firstLine = Math.max(0, storedCursor - incomingStart + 1);
+      if (resync) {
+        const [existingResync] = await transaction
+          .select({ cursor: consoleLogResyncs.cursor })
+          .from(consoleLogResyncs)
+          .where(
+            and(
+              eq(consoleLogResyncs.serverId, server.id),
+              eq(consoleLogResyncs.resyncId, resyncId!),
+            ),
+          )
+          .limit(1);
+        if (existingResync) return existingResync.cursor;
+
+        // The new tail can overlap the bounded history after an agent state loss. Retain only
+        // the non-overlapping suffix; matching is restricted to the contiguous history suffix so
+        // repeated, legitimate log messages elsewhere are never discarded.
+        const recent = await transaction
+          .select({ line: consoleLogEntries.line })
+          .from(consoleLogEntries)
+          .where(eq(consoleLogEntries.serverId, server.id))
+          .orderBy(desc(consoleLogEntries.id))
+          .limit(lines.length);
+        const previousLines = recent.reverse().map((entry) => entry.line);
+        const maximumOverlap = Math.min(previousLines.length, lines.length);
+        firstLine = 0;
+        for (let overlap = maximumOverlap; overlap > 0; overlap--) {
+          if (previousLines.slice(-overlap).every((line, index) => line === lines[index])) {
+            firstLine = overlap;
+            break;
+          }
+        }
+      }
+
       const appendedLines = lines.slice(firstLine);
       const nextCursor = resync ? storedCursor + appendedLines.length : cursor;
-      if (appendedLines.length === 0) return storedCursor;
-
-      await transaction
-        .update(serverInstances)
-        .set({ consoleLogCursor: nextCursor })
-        .where(
-          and(
-            eq(serverInstances.id, server.id),
-            eq(serverInstances.consoleLogCursor, storedCursor),
-          ),
+      if (appendedLines.length) {
+        await transaction
+          .update(serverInstances)
+          .set({ consoleLogCursor: nextCursor })
+          .where(
+            and(
+              eq(serverInstances.id, server.id),
+              eq(serverInstances.consoleLogCursor, storedCursor),
+            ),
+          );
+        await transaction.insert(consoleLogEntries).values(
+          appendedLines.map((line, index) => ({
+            serverId: server.id,
+            agentCursor: resync ? storedCursor + index + 1 : incomingStart + firstLine + index,
+            line,
+          })),
         );
-      await transaction.insert(consoleLogEntries).values(
-        appendedLines.map((line, index) => ({
+      }
+      if (resync) {
+        await transaction.insert(consoleLogResyncs).values({
           serverId: server.id,
-          agentCursor: resync ? storedCursor + index + 1 : incomingStart + firstLine + index,
-          line,
-        })),
-      );
+          resyncId: resyncId!,
+          cursor: nextCursor,
+        });
+      }
       return nextCursor;
     });
     await this.trimConsoleLogs(database, server.id);

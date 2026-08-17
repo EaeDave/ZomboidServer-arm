@@ -165,6 +165,27 @@ export const consoleLogEntries = pgTable(
   }),
 );
 
+// Rebase identifiers make an initial tail upload safe to retry if the API commits it but the
+// response is lost. They are derived from the host file position and retained independently from
+// the bounded display history.
+export const consoleLogResyncs = pgTable(
+  "console_log_resyncs",
+  {
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => serverInstances.id, { onDelete: "cascade" }),
+    resyncId: text("resync_id").notNull(),
+    cursor: bigint("cursor", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    serverResyncUnique: uniqueIndex("console_log_resyncs_server_resync_idx").on(
+      table.serverId,
+      table.resyncId,
+    ),
+  }),
+);
+
 export const auditEvents = pgTable(
   "audit_events",
   {

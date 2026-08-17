@@ -584,6 +584,7 @@ export const agentConsoleLogRequestSchema = Type.Object(
     serverId: Type.String({ minLength: 1, maxLength: 128 }),
     cursor: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
     resync: Type.Optional(Type.Boolean()),
+    resyncId: Type.Optional(Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]+$" })),
     lines: Type.Array(Type.String({ maxLength: 2048 }), { minItems: 1, maxItems: 200 }),
   },
   closedObjectOptions,

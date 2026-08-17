@@ -417,29 +417,31 @@ try:
         fingerprint = hashlib.sha256(handle.read(start - max(0, start - 64))).hexdigest()
 except OSError:
     fingerprint = "-"
-print(f"{stat.st_ino} {start} 0 1 {fingerprint}")
+resync_id = hashlib.sha256(f"{stat.st_ino}:{start}:{fingerprint}".encode()).hexdigest()
+print(f"{stat.st_ino} {start} 0 1 {fingerprint} {resync_id}")
 PY
 }
 
 read_console_state() {
-  local file="$1" inode cursor event_cursor resync fingerprint extra
-  if [ -r "$file" ] && read -r inode cursor event_cursor resync fingerprint extra <"$file" &&
+  local file="$1" inode cursor event_cursor resync fingerprint resync_id extra
+  if [ -r "$file" ] && read -r inode cursor event_cursor resync fingerprint resync_id extra <"$file" &&
     [ -z "${extra:-}" ] && [[ "$inode" =~ ^[0-9]+$ ]] && [[ "$cursor" =~ ^[0-9]+$ ]] &&
     [[ "$event_cursor" =~ ^[0-9]+$ ]] && { [ "$resync" = 0 ] || [ "$resync" = 1 ]; } &&
-    [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
-    printf '%s %s %s %s %s\n' "$inode" "$cursor" "$event_cursor" "$resync" "$fingerprint"
+    { [ "$fingerprint" = - ] || [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]; } &&
+    { [ "$resync" = 1 ] && [[ "$resync_id" =~ ^[0-9a-f]{64}$ ]] || [ "$resync" = 0 ] && [ "$resync_id" = - ]; }; then
+    printf '%s %s %s %s %s %s\n' "$inode" "$cursor" "$event_cursor" "$resync" "$fingerprint" "$resync_id"
     return 0
   fi
   initial_console_position
 }
 
 save_console_state() {
-  local file="$1" inode="$2" cursor="$3" event_cursor="$4" resync="$5" fingerprint="$6" tmp
+  local file="$1" inode="$2" cursor="$3" event_cursor="$4" resync="$5" fingerprint="$6" resync_id="$7" tmp
   mkdir -p "$(dirname "$file")" || return 1
   chmod 700 "$(dirname "$file")" || return 1
   tmp="$file.tmp.$$"
   umask 077
-  printf '%s %s %s %s %s\n' "$inode" "$cursor" "$event_cursor" "$resync" "$fingerprint" >"$tmp" || return 1
+  printf '%s %s %s %s %s %s\n' "$inode" "$cursor" "$event_cursor" "$resync" "$fingerprint" "$resync_id" >"$tmp" || return 1
   mv -f "$tmp" "$file"
 }
 
@@ -576,7 +578,7 @@ PY
 }
 
 send_live_console_delta() {
-  local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" resync="$7" fingerprint="$8" flush="$9"
+  local url="$1" agent_id="$2" token="$3" file_cursor="$4" inode="$5" event_cursor="$6" resync="$7" fingerprint="$8" resync_id="$9" flush="${10}"
   local delta lines_json next_file_cursor next_inode next_fingerprint line_count next_event_cursor body response accepted_cursor
   delta="$(read_console_delta "$file_cursor" "$inode" "$flush" "$fingerprint")" || return 1
   next_file_cursor="$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["cursor"])')"
@@ -586,11 +588,14 @@ send_live_console_delta() {
   line_count="$(LINES="$lines_json" python3 -c 'import json, os; print(len(json.loads(os.environ["LINES"])))')"
   next_event_cursor=$((event_cursor + line_count))
   if [ "$lines_json" != "[]" ]; then
-    body="$(SERVER_ID="$PZ_SERVER_ID" CURSOR="$next_event_cursor" RESYNC="$resync" LINES="$lines_json" python3 - <<'PY'
+    body="$(SERVER_ID="$PZ_SERVER_ID" CURSOR="$next_event_cursor" RESYNC="$resync" RESYNC_ID="$resync_id" LINES="$lines_json" python3 - <<'PY'
 import json
 import os
 
-print(json.dumps({"serverId": os.environ["SERVER_ID"], "cursor": int(os.environ["CURSOR"]), "resync": os.environ["RESYNC"] == "1", "lines": json.loads(os.environ["LINES"])}, separators=(",", ":")))
+body = {"serverId": os.environ["SERVER_ID"], "cursor": int(os.environ["CURSOR"]), "resync": os.environ["RESYNC"] == "1", "lines": json.loads(os.environ["LINES"])}
+if body["resync"]:
+    body["resyncId"] = os.environ["RESYNC_ID"]
+print(json.dumps(body, separators=(",", ":")))
 PY
     )"
     response="$(post_console_body "$url" "$agent_id" "$token" "$body")" || return 1
@@ -609,12 +614,14 @@ PY
     [ "$accepted_cursor" -ge "$next_event_cursor" ] || return 1
     next_event_cursor="$accepted_cursor"
     resync=0
+    resync_id="-"
   fi
   LOG_NEXT_CURSOR="$next_file_cursor"
   LOG_NEXT_INODE="$next_inode"
   LOG_NEXT_EVENT_CURSOR="$next_event_cursor"
   LOG_NEXT_RESYNC="$resync"
   LOG_NEXT_FINGERPRINT="$next_fingerprint"
+  LOG_NEXT_RESYNC_ID="$resync_id"
 }
 
 post_result_logs() {
@@ -748,12 +755,12 @@ poll_agent() {
     return 64
   }
   local active_file active_id active_pid active_start dead_worker_rc
-  local console_state console_inode console_file_cursor console_event_cursor console_resync console_fingerprint
+  local console_state console_inode console_file_cursor console_event_cursor console_resync console_fingerprint console_resync_id
   agent_state_dir >/dev/null || return $?
   active_file="$(active_job_file)" || return $?
   mkdir -p "$(dirname "$active_file")" || return 1
   console_state="$(console_state_file)" || return $?
-  read -r console_inode console_file_cursor console_event_cursor console_resync console_fingerprint < <(
+  read -r console_inode console_file_cursor console_event_cursor console_resync console_fingerprint console_resync_id < <(
     read_console_state "$console_state"
   ) || return 1
   url="${url%/}"
@@ -849,14 +856,15 @@ PY
 
       if send_live_console_delta "$url" "$agent_id" "$access_token" \
         "$console_file_cursor" "$console_inode" "$console_event_cursor" "$console_resync" \
-        "$console_fingerprint" 0; then
+        "$console_fingerprint" "$console_resync_id" 0; then
         console_file_cursor="$LOG_NEXT_CURSOR"
         console_inode="$LOG_NEXT_INODE"
         console_event_cursor="$LOG_NEXT_EVENT_CURSOR"
         console_resync="$LOG_NEXT_RESYNC"
         console_fingerprint="$LOG_NEXT_FINGERPRINT"
+        console_resync_id="$LOG_NEXT_RESYNC_ID"
         save_console_state "$console_state" "$console_inode" "$console_file_cursor" \
-          "$console_event_cursor" "$console_resync" "$console_fingerprint" ||
+          "$console_event_cursor" "$console_resync" "$console_fingerprint" "$console_resync_id" ||
           printf 'pz-agent: could not persist console cursor; retrying from the prior cursor\n' >&2
       else
         printf 'pz-agent: console publish failed; retrying\n' >&2

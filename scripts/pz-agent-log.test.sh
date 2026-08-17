@@ -75,20 +75,21 @@ python3 - <<'PY' >"$CONSOLE"
 for index in range(1, 301):
     print(f"line-{index}")
 PY
-read -r inode cursor event_cursor resync fingerprint < <(initial_console_position)
+read -r inode cursor event_cursor resync fingerprint resync_id < <(initial_console_position)
 delta="$(read_console_delta "$cursor" "$inode" 0)"
 assert_eq 'line-101' "$(DELTA="$delta" python3 -c 'import json, os; print(json.loads(os.environ["DELTA"])["lines"][0])')" 'initial console state starts at a bounded recent tail'
 assert_eq '0' "$event_cursor" 'initial console event cursor starts at zero'
 assert_eq '1' "$resync" 'initial console state requests a safe API rebase'
 
 state_file="$TMP_DIR/agent-state/console-cursor"
-save_console_state "$state_file" "$inode" 123 456 0 "$fingerprint"
-read -r saved_inode saved_cursor saved_event_cursor saved_resync saved_fingerprint < <(read_console_state "$state_file")
+save_console_state "$state_file" "$inode" 123 456 0 "$fingerprint" -
+read -r saved_inode saved_cursor saved_event_cursor saved_resync saved_fingerprint saved_resync_id < <(read_console_state "$state_file")
 assert_eq "$inode" "$saved_inode" 'console state preserves the inode'
 assert_eq '123' "$saved_cursor" 'console state preserves the file cursor'
 assert_eq '456' "$saved_event_cursor" 'console state preserves the agent cursor'
 assert_eq '0' "$saved_resync" 'console state preserves the rebase flag'
 assert_eq "$fingerprint" "$saved_fingerprint" 'console state preserves the prefix fingerprint'
+assert_eq '-' "$saved_resync_id" 'console state clears the rebase identifier after acknowledgement'
 
 printf 'live-one\n' >"$CONSOLE"
 console_body="$TMP_DIR/console-request.json"
@@ -96,9 +97,10 @@ post_console_body() {
   printf '%s' "$4" >"$console_body"
   printf '{"ok":true,"cursor":10}'
 }
-send_live_console_delta https://panel.example agent token 0 '' 0 1 "$fingerprint" 0
+send_live_console_delta https://panel.example agent token 0 '' 0 1 "$fingerprint" "$resync_id" 0
 assert_eq '10' "$LOG_NEXT_EVENT_CURSOR" 'a higher API cursor resynchronizes a restored agent state'
 assert_eq '0' "$LOG_NEXT_RESYNC" 'a successful rebase is only sent once'
+assert_eq '-' "$LOG_NEXT_RESYNC_ID" 'a successful rebase clears its idempotency token'
 assert_eq 'live-one' "$(python3 - "$console_body" <<'PY'
 import json
 import sys

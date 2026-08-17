@@ -683,8 +683,16 @@ export function createApp(
             set.status = 404;
             return { error: { code: "server_not_found", message: "Server was not found" } };
           }
-          const unavailable =
-            error instanceof AuthUnavailableError || error instanceof AgentUnavailableError;
+          if (error instanceof AuthUnavailableError) {
+            set.status = 503;
+            return {
+              error: {
+                code: "auth_unavailable",
+                message: "Authentication is temporarily unavailable",
+              },
+            };
+          }
+          const unavailable = error instanceof AgentUnavailableError;
           set.status = unavailable ? 503 : 500;
           return {
             error: {
@@ -741,7 +749,14 @@ export function createApp(
           }));
           const nextCursor = events.at(-1)?.id ?? cursor;
           if (Date.now() - lastStatusAt >= 5_000) {
-            streamEvents.push({ event: "status", data: await agent.getStatus(params.serverId) });
+            try {
+              streamEvents.push({ event: "status", data: await agent.getStatus(params.serverId) });
+            } catch {
+              streamEvents.push({
+                event: "warning",
+                data: { message: "Server status is temporarily unavailable" },
+              });
+            }
             lastStatusAt = Date.now();
           }
           return { cursor: nextCursor, events: streamEvents };
@@ -998,6 +1013,7 @@ export function createApp(
             body.cursor,
             body.lines,
             body.resync ?? false,
+            body.resyncId,
           );
           return { ok: true as const, cursor };
         } catch (error) {
