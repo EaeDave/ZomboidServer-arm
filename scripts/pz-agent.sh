@@ -130,15 +130,58 @@ print(json.dumps({"requestId": request_id, "serverId": server_id}, separators=("
 PY
 }
 
+agent_mods_status_json() {
+  PZ_INI_PATH="${PZ_INI:-}" PZ_DISABLED_PATH="${PZ_DISABLED:-}" python3 - <<'PY'
+import json
+import os
+
+def value(path, key):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as source:
+            for line in source:
+                if line.startswith(f"{key}="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+def split(raw, separators):
+    values = [raw]
+    for separator in separators:
+        values = [part for value in values for part in value.split(separator)]
+    return list(dict.fromkeys(part.strip() for part in values if part.strip()))
+
+ini = os.environ["PZ_INI_PATH"]
+disabled_path = os.environ["PZ_DISABLED_PATH"]
+try:
+    with open(disabled_path, encoding="utf-8", errors="replace") as source:
+        inactive = list(dict.fromkeys(line.strip() for line in source if line.strip()))
+except OSError:
+    inactive = []
+workshops = [item for item in split(value(ini, "WorkshopItems"), ";,") if item.isdigit() and 6 <= len(item) <= 20]
+print(json.dumps({"workshopIds": workshops[:500], "activeModIds": split(value(ini, "Mods"), ";,")[:1000], "inactiveModIds": inactive[:1000]}, separators=(",", ":")))
+PY
+}
+
 agent_status_json() {
-  local status
+  local status="" mods
   if [ -x "$PZ_AGENT_PRIV" ] && command -v sudo >/dev/null 2>&1; then
     if status="$(sudo -n "$PZ_AGENT_PRIV" status 2>/dev/null)"; then
-      printf '%s\n' "$status"
-      return 0
+      :
+    else
+      status=""
     fi
   fi
-  "$PZCTL_BIN" status --json
+  [ -n "$status" ] || status="$("$PZCTL_BIN" status --json)" || return 1
+  mods="$(agent_mods_status_json)" || return 1
+  STATUS="$status" MODS="$mods" python3 - <<'PY'
+import json
+import os
+
+status = json.loads(os.environ["STATUS"])
+status["mods"] = json.loads(os.environ["MODS"])
+print(json.dumps(status, separators=(",", ":")))
+PY
 }
 
 respond_status() {

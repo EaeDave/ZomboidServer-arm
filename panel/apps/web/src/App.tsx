@@ -557,15 +557,47 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
             </form>
 
             <div className="space-y-3">
-              <p className="text-sm text-zinc-400">Mods</p>
-              <button
-                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
-                disabled={!user || Boolean(activeOperation) || operationMutation.isPending}
-                onClick={() => operationMutation.mutate({ kind: "mods.list", payload: {} })}
-                type="button"
-              >
-                Refresh mod list
-              </button>
+              <p className="text-sm text-zinc-400">Configured mods</p>
+              {server.data?.mods ? (
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <p className="mb-1 text-zinc-500">Workshop items</p>
+                    <div className="flex flex-wrap gap-2">
+                      {server.data.mods.workshopIds.length ? (
+                        server.data.mods.workshopIds.map((id) => (
+                          <a
+                            className="rounded-lg border border-zinc-700 px-2 py-1 text-emerald-300 hover:border-emerald-400"
+                            href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`}
+                            key={id}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {id}
+                          </a>
+                        ))
+                      ) : (
+                        <span className="text-zinc-600">None configured</span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-zinc-500">Active at next start</p>
+                    <p className="break-words text-zinc-300">
+                      {server.data.mods.activeModIds.join(", ") || "None configured"}
+                    </p>
+                  </div>
+                  {server.data.mods.inactiveModIds.length ? (
+                    <div>
+                      <p className="mb-1 text-zinc-500">Inactive</p>
+                      <p className="break-words text-zinc-400">
+                        {server.data.mods.inactiveModIds.join(", ")}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-600">Waiting for the agent mod snapshot…</p>
+              )}
             </div>
 
             <form

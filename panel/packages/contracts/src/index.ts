@@ -127,6 +127,12 @@ export const steamSessionStatusSchema = Type.Object({
   message: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
 });
 
+export const agentModsStatusSchema = Type.Object({
+  workshopIds: Type.Array(Type.String({ pattern: "^[0-9]{6,20}$" }), { maxItems: 500 }),
+  activeModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
+  inactiveModIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 1_000 }),
+});
+
 export const agentStatusSchema = Type.Object({
   protocolVersion: Type.Literal(1),
   serverId: Type.String({ minLength: 1 }),
@@ -140,6 +146,7 @@ export const agentStatusSchema = Type.Object({
   playerCount: Type.Integer({ minimum: -1 }),
   checkedAt: Type.String({ minLength: 1 }),
   steamSession: Type.Optional(steamSessionStatusSchema),
+  mods: Type.Optional(agentModsStatusSchema),
 });
 
 export type AgentStatus = Static<typeof agentStatusSchema>;
