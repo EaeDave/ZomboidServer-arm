@@ -171,6 +171,7 @@ class ConfigTest(unittest.TestCase):
                         "changes": [{"source": "server", "path": "PublicName", "value": value}],
                     },
                 )
+
     def test_noop_does_not_create_backups(self):
         before, _, _ = pz_config.snapshot(self.ini, self.sandbox)
         result = pz_config.apply_update(
@@ -280,6 +281,7 @@ class ConfigTest(unittest.TestCase):
         current = self.ini.read_text(encoding="utf-8")
         self.assertIn("SleepAllowed=false", current)
         self.assertIn("Public=true", current)
+        self.assertEqual(list(self.ini.parent.glob("*.bak.*")), [])
 
     def test_rejects_invalid_utf8_without_rewriting_it(self):
         invalid = INI.encode("utf-8") + b"Bad=\xff\n"

@@ -663,11 +663,7 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
     if not changed_paths:
         return {"changed": [], "backupPaths": [], "revision": current["revision"], "requiresRestart": False}
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     backups: list[Path] = []
-    if create_backups:
-        backups = [create_backup(ini, timestamp), create_backup(sandbox, timestamp)]
-
     ini_temp = write_temp(ini, ini_lines)
     sandbox_temp = write_temp(sandbox, sandbox_lines)
     try:
@@ -688,6 +684,8 @@ def _apply_update(ini: Path, sandbox: Path, request: dict[str, Any]) -> dict[str
                 raise ConfigError(f"could not verify updated value for {field.path}")
         if revision_for(ini, sandbox) != current["revision"]:
             raise StaleRevisionError("configuration changed while the update was being prepared")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        backups = [create_backup(ini, timestamp), create_backup(sandbox, timestamp)]
         commit_transaction(ini, sandbox, ini_temp, sandbox_temp)
     finally:
         ini_temp.unlink(missing_ok=True)
