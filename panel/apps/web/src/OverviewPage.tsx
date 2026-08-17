@@ -46,8 +46,8 @@ function playerSummary(server?: AgentStatus) {
   return `${server.playerCount} ${server.playerCount === 1 ? "player" : "players"}`;
 }
 
-function operationLabel(kind: OperationKind) {
-  const labels: Partial<Record<OperationKind, string>> = {
+function operationLabel(kind: OperationRecord["kind"]) {
+  const labels: Partial<Record<OperationRecord["kind"], string>> = {
     start: "Start server",
     stop: "Stop server",
     restart: "Restart server",
@@ -70,9 +70,6 @@ function operationDetail(operation: OperationRecord) {
     saved?: unknown;
   };
   if (typeof result.message === "string") return result.message;
-  if (operation.kind === "world.save" && result.saved === true) {
-    return "World saved through the local RCON connection.";
-  }
   if (operation.kind !== "build.update") return undefined;
   const previous = typeof result.previousVersion === "string" ? result.previousVersion : undefined;
   const installed =
@@ -266,8 +263,11 @@ export function OverviewPage({
   operations,
   operationMessage,
   operationPending,
+  worldSaveAvailable,
+  worldSavePending,
   onRefresh,
   onQueue,
+  onSaveWorld,
   onRevealSettings,
   onUpdateSettings,
 }: {
@@ -281,29 +281,26 @@ export function OverviewPage({
   operations?: OperationRecord[];
   operationMessage?: string;
   operationPending: boolean;
+  worldSaveAvailable: boolean;
+  worldSavePending: boolean;
   onRefresh: () => void;
   onQueue: (
-    kind: Extract<
-      OperationKind,
-      "start" | "stop" | "restart" | "build.update" | "backup" | "world.save"
-    >,
+    kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
   ) => void;
+  onSaveWorld: () => void;
   onRevealSettings: () => Promise<AgentSettingsReveal>;
   onUpdateSettings: (update: AccessUpdate) => Promise<void>;
 }) {
   const [editingAccess, setEditingAccess] = useState(false);
   const running = server?.state === "active";
-  const busy = operationPending || Boolean(activeOperation);
+  const busy = operationPending || worldSavePending || Boolean(activeOperation);
   const statusLabel = running ? (server?.listening ? "Running" : "Starting") : "Stopped";
   const statusTone: Tone = running ? (server?.listening ? "success" : "warning") : "danger";
   const recentOperations =
     operations?.filter((operation) => operation.kind !== "status").slice(0, 3) ?? [];
 
   const queue = (
-    kind: Extract<
-      OperationKind,
-      "start" | "stop" | "restart" | "build.update" | "backup" | "world.save"
-    >,
+    kind: Extract<OperationKind, "start" | "stop" | "restart" | "build.update" | "backup">,
   ) => {
     if (
       (kind === "stop" || kind === "restart" || kind === "build.update") &&
@@ -419,12 +416,20 @@ export function OverviewPage({
             <div className="absolute right-0 z-10 mt-2 w-48 rounded-xl border border-zinc-700 bg-zinc-900 p-1.5 shadow-2xl">
               <button
                 className="block w-full rounded-lg px-3 py-2 text-left text-sm text-emerald-200 hover:bg-emerald-400/10 disabled:opacity-40"
-                disabled={!canOperate || busy || !running || server?.rconAvailable === false}
-                onClick={() => queue("world.save")}
+                disabled={
+                  !canOperate ||
+                  busy ||
+                  !running ||
+                  !worldSaveAvailable ||
+                  server?.rconAvailable !== true
+                }
+                onClick={onSaveWorld}
                 title={
-                  server?.rconAvailable === false
-                    ? "RCON is not available; the world cannot be saved safely."
-                    : "Send the save command through the local RCON connection."
+                  !worldSaveAvailable
+                    ? "The host agent is disconnected or does not advertise world save."
+                    : server?.rconAvailable !== true
+                      ? "RCON is not available; the world cannot be saved safely."
+                      : "Send the save command through the local RCON connection."
                 }
                 type="button"
               >

@@ -4,6 +4,7 @@ import type { AuditService } from "./audit";
 import { AgentUnauthorizedError, ServerNotFoundError, type AgentService } from "./agent-service";
 import { FakeAgentAdapter } from "./agent";
 import { createApp } from "./index";
+import { RealtimeBroker } from "./realtime-broker";
 
 describe("control-plane API", () => {
   const appAuth: AuthService = {
@@ -564,7 +565,29 @@ describe("control-plane API", () => {
       },
       async logout() {},
     };
-    const viewerApp = createApp(undefined, undefined, viewerAuth, agentService);
+    const viewerRealtime = new RealtimeBroker();
+    const viewerSocket = { send() {}, close() {} };
+    viewerRealtime.connect("production", viewerSocket);
+    viewerRealtime.receive("production", viewerSocket, {
+      type: "agent.hello",
+      protocolVersion: 1,
+      serverId: "production",
+      capabilities: [
+        {
+          id: "rcon.kickuser",
+          title: "Kick player",
+          description: "Remove one player",
+          category: "RCON",
+          mode: "direct",
+          role: "viewer",
+          arguments: [],
+          effects: ["player-visible"],
+        },
+      ],
+    });
+    const viewerApp = createApp(undefined, undefined, viewerAuth, agentService, undefined, {
+      realtimeBroker: viewerRealtime,
+    });
     const forbidden = await viewerApp.handle(
       new Request("http://localhost/api/servers/production/operations", {
         method: "POST",
@@ -576,17 +599,20 @@ describe("control-plane API", () => {
       }),
     );
     expect(forbidden.status).toBe(403);
-    const viewerRcon = await viewerApp.handle(
-      new Request("http://localhost/api/servers/production/operations", {
+    const viewerAdminCommand = await viewerApp.handle(
+      new Request("http://localhost/api/servers/production/commands", {
         method: "POST",
         headers: {
           cookie: "zomboid_session=session-token",
           "content-type": "application/json",
         },
-        body: JSON.stringify({ kind: "rcon.command", payload: { command: "players", args: [] } }),
+        body: JSON.stringify({
+          capabilityId: "rcon.kickuser",
+          input: { username: "player", reason: "Maintenance" },
+        }),
       }),
     );
-    expect(viewerRcon.status).toBe(403);
+    expect(viewerAdminCommand.status).toBe(403);
     const viewerUpdateCheck = await viewerApp.handle(
       new Request("http://localhost/api/servers/production/operations", {
         method: "POST",
@@ -642,19 +668,63 @@ describe("control-plane API", () => {
         return [];
       },
     };
-    const revealApp = createApp(undefined, undefined, adminAuth, agentService, audit);
-    const adminRcon = await revealApp.handle(
-      new Request("http://localhost/api/servers/production/operations", {
-        method: "POST",
-        headers: {
-          cookie: "zomboid_session=session-token",
-          "content-type": "application/json",
+    const realtime = new RealtimeBroker();
+    const realtimeSocket = {
+      async send(data: string) {
+        const command = JSON.parse(data) as { requestId: string; capabilityId: string };
+        try {
+          const result =
+            command.capabilityId === "settings.read"
+              ? await agentService.readSettings?.("production", "admin-1")
+              : await agentService.readConfig?.("production", "admin-1");
+          realtime.receive("production", realtimeSocket, {
+            type: "command.result",
+            requestId: command.requestId,
+            ok: true,
+            result,
+          });
+        } catch (cause) {
+          realtime.receive("production", realtimeSocket, {
+            type: "command.result",
+            requestId: command.requestId,
+            ok: false,
+            error: cause instanceof Error ? cause.message : "failed",
+          });
+        }
+      },
+      close() {},
+    };
+    realtime.connect("production", realtimeSocket);
+    realtime.receive("production", realtimeSocket, {
+      type: "agent.hello",
+      protocolVersion: 1,
+      serverId: "production",
+      capabilities: [
+        {
+          id: "settings.read",
+          title: "Server access settings",
+          description: "Read access settings",
+          category: "Settings",
+          mode: "direct",
+          role: "admin",
+          arguments: [],
+          effects: ["read", "sensitive"],
         },
-        body: JSON.stringify({ kind: "rcon.command", payload: { command: "players", args: [] } }),
-      }),
-    );
-    expect(adminRcon.status).toBe(202);
-    expect((await adminRcon.json()).kind).toBe("rcon.command");
+        {
+          id: "config.read",
+          title: "Full configuration",
+          description: "Read full configuration",
+          category: "Settings",
+          mode: "direct",
+          role: "operator",
+          arguments: [],
+          effects: ["read"],
+        },
+      ],
+    });
+    const revealApp = createApp(undefined, undefined, adminAuth, agentService, audit, {
+      realtimeBroker: realtime,
+    });
     const revealed = await revealApp.handle(
       new Request("http://localhost/api/servers/production/settings/reveal", {
         headers: { cookie: "zomboid_session=session-token" },
@@ -921,5 +991,134 @@ describe("control-plane API", () => {
       playerCount: 0,
       checkedAt: "2026-08-15T22:00:00.000Z",
     });
+  });
+  it("exposes authenticated capabilities and correlates a direct command response", async () => {
+    const broker = new RealtimeBroker();
+    const auditActions: string[] = [];
+    const realtimeAudit: AuditService = {
+      async record(event) {
+        auditActions.push(event.action);
+      },
+      async list() {
+        return [];
+      },
+    };
+    const sent: string[] = [];
+    let notifySent: () => void = () => undefined;
+    const commandSent = new Promise<void>((resolve) => {
+      notifySent = resolve;
+    });
+    const socket = {
+      send(data: string) {
+        sent.push(data);
+        notifySent();
+      },
+      close() {},
+    };
+    broker.connect("production", socket);
+    broker.receive("production", socket, {
+      type: "agent.hello",
+      protocolVersion: 1,
+      serverId: "production",
+      capabilities: [
+        {
+          id: "server.status",
+          title: "Server status",
+          description: "Read status",
+          category: "Server",
+          mode: "direct",
+          role: "viewer",
+          arguments: [],
+          effects: ["read"],
+        },
+      ],
+    });
+    const realtimeApp = createApp(undefined, undefined, appAuth, undefined, realtimeAudit, {
+      realtimeBroker: broker,
+    });
+    const headers = {
+      cookie: "zomboid_session=session-token",
+      "content-type": "application/json",
+    };
+
+    const advertised = await realtimeApp.handle(
+      new Request("http://localhost/api/servers/production/capabilities", { headers }),
+    );
+    expect(advertised.status).toBe(200);
+    expect(await advertised.json()).toMatchObject({ connected: true });
+
+    const responsePromise = realtimeApp.handle(
+      new Request("http://localhost/api/servers/production/commands", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilityId: "server.status", input: {} }),
+      }),
+    );
+    await commandSent;
+    const outbound = sent[0];
+    if (outbound === undefined) throw new Error("Realtime command was not sent");
+    const command = JSON.parse(outbound) as { requestId: string };
+    broker.receive("production", socket, {
+      type: "command.result",
+      requestId: command.requestId,
+      ok: true,
+      result: { state: "active" },
+    });
+
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      requestId: command.requestId,
+      capabilityId: "server.status",
+      result: { state: "active" },
+    });
+    expect(auditActions).toEqual(["server.command.requested", "server.command.completed"]);
+
+    const unavailableAudit: AuditService = {
+      async record() {
+        throw new Error("audit unavailable");
+      },
+      async list() {
+        return [];
+      },
+    };
+    const blockedApp = createApp(undefined, undefined, appAuth, undefined, unavailableAudit, {
+      realtimeBroker: broker,
+    });
+    const sentBeforeBlockedRequest = sent.length;
+    const blocked = await blockedApp.handle(
+      new Request("http://localhost/api/servers/production/commands", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilityId: "server.status", input: {} }),
+      }),
+    );
+    expect(blocked.status).toBe(503);
+    expect(sent).toHaveLength(sentBeforeBlockedRequest);
+    const reconnectAuditActions: string[] = [];
+    const replacementSocket = { send() {}, close() {} };
+    const reconnectAudit: AuditService = {
+      async record(event) {
+        reconnectAuditActions.push(event.action);
+        if (event.action === "server.command.requested") {
+          broker.connect("production", replacementSocket);
+        }
+      },
+      async list() {
+        return [];
+      },
+    };
+    const reconnectApp = createApp(undefined, undefined, appAuth, undefined, reconnectAudit, {
+      realtimeBroker: broker,
+    });
+    const capabilityChanged = await reconnectApp.handle(
+      new Request("http://localhost/api/servers/production/commands", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ capabilityId: "server.status", input: {} }),
+      }),
+    );
+    expect(capabilityChanged.status).toBe(400);
+    expect(reconnectAuditActions).toEqual(["server.command.requested", "server.command.failed"]);
   });
 });

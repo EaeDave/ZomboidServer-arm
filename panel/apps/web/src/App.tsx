@@ -13,6 +13,7 @@ import type {
 import { useEffect, useState, type ReactNode } from "react";
 import { ActivityPage } from "./ActivityPage";
 import { throwApiError } from "./api-error";
+import { executeDirectCommand, getAgentCapabilities } from "./direct-command";
 import { ModsPage } from "./ModsPage";
 import { OverviewPage, type AccessUpdate } from "./OverviewPage";
 import { PageHeading, PanelHeader, usePanelPage } from "./PanelNav";
@@ -21,10 +22,9 @@ import { ServerConsole } from "./ServerConsole";
 import { RconConsole } from "./RconConsole";
 
 const SERVER_ID = import.meta.env.VITE_SERVER_ID || "zomboid-b42";
-
 type LifecycleOperation = Extract<
   OperationCreateRequest["kind"],
-  "start" | "stop" | "restart" | "build.update" | "backup" | "world.save"
+  "start" | "stop" | "restart" | "build.update" | "backup"
 >;
 
 async function getHealth(): Promise<HealthResponse> {
@@ -184,12 +184,27 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     queryFn: () => getServerStatus(SERVER_ID),
     refetchInterval: 15_000,
   });
+  const [directMessage, setDirectMessage] = useState<string>();
   const operationMutation = useMutation({
     mutationFn: queueOperation,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["server-status", SERVER_ID] });
       void queryClient.invalidateQueries({ queryKey: ["operations", SERVER_ID] });
     },
+  });
+  const worldSaveMutation = useMutation({
+    mutationFn: () => executeDirectCommand(SERVER_ID, { capabilityId: "world.save", input: {} }),
+    onMutate: () => setDirectMessage(undefined),
+    onSuccess: (response) => {
+      setDirectMessage(`World saved in ${response.durationMs} ms.`);
+      void queryClient.invalidateQueries({ queryKey: ["server-status", SERVER_ID] });
+    },
+  });
+  const agentCapabilities = useQuery({
+    queryKey: ["agent-capabilities", SERVER_ID],
+    queryFn: () => getAgentCapabilities(SERVER_ID),
+    enabled: Boolean(user),
+    refetchInterval: 5_000,
   });
   const operations = useQuery({
     queryKey: ["operations", SERVER_ID],
@@ -270,7 +285,8 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
   };
   const queueOperationRequest = (request: OperationCreateRequest) =>
     operationMutation.mutateAsync(request);
-  const busy = Boolean(activeOperation) || operationMutation.isPending;
+  const busy =
+    Boolean(activeOperation) || operationMutation.isPending || worldSaveMutation.isPending;
 
   let content: ReactNode;
   if (page === "overview") {
@@ -282,6 +298,14 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
         onQueue={queueLifecycle}
         onRefresh={() => void server.refetch()}
         onRevealSettings={() => revealServerSettings(SERVER_ID)}
+        onSaveWorld={() => worldSaveMutation.mutate()}
+        worldSaveAvailable={
+          agentCapabilities.data?.connected === true &&
+          agentCapabilities.data.capabilities.some(
+            (capability) => capability.id === "world.save" && capability.mode === "direct",
+          )
+        }
+        worldSavePending={worldSaveMutation.isPending}
         onUpdateSettings={updateAccess}
         operationMessage={operationMessage}
         operationPending={operationMutation.isPending}
@@ -337,15 +361,15 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
     content = (
       <div className="space-y-5">
         <PageHeading
-          eyebrow="Administration"
-          title="RCON console"
-          description="Use the documented command catalog for player, announcement, and world actions without opening a host shell."
+          eyebrow="Host control"
+          title="Realtime console"
+          description="Discover every capability advertised by pzctl-core, run fast commands immediately, and open durable jobs in their dedicated screens."
         />
         <RconConsole
-          busy={busy}
-          canAdmin={Boolean(canAdmin)}
-          onQueue={queueOperationRequest}
+          onNavigate={navigate}
+          role={user?.role}
           server={server.data}
+          serverId={SERVER_ID}
         />
       </div>
     );
@@ -370,6 +394,16 @@ function Dashboard({ user, onLogout }: { user?: AuthUser; onLogout?: () => void 
         {operationMutation.error instanceof Error ? (
           <p className="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/5 p-4 text-sm text-rose-200">
             {operationMutation.error.message}
+          </p>
+        ) : null}
+        {worldSaveMutation.error instanceof Error ? (
+          <p className="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/5 p-4 text-sm text-rose-200">
+            {worldSaveMutation.error.message}
+          </p>
+        ) : null}
+        {directMessage ? (
+          <p className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-sm text-emerald-200">
+            {directMessage}
           </p>
         ) : null}
         <div className="mt-6">{content}</div>

@@ -31,6 +31,7 @@ export interface AgentEnrollmentResult {
 export interface AgentService {
   enroll(input: AgentEnrollmentRequest): Promise<AgentEnrollmentResult>;
   heartbeat(agentId: string, accessToken: string, status: AgentStatus): Promise<void>;
+  authenticateRealtime?(agentId: string, accessToken: string, serverId: string): Promise<void>;
   getStatus(serverId: string): Promise<AgentStatus>;
   readSettings?(serverId: string, actorUserId: string): Promise<AgentSettingsReveal>;
   readConfig?(serverId: string, actorUserId: string): Promise<ConfigSnapshot>;
@@ -452,6 +453,14 @@ export class DatabaseAgentService implements AgentService {
 
     if (!agent) throw new AgentUnauthorizedError();
     return agent;
+  }
+  async authenticateRealtime(
+    agentId: string,
+    accessToken: string,
+    serverId: string,
+  ): Promise<void> {
+    const agent = await this.authorizeAgent(agentId, accessToken);
+    if (agent.serviceName !== serverId) throw new AgentUnauthorizedError();
   }
 
   async enroll(input: AgentEnrollmentRequest): Promise<AgentEnrollmentResult> {

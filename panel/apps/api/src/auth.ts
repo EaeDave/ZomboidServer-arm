@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { and, eq, gt, lte } from "drizzle-orm";
+import { roleRank } from "@zomboid/contracts/roles";
 import { auditEvents, sessions, users } from "@zomboid/db";
 import { createDatabase, type Database } from "@zomboid/db/client";
 
@@ -7,8 +8,6 @@ export const SESSION_COOKIE_NAME = "zomboid_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export type AuthRole = "admin" | "operator" | "viewer";
-
-const roleRank: Record<AuthRole, number> = { viewer: 0, operator: 1, admin: 2 };
 
 export function roleAtLeast(role: AuthRole, required: AuthRole): boolean {
   return roleRank[role] >= roleRank[required];

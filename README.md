@@ -125,15 +125,19 @@ tick **`Use Steam Relay`** → Save → connect. Done.
 ### Web control plane
 
 This fork also includes the optional `panel/` control plane used for remote administration. It
-keeps the browser outside the VPS trust boundary: an outbound host agent accepts only typed,
-allowlisted operations.
+keeps the browser outside the VPS trust boundary: authenticated host agents open outbound-only
+WebSocket and heartbeat connections, and accept only typed, allowlisted capabilities.
+
+Fast reads and RCON actions use the persistent WebSocket channel and return immediately. Durable
+work such as updates, backups, restarts, and resets remains in the PostgreSQL-backed job queue with
+leases, progress, reload recovery, and audit history. `pz-agent-core` publishes the same capability
+catalog to `pzctl` and the React panel, so both surfaces render the host's real command set.
 
 The structured configuration workspace reads the effective server INI and Sandbox Lua, including
 settings added by mods. It groups them by gameplay concept, explains generated bounds/defaults,
 supports search and sleep presets, and applies reviewed drafts with a backup and revision check.
 Secrets, world identity, network ports and mod load order are protected by dedicated workflows.
-The dashboard also reports current player count/names through a bounded local RCON query; RCON is
-never exposed to the browser or public network.
+RCON remains bound locally on the host and is never exposed to the browser or public network.
 
 See [`panel/README.md`](panel/README.md),
 [`docs/config-panel-design.md`](docs/config-panel-design.md) and
@@ -345,16 +349,20 @@ A few worth expanding:
 install.sh                one-shot installer (arch-checked, interactive, branch selection)
 uninstall.sh              removes everything; asks before deleting worlds (rm -rf inside)
 pzctl                     control panel (start/stop, mods, updates, console, reset, backup)
-pzctl status --json       non-interactive versioned status for the future host agent
+pzctl status --json       non-interactive versioned host status
+pzctl capabilities --json capabilities shared by the terminal and web panel
+pzctl direct --json       bounded direct capability execution through pz-agent-core
 pz-agent --stdio          local versioned status boundary
-pz-agent --enroll          enroll this host with the private control plane
-pz-agent --poll            outbound heartbeat + typed job worker (no VPS listener; staging first)
-pz-agent-priv              root-owned allowlist for server/mod/settings/reset jobs
+pz-agent --enroll         enroll this host with the private control plane
+pz-agent --poll           outbound heartbeat + durable typed job worker
+pz-agent-core run         outbound authenticated WebSocket for realtime commands
+pz-agent-priv             root-owned allowlist for host operations
+host-agent/               Go capability registry, executor and realtime transport
 templates/                JVM config, runtime launchers, systemd units (filled in at install)
 scripts/
   common.sh               shared library (env, status JSON, ini editing, workshop installs, manifest)
-  pz-agent.sh              stdio/enrollment/outbound host-agent boundary
-  pz-agent-priv.sh         root-side command allowlist used by the agent service
+  pz-agent.sh             enrollment, heartbeat and durable-job boundary
+  pz-agent-priv.sh        root-side command allowlist used by both agents
   pz-modupdate.sh         mod update checker/applier (manual + systemd timer)
   pz-rcon.py              tiny stdlib-only RCON client (console + player count)
   zomboid-watchdog.sh     hybrid boot-hang watchdog

@@ -1,14 +1,17 @@
+import { Buffer } from "node:buffer";
 import { isIP } from "node:net";
 import { cors } from "@elysiajs/cors";
 import { staticPlugin } from "@elysiajs/static";
 import { swagger } from "@elysiajs/swagger";
 import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { Elysia } from "elysia";
 import {
-  agentEnrollmentRequestSchema,
-  agentEnrollmentResponseSchema,
+  agentCapabilitiesResponseSchema,
   agentConsoleLogRequestSchema,
   agentConsoleLogResponseSchema,
+  agentEnrollmentRequestSchema,
+  agentEnrollmentResponseSchema,
   agentHeartbeatRequestSchema,
   agentHeartbeatResponseSchema,
   agentJobCompleteRequestSchema,
@@ -17,8 +20,8 @@ import {
   agentJobProgressRequestSchema,
   agentJobResponseSchema,
   agentOperationErrorResponseSchema,
-  agentStatusSchema,
   agentSettingsRevealSchema,
+  agentStatusSchema,
   auditListResponseSchema,
   authErrorResponseSchema,
   authLoginRequestSchema,
@@ -28,6 +31,9 @@ import {
   consoleLogListResponseSchema,
   configSnapshotSchema,
   databaseHealthResponseSchema,
+  directCommandRequestSchema,
+  directCommandResponseSchema,
+  directCapabilityRoles,
   healthResponseSchema,
   operationCreateRequestSchema,
   operationEventListResponseSchema,
@@ -60,6 +66,12 @@ import {
   ServerNotFoundError,
   type AgentService,
 } from "./agent-service";
+import {
+  RealtimeAgentUnavailableError,
+  RealtimeBroker,
+  RealtimeCapabilityError,
+  RealtimeCommandError,
+} from "./realtime-broker";
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -73,8 +85,6 @@ const supportedOperationKinds: Record<string, true> = {
   restart: true,
   "build.update": true,
   backup: true,
-  "world.save": true,
-  "rcon.command": true,
   "mods.list": true,
   "mods.add": true,
   "mods.remove": true,
@@ -86,7 +96,7 @@ const supportedOperationKinds: Record<string, true> = {
   "world.reset": true,
 };
 type DatabaseCheck = () => Promise<void>;
-type AppOptions = { serveFrontend?: boolean };
+type AppOptions = { serveFrontend?: boolean; realtimeBroker?: RealtimeBroker };
 
 const corsOrigin =
   process.env.PUBLIC_URL ??
@@ -190,6 +200,23 @@ export function createApp(
   audit: AuditService = createDatabaseAuditService(),
   options: AppOptions = {},
 ) {
+  const realtime = options.realtimeBroker ?? new RealtimeBroker();
+  const authenticatedRealtimeSockets = new WeakSet<object>();
+  const pendingRealtimeMessages = new WeakMap<object, { messages: unknown[]; bytes: number }>();
+  const receiveRealtimeMessage = (
+    serverId: string,
+    socket: Parameters<RealtimeBroker["connect"]>[1],
+    message: unknown,
+  ): boolean => {
+    try {
+      const value = typeof message === "string" ? JSON.parse(message) : message;
+      realtime.receive(serverId, socket, value);
+      return true;
+    } catch {
+      socket.close(1008, "Invalid realtime protocol message");
+      return false;
+    }
+  };
   const app = new Elysia({ name: "zomboid-control-plane" })
     .use(cors({ origin: corsOrigin, credentials: true }))
     .use(
@@ -203,6 +230,72 @@ export function createApp(
         },
       }),
     )
+    .ws("/api/agents/:agentId/realtime", {
+      query: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+      body: Type.Unknown(),
+      async open(ws) {
+        const token = bearerToken(ws.data.request);
+        const { agentId } = ws.data.params;
+        const { serverId } = ws.data.query;
+        if (!token || !agentService.authenticateRealtime) {
+          ws.close(1008, "Agent authentication required");
+          return;
+        }
+        pendingRealtimeMessages.set(ws.raw, { messages: [], bytes: 0 });
+        try {
+          await agentService.authenticateRealtime(agentId, token, serverId);
+          const pending = pendingRealtimeMessages.get(ws.raw);
+          if (!pending) return;
+          pendingRealtimeMessages.delete(ws.raw);
+          authenticatedRealtimeSockets.add(ws.raw);
+          realtime.connect(serverId, ws.raw);
+          ws.send(JSON.stringify({ type: "control.ready", protocolVersion: 1 }));
+          for (const message of pending.messages) {
+            if (!receiveRealtimeMessage(serverId, ws.raw, message)) break;
+          }
+        } catch {
+          pendingRealtimeMessages.delete(ws.raw);
+          ws.close(1008, "Agent authentication failed");
+        }
+      },
+      message(ws, message) {
+        if (authenticatedRealtimeSockets.has(ws.raw)) {
+          receiveRealtimeMessage(ws.data.query.serverId, ws.raw, message);
+          return;
+        }
+        const pending = pendingRealtimeMessages.get(ws.raw);
+        if (pending) {
+          let bytes: number;
+          try {
+            bytes = Buffer.byteLength(
+              typeof message === "string" ? message : JSON.stringify(message),
+            );
+          } catch {
+            pendingRealtimeMessages.delete(ws.raw);
+            ws.close(1008, "Invalid realtime protocol message");
+            return;
+          }
+          if (
+            pending.messages.length >= 8 ||
+            bytes > 64 << 10 ||
+            pending.bytes + bytes > 64 << 10
+          ) {
+            pendingRealtimeMessages.delete(ws.raw);
+            ws.close(1008, "Too many messages before agent authentication");
+            return;
+          }
+          pending.messages.push(message);
+          pending.bytes += bytes;
+          return;
+        }
+        ws.close(1008, "Agent authentication incomplete");
+      },
+      close(ws) {
+        pendingRealtimeMessages.delete(ws.raw);
+        authenticatedRealtimeSockets.delete(ws.raw);
+        realtime.disconnect(ws.data.query.serverId, ws.raw);
+      },
+    })
     .get(
       "/api/health",
       () => ({
@@ -532,7 +625,7 @@ export function createApp(
         const requiredRole =
           body.kind === "status" || body.kind === "mods.list" || body.kind === "mods.update.check"
             ? "viewer"
-            : body.kind === "world.reset" || body.kind === "rcon.command"
+            : body.kind === "world.reset"
               ? "admin"
               : "operator";
         if (!roleAtLeast(user.role, requiredRole)) {
@@ -579,6 +672,162 @@ export function createApp(
           404: agentOperationErrorResponseSchema,
           409: agentOperationErrorResponseSchema,
           500: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .get(
+      "/api/servers/:serverId/capabilities",
+      async ({ params, request, set }) => {
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        try {
+          if (!(await auth.currentUser(token))) {
+            set.status = 401;
+            return { error: { code: "unauthenticated", message: "Login required" } };
+          }
+          return realtime.capabilities(params.serverId);
+        } catch {
+          set.status = 503;
+          return { error: { code: "auth_unavailable", message: "Authentication is unavailable" } };
+        }
+      },
+      {
+        params: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+        response: {
+          200: agentCapabilitiesResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          503: agentOperationErrorResponseSchema,
+        },
+      },
+    )
+    .post(
+      "/api/servers/:serverId/commands",
+      async ({ body, params, request, set }) => {
+        const token = readSessionToken(request.headers.get("cookie"));
+        if (!token) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        let user;
+        try {
+          user = await auth.currentUser(token);
+        } catch {
+          set.status = 503;
+          return { error: { code: "auth_unavailable", message: "Authentication is unavailable" } };
+        }
+        if (!user) {
+          set.status = 401;
+          return { error: { code: "unauthenticated", message: "Login required" } };
+        }
+        const capability = realtime.capability(params.serverId, body.capabilityId);
+        if (!capability || capability.mode !== "direct") {
+          set.status = 400;
+          return {
+            error: { code: "unsupported_capability", message: "Unsupported direct capability" },
+          };
+        }
+        const canonicalRole = directCapabilityRoles[body.capabilityId];
+        if (!canonicalRole) {
+          set.status = 400;
+          return {
+            error: { code: "unsupported_capability", message: "Unsupported direct capability" },
+          };
+        }
+        const effectiveRole = roleAtLeast(capability.role, canonicalRole)
+          ? capability.role
+          : canonicalRole;
+        if (!roleAtLeast(user.role, effectiveRole)) {
+          set.status = 403;
+          return { error: { code: "forbidden", message: "Insufficient role for this command" } };
+        }
+        try {
+          await audit.record({
+            action: "server.command.requested",
+            actorUserId: user.id,
+            metadata: { serverId: params.serverId, capabilityId: body.capabilityId },
+          });
+        } catch {
+          set.status = 503;
+          return { error: { code: "audit_unavailable", message: "Audit storage is unavailable" } };
+        }
+        try {
+          const result = await realtime.execute(params.serverId, body, user.role);
+          try {
+            await audit.record({
+              action: "server.command.completed",
+              actorUserId: user.id,
+              metadata: {
+                serverId: params.serverId,
+                capabilityId: body.capabilityId,
+                requestId: result.requestId,
+                durationMs: result.durationMs,
+              },
+            });
+          } catch (error) {
+            console.error("failed to record realtime command completion", error);
+          }
+          return result;
+        } catch (error) {
+          try {
+            await audit.record({
+              action: "server.command.failed",
+              actorUserId: user.id,
+              metadata: {
+                serverId: params.serverId,
+                capabilityId: body.capabilityId,
+                errorType: error instanceof Error ? error.name : "unknown",
+              },
+            });
+          } catch (auditError) {
+            console.error("failed to record realtime command failure", auditError);
+          }
+          if (error instanceof RealtimeCapabilityError) {
+            set.status = 400;
+            return { error: { code: "unsupported_capability", message: error.message } };
+          }
+          if (error instanceof RealtimeCommandError) {
+            console.error("realtime host command failed", {
+              serverId: params.serverId,
+              capabilityId: body.capabilityId,
+              message: error.message,
+            });
+          }
+          set.status =
+            error instanceof RealtimeAgentUnavailableError
+              ? 503
+              : error instanceof RealtimeCommandError
+                ? 502
+                : 500;
+          return {
+            error: {
+              code:
+                error instanceof RealtimeAgentUnavailableError
+                  ? "agent_unavailable"
+                  : error instanceof RealtimeCommandError
+                    ? "command_failed"
+                    : "command_error",
+              message:
+                error instanceof RealtimeAgentUnavailableError
+                  ? error.message
+                  : "Realtime command failed",
+            },
+          };
+        }
+      },
+      {
+        params: Type.Object({ serverId: Type.String({ minLength: 1 }) }),
+        body: directCommandRequestSchema,
+        response: {
+          200: directCommandResponseSchema,
+          400: agentOperationErrorResponseSchema,
+          401: agentOperationErrorResponseSchema,
+          403: agentOperationErrorResponseSchema,
+          500: agentOperationErrorResponseSchema,
+          502: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
       },
@@ -1118,12 +1367,17 @@ export function createApp(
           set.status = 403;
           return { error: { code: "forbidden", message: "Insufficient role for this operation" } };
         }
-        if (!agentService.readConfig) {
-          set.status = 503;
-          return { error: { code: "agent_unavailable", message: "Configuration is unavailable" } };
-        }
         try {
-          const snapshot = await agentService.readConfig(params.serverId, user.id);
+          const response = await realtime.execute(
+            params.serverId,
+            { capabilityId: "config.read", input: {} },
+            user.role,
+            90_000,
+          );
+          if (!Value.Check(configSnapshotSchema, response.result)) {
+            throw new RealtimeCommandError("Host returned an invalid configuration snapshot");
+          }
+          const snapshot = response.result;
           await audit.record({
             action: "server.config.read",
             actorUserId: user.id,
@@ -1131,16 +1385,13 @@ export function createApp(
           });
           return snapshot;
         } catch (error) {
-          if (error instanceof ServerNotFoundError) {
-            set.status = 404;
-            return { error: { code: "server_not_found", message: "Server was not found" } };
-          }
-          if (error instanceof OperationConflictError) {
-            set.status = 409;
-            return { error: { code: "operation_conflict", message: error.message } };
-          }
-          set.status = 503;
-          return { error: { code: "agent_unavailable", message: "Configuration is unavailable" } };
+          set.status = error instanceof RealtimeCommandError ? 502 : 503;
+          return {
+            error: {
+              code: error instanceof RealtimeCommandError ? "command_failed" : "agent_unavailable",
+              message: "Configuration is unavailable",
+            },
+          };
         }
       },
       {
@@ -1149,8 +1400,7 @@ export function createApp(
           200: configSnapshotSchema,
           401: agentOperationErrorResponseSchema,
           403: agentOperationErrorResponseSchema,
-          404: agentOperationErrorResponseSchema,
-          409: agentOperationErrorResponseSchema,
+          502: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
       },
@@ -1179,12 +1429,17 @@ export function createApp(
           set.status = 403;
           return { error: { code: "forbidden", message: "Admin role required" } };
         }
-        if (!agentService.readSettings) {
-          set.status = 503;
-          return { error: { code: "agent_unavailable", message: "Settings are unavailable" } };
-        }
         try {
-          const settings = await agentService.readSettings(params.serverId, user.id);
+          const response = await realtime.execute(
+            params.serverId,
+            { capabilityId: "settings.read", input: {} },
+            user.role,
+            30_000,
+          );
+          if (!Value.Check(agentSettingsRevealSchema, response.result)) {
+            throw new RealtimeCommandError("Host returned invalid access settings");
+          }
+          const settings = response.result;
           await audit.record({
             action: "server.settings.revealed",
             actorUserId: user.id,
@@ -1192,16 +1447,13 @@ export function createApp(
           });
           return settings;
         } catch (error) {
-          if (error instanceof ServerNotFoundError) {
-            set.status = 404;
-            return { error: { code: "server_not_found", message: "Server was not found" } };
-          }
-          if (error instanceof OperationConflictError) {
-            set.status = 409;
-            return { error: { code: "operation_conflict", message: error.message } };
-          }
-          set.status = 503;
-          return { error: { code: "agent_unavailable", message: "Settings are unavailable" } };
+          set.status = error instanceof RealtimeCommandError ? 502 : 503;
+          return {
+            error: {
+              code: error instanceof RealtimeCommandError ? "command_failed" : "agent_unavailable",
+              message: "Settings are unavailable",
+            },
+          };
         }
       },
       {
@@ -1210,8 +1462,7 @@ export function createApp(
           200: agentSettingsRevealSchema,
           401: agentOperationErrorResponseSchema,
           403: agentOperationErrorResponseSchema,
-          404: agentOperationErrorResponseSchema,
-          409: agentOperationErrorResponseSchema,
+          502: agentOperationErrorResponseSchema,
           503: agentOperationErrorResponseSchema,
         },
       },

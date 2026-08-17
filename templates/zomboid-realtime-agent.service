@@ -1,0 +1,23 @@
+[Unit]
+Description=Zomboid realtime host control channel (outbound only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+EnvironmentFile=__ENVFILE__
+EnvironmentFile=-__AGENT_ENVFILE__
+Environment=PZCTL_ENV=__ENVFILE__
+ExecStart=__REALTIME_AGENT__ run
+Restart=always
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__CACHEDIR__ __BACKUPS__
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

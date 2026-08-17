@@ -1,193 +1,157 @@
-import { useQuery } from "@tanstack/react-query";
-import type {
-  AgentStatus,
-  OperationCreateRequest,
-  OperationRecord,
-  RconCommand,
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  type AgentCapability,
+  type AgentStatus,
+  type AuthUser,
+  type DirectCommandRequest,
+  type DirectCommandResponse,
 } from "@zomboid/contracts";
-import { useState } from "react";
-import { throwApiError } from "./api-error";
+import { roleRank } from "@zomboid/contracts/roles";
+import { useEffect, useMemo, useState } from "react";
+import { executeDirectCommand, getAgentCapabilities } from "./direct-command";
+import type { PanelPage } from "./PanelNav";
 
-type CommandArgument = {
-  label: string;
-  placeholder: string;
-  help: string;
-};
-
-type CommandDefinition = {
-  command: RconCommand;
-  title: string;
-  summary: string;
-  description: string;
-  tone: "read" | "safe" | "player";
-  arguments: CommandArgument[];
-};
-
-const commandDefinitions: CommandDefinition[] = [
-  {
-    command: "players",
-    title: "List players",
-    summary: "See who is connected",
-    description: "Read-only player count and names reported by the game server.",
-    tone: "read",
-    arguments: [],
-  },
-  {
-    command: "help",
-    title: "Show game help",
-    summary: "Ask the server for its command list",
-    description: "Returns the commands currently exposed by this Project Zomboid build.",
-    tone: "read",
-    arguments: [],
-  },
-  {
-    command: "servermsg",
-    title: "Broadcast message",
-    summary: "Send a message to everyone",
-    description: "Displays a server announcement to all connected players.",
-    tone: "safe",
-    arguments: [
-      {
-        label: "Message",
-        placeholder: "The server will restart after the next save",
-        help: "Keep it short and actionable. Maximum 500 characters.",
-      },
-    ],
-  },
-  {
-    command: "kickuser",
-    title: "Kick player",
-    summary: "Remove one player with a reason",
-    description: "Disconnects a player and records the reason in the game response.",
-    tone: "player",
-    arguments: [
-      {
-        label: "Username",
-        placeholder: "PlayerName",
-        help: "Use the exact name returned by List players.",
-      },
-      {
-        label: "Reason",
-        placeholder: "Maintenance",
-        help: "The player sees this reason when disconnected.",
-      },
-    ],
-  },
-  {
-    command: "save",
-    title: "Save world",
-    summary: "Flush the current world to disk",
-    description: "Runs the same safe save command used by lifecycle and backup flows.",
-    tone: "safe",
-    arguments: [],
-  },
-];
-
-async function getOperation(operationId: string): Promise<OperationRecord> {
-  const response = await fetch(`/api/operations/${operationId}`, { credentials: "same-origin" });
-  if (!response.ok) throwApiError(response, `Operation request failed: ${response.status}`);
-  return response.json() as Promise<OperationRecord>;
+function canRun(role: AuthUser["role"] | undefined, capability: AgentCapability) {
+  return role !== undefined && roleRank[role] >= roleRank[capability.role];
 }
 
-function statusLabel(operation?: OperationRecord) {
-  if (!operation) return "Ready";
-  if (operation.status === "queued") return "Queued";
-  if (operation.status === "running") return "Running";
-  if (operation.status === "succeeded") return "Completed";
-  if (operation.status === "cancelled") return "Cancelled";
-  return "Failed";
+function areaFor(capability: AgentCapability): PanelPage {
+  if (capability.category === "Mods") return "mods";
+  if (capability.category === "Settings") return "settings";
+  if (capability.category === "Diagnostics") return "logs";
+  return "overview";
 }
 
-function statusTone(operation?: OperationRecord) {
-  if (!operation || operation.status === "queued" || operation.status === "running") {
-    return "text-amber-200";
+function commandOutput(response?: DirectCommandResponse) {
+  if (response === undefined) return undefined;
+  const result = response.result;
+  if (result && typeof result === "object" && "output" in result) {
+    const output = result.output;
+    if (typeof output === "string") return output || "(ok)";
   }
-  if (operation.status === "succeeded") return "text-emerald-300";
-  return "text-rose-300";
+  return JSON.stringify(result, null, 2);
 }
-
-function operationOutput(operation?: OperationRecord) {
-  if (!operation?.result || typeof operation.result !== "object") return undefined;
-  const result = operation.result as { output?: unknown };
-  return typeof result.output === "string" ? result.output : undefined;
+function validateArguments(
+  capability: AgentCapability,
+  input: Record<string, string | boolean>,
+): string | undefined {
+  for (const argument of capability.arguments) {
+    const value = input[argument.name];
+    if (argument.type === "boolean") continue;
+    if (argument.type === "string-list") {
+      const entries = String(value ?? "")
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (argument.required && entries.length === 0) return `${argument.label} is required.`;
+      const maxLength = argument.maxLength;
+      if (maxLength !== undefined && entries.some((entry) => [...entry].length > maxLength)) {
+        return `${argument.label} contains a value longer than ${maxLength} characters.`;
+      }
+      continue;
+    }
+    const text = String(value ?? "").trim();
+    if (argument.required && text === "") return `${argument.label} is required.`;
+    if (text === "") continue;
+    if (argument.type === "integer") {
+      const number = Number(text);
+      if (!Number.isInteger(number)) return `${argument.label} must be an integer.`;
+      if (argument.minimum !== undefined && number < argument.minimum) {
+        return `${argument.label} must be at least ${argument.minimum}.`;
+      }
+      if (argument.maximum !== undefined && number > argument.maximum) {
+        return `${argument.label} must be at most ${argument.maximum}.`;
+      }
+    } else if (argument.maxLength !== undefined && [...text].length > argument.maxLength) {
+      return `${argument.label} must be at most ${argument.maxLength} characters.`;
+    }
+  }
+  return undefined;
 }
 
 export function RconConsole({
+  serverId,
   server,
-  canAdmin,
-  busy,
-  onQueue,
+  role,
+  onNavigate,
 }: {
+  serverId: string;
   server?: AgentStatus;
-  canAdmin: boolean;
-  busy: boolean;
-  onQueue: (request: OperationCreateRequest) => Promise<OperationRecord>;
+  role?: AuthUser["role"];
+  onNavigate: (page: PanelPage) => void;
 }) {
-  const [selectedCommand, setSelectedCommand] = useState<RconCommand>("players");
-  const [firstArgument, setFirstArgument] = useState("");
-  const [secondArgument, setSecondArgument] = useState("");
-  const [operationId, setOperationId] = useState<string>();
-  const [sentCommand, setSentCommand] = useState<string>();
-  const [formError, setFormError] = useState<string>();
-  const selected =
-    commandDefinitions.find((definition) => definition.command === selectedCommand) ??
-    commandDefinitions[0]!;
-  const operation = useQuery({
-    queryKey: ["rcon-operation", operationId],
-    queryFn: () => getOperation(operationId as string),
-    enabled: Boolean(operationId),
-    refetchInterval: (query) => {
-      const state = query.state.data?.status;
-      return state === "queued" || state === "running" ? 1_000 : false;
-    },
+  const capabilities = useQuery({
+    queryKey: ["agent-capabilities", serverId],
+    queryFn: () => getAgentCapabilities(serverId),
+    enabled: role !== undefined,
+    refetchInterval: 5_000,
   });
-  const rconReady = server?.rconAvailable === true;
-  const output = operationOutput(operation.data);
+  const [selectedId, setSelectedId] = useState<string>();
+  const [input, setInput] = useState<Record<string, string | boolean>>({});
+  const [validationError, setValidationError] = useState<string>();
+  const command = useMutation({
+    mutationFn: (request: DirectCommandRequest) => executeDirectCommand(serverId, request),
+  });
+  const directCapabilities =
+    capabilities.data?.capabilities.filter((item) => item.mode === "direct") ?? [];
+  const selected =
+    directCapabilities.find((capability) => capability.id === selectedId) ?? directCapabilities[0];
+  const resolvedSelectedId = selected?.id;
+  useEffect(() => {
+    setInput({});
+    setValidationError(undefined);
+    command.reset();
+  }, [resolvedSelectedId]);
+  const grouped = useMemo(() => {
+    const groups = new Map<string, AgentCapability[]>();
+    for (const capability of capabilities.data?.capabilities ?? []) {
+      const group = groups.get(capability.category) ?? [];
+      group.push(capability);
+      groups.set(capability.category, group);
+    }
+    return [...groups.entries()];
+  }, [capabilities.data?.capabilities]);
+  const output = commandOutput(command.data);
+  const realtimeConnected = capabilities.data?.connected === true;
 
-  const selectCommand = (command: RconCommand) => {
-    setSelectedCommand(command);
-    setFirstArgument("");
-    setSecondArgument("");
-    setFormError(undefined);
+  const select = (capability: AgentCapability) => {
+    if (capability.mode !== "direct") {
+      onNavigate(areaFor(capability));
+      return;
+    }
+    setSelectedId(capability.id);
+    setInput({});
+    setValidationError(undefined);
+    command.reset();
   };
 
-  const submit = async () => {
-    if (!canAdmin) {
-      setFormError("Administrator role required to send RCON commands.");
+  const submit = () => {
+    if (!selected) return;
+    const error = validateArguments(selected, input);
+    if (error) {
+      setValidationError(error);
       return;
     }
-    if (!rconReady) {
-      setFormError("RCON is not ready. Wait for the server to finish starting, then refresh.");
+    setValidationError(undefined);
+    const payload: Record<string, unknown> = {};
+    for (const argument of selected.arguments) {
+      const value = input[argument.name];
+      if (argument.type === "boolean") {
+        payload[argument.name] = value === true;
+      } else if (argument.type === "integer") {
+        if (value !== undefined && value !== "") payload[argument.name] = Number(value);
+      } else if (argument.type === "string-list") {
+        payload[argument.name] = String(value ?? "")
+          .split(/[\n,]/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      } else if (value !== undefined) {
+        payload[argument.name] = String(value).trim();
+      }
+    }
+    if (selected.effects.includes("player-action") && !window.confirm(`Run ${selected.title}?`))
       return;
-    }
-    const args =
-      selected.arguments.length === 0
-        ? []
-        : selected.arguments.length === 1
-          ? [firstArgument.trim()]
-          : [firstArgument.trim(), secondArgument.trim()];
-    if (args.some((value) => !value)) {
-      setFormError("Fill in every command field before sending it.");
-      return;
-    }
-    if (selectedCommand === "kickuser" && !window.confirm(`Kick ${args[0]} from the server?`)) {
-      return;
-    }
-    setFormError(undefined);
-    setSentCommand(
-      [selectedCommand, ...args.map((value) => (value.includes(" ") ? `"${value}"` : value))].join(
-        " ",
-      ),
-    );
-    try {
-      const queued = await onQueue({
-        kind: "rcon.command",
-        payload: { command: selectedCommand, args },
-      });
-      setOperationId(queued.operationId);
-    } catch (cause) {
-      setFormError(cause instanceof Error ? cause.message : "Could not send the RCON command.");
-    }
+    command.mutate({ capabilityId: selected.id, input: payload });
   };
 
   return (
@@ -196,185 +160,205 @@ export function RconConsole({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
-              Administration
+              Host control
             </p>
-            <h2 className="mt-1 text-2xl font-semibold text-zinc-100">Admin console</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-              Run documented Project Zomboid commands through the host&apos;s local RCON socket.
-              Restart remains in Overview; this console does not expose a shell or the quit command.
+            <h2 className="mt-1 text-2xl font-semibold text-zinc-100">Realtime control channel</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+              Fast commands bypass the durable job queue and return over the outbound host
+              connection. Long operations remain recoverable jobs and link to their dedicated
+              screen.
             </p>
           </div>
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-              rconReady
-                ? "bg-emerald-400/10 text-emerald-300"
-                : server?.rconAvailable === false
-                  ? "bg-rose-400/10 text-rose-300"
-                  : "bg-amber-400/10 text-amber-200"
-            }`}
-          >
-            {rconReady
-              ? "RCON ready"
-              : server?.rconAvailable === false
-                ? "RCON unavailable"
-                : "RCON checking"}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${realtimeConnected ? "bg-emerald-400/10 text-emerald-300" : "bg-rose-400/10 text-rose-300"}`}
+            >
+              {realtimeConnected ? "Agent realtime" : "Agent disconnected"}
+            </span>
+            <span className="text-xs text-zinc-600">
+              {server?.rconAvailable === true ? "RCON ready" : "RCON not ready"}
+            </span>
+          </div>
         </div>
-        {!canAdmin ? (
-          <p className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-200">
-            The command catalog is visible for reference, but sending RCON commands requires an
-            administrator account.
-          </p>
-        ) : null}
       </section>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-              Command catalog
+              Host capabilities
             </p>
-            <h2 className="mt-1 text-lg font-semibold text-zinc-100">Choose an action</h2>
+            <h2 className="mt-1 text-lg font-semibold text-zinc-100">
+              Everything advertised by pzctl-core
+            </h2>
           </div>
-          <p className="text-xs text-zinc-500">Only documented commands can be sent.</p>
+          <span className="text-xs text-zinc-500">
+            {capabilities.data?.capabilities.length ?? 0} capabilities · direct + durable jobs
+          </span>
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {commandDefinitions.map((definition) => (
-            <button
-              aria-pressed={selectedCommand === definition.command}
-              className={`rounded-xl border p-4 text-left transition ${
-                selectedCommand === definition.command
-                  ? "border-emerald-400/60 bg-emerald-400/10"
-                  : "border-zinc-800 bg-zinc-950/50 hover:border-zinc-600"
-              }`}
-              key={definition.command}
-              onClick={() => selectCommand(definition.command)}
-              type="button"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <code className="text-sm font-semibold text-emerald-300">{definition.command}</code>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                    definition.tone === "read"
-                      ? "bg-sky-400/10 text-sky-300"
-                      : definition.tone === "player"
-                        ? "bg-rose-400/10 text-rose-300"
-                        : "bg-amber-400/10 text-amber-200"
-                  }`}
-                >
-                  {definition.tone === "read"
-                    ? "Read-only"
-                    : definition.tone === "player"
-                      ? "Player action"
-                      : "Server action"}
-                </span>
+        {capabilities.isError ? (
+          <p className="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-sm text-rose-200">
+            {capabilities.error instanceof Error
+              ? capabilities.error.message
+              : "Capabilities are unavailable."}
+          </p>
+        ) : null}
+        <div className="mt-5 space-y-6">
+          {grouped.map(([category, items]) => (
+            <div key={category}>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                {category}
+              </h3>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {items.map((capability) => (
+                  <button
+                    aria-pressed={capability.mode === "direct" && selected?.id === capability.id}
+                    className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-40 ${capability.mode === "direct" && selected?.id === capability.id ? "border-emerald-400/60 bg-emerald-400/10" : "border-zinc-800 bg-zinc-950/50 hover:border-zinc-600"}`}
+                    disabled={
+                      capability.mode === "direct" &&
+                      capability.id.startsWith("rcon.") &&
+                      server?.rconAvailable !== true
+                    }
+                    key={capability.id}
+                    onClick={() => select(capability)}
+                    type="button"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <code className="text-xs font-semibold text-emerald-300">
+                        {capability.id}
+                      </code>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${capability.mode === "direct" ? "bg-sky-400/10 text-sky-300" : "bg-amber-400/10 text-amber-200"}`}
+                      >
+                        {capability.mode === "direct" ? "Realtime" : "Job"}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm font-medium text-zinc-200">{capability.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-zinc-500">{capability.description}</p>
+                    {capability.mode === "job" ? (
+                      <p className="mt-3 text-xs text-amber-200/70">Open {areaFor(capability)}</p>
+                    ) : null}
+                  </button>
+                ))}
               </div>
-              <p className="mt-3 text-sm font-medium text-zinc-200">{definition.title}</p>
-              <p className="mt-1 text-xs leading-5 text-zinc-500">{definition.summary}</p>
-            </button>
+            </div>
           ))}
         </div>
       </section>
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-              Selected command
-            </p>
-            <h2 className="mt-1 text-lg font-semibold text-zinc-100">
-              <code className="text-emerald-300">{selected.command}</code>
-            </h2>
-            <p className="mt-2 max-w-2xl text-sm text-zinc-400">{selected.description}</p>
-          </div>
-          <div className={`text-sm font-medium ${statusTone(operation.data)}`}>
-            {statusLabel(operation.data)}
-          </div>
-        </div>
-
-        {selected.arguments.length ? (
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {selected.arguments.map((argument, index) => (
-              <label
-                className="block text-sm text-zinc-300"
-                htmlFor={`rcon-argument-${index}`}
-                key={argument.label}
-              >
-                {argument.label}
-                <input
-                  aria-describedby={`rcon-help-${index}`}
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none ring-emerald-400 focus:ring-2 disabled:opacity-50"
-                  disabled={busy || !canAdmin || !rconReady}
-                  id={`rcon-argument-${index}`}
-                  maxLength={index === 0 && selected.command === "servermsg" ? 500 : 500}
-                  placeholder={argument.placeholder}
-                  value={index === 0 ? firstArgument : secondArgument}
-                  onChange={(event) =>
-                    index === 0
-                      ? setFirstArgument(event.target.value)
-                      : setSecondArgument(event.target.value)
-                  }
-                />
-                <span className="mt-1 block text-xs text-zinc-600" id={`rcon-help-${index}`}>
-                  {argument.help}
-                </span>
-              </label>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 text-sm text-zinc-500">
-            This command does not require parameters.
-          </p>
-        )}
-
-        {formError ? <p className="mt-4 text-sm text-rose-300">{formError}</p> : null}
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={busy || !canAdmin || !rconReady}
-            onClick={() => void submit()}
-            type="button"
-          >
-            Send command
-          </button>
-          {sentCommand ? (
-            <code className="rounded-lg bg-zinc-950 px-3 py-2 text-xs text-zinc-500">
-              {sentCommand}
+      {selected ? (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                Realtime command
+              </p>
+              <h2 className="mt-1 text-lg font-semibold text-zinc-100">{selected.title}</h2>
+              <p className="mt-2 text-sm text-zinc-400">{selected.description}</p>
+            </div>
+            <code className="rounded-lg bg-zinc-950 px-3 py-2 text-xs text-emerald-300">
+              {selected.id}
             </code>
-          ) : null}
-        </div>
-
-        {operation.isError ? (
-          <p className="mt-5 text-sm text-rose-300">
-            {operation.error instanceof Error
-              ? operation.error.message
-              : "Could not read command result."}
-          </p>
-        ) : null}
-        {operation.data?.status === "running" || operation.data?.status === "queued" ? (
-          <p className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-200">
-            {operation.data.progressMessage ?? "The host agent is sending the command…"}
-          </p>
-        ) : null}
-        {operation.data?.status === "failed" ? (
-          <p className="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-sm text-rose-200">
-            {operation.data.error ?? "The RCON command failed."}
-          </p>
-        ) : null}
-        {output !== undefined ? (
-          <div className="mt-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-              Server response
-            </p>
-            <pre
-              className="mt-2 max-h-72 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-4 font-mono text-xs leading-5 text-zinc-300"
-              role="log"
-            >
-              {output || "(ok)"}
-            </pre>
           </div>
-        ) : null}
-      </section>
+          {selected.arguments.length ? (
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              {selected.arguments.map((argument) => (
+                <label className="block text-sm text-zinc-300" key={argument.name}>
+                  {argument.label}
+                  {argument.type === "boolean" ? (
+                    <input
+                      checked={input[argument.name] === true}
+                      className="ml-3 accent-emerald-400"
+                      onChange={(event) =>
+                        setInput((current) => ({
+                          ...current,
+                          [argument.name]: event.target.checked,
+                        }))
+                      }
+                      type="checkbox"
+                    />
+                  ) : argument.type === "string-list" ? (
+                    <textarea
+                      className="mt-2 min-h-24 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none ring-emerald-400 focus:ring-2"
+                      onChange={(event) =>
+                        setInput((current) => ({ ...current, [argument.name]: event.target.value }))
+                      }
+                      placeholder={argument.placeholder}
+                      required={argument.required}
+                      value={String(input[argument.name] ?? "")}
+                    />
+                  ) : (
+                    <input
+                      className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none ring-emerald-400 focus:ring-2"
+                      max={argument.maximum}
+                      maxLength={argument.maxLength}
+                      min={argument.minimum}
+                      onChange={(event) =>
+                        setInput((current) => ({ ...current, [argument.name]: event.target.value }))
+                      }
+                      placeholder={argument.placeholder}
+                      required={argument.required}
+                      type={argument.type === "integer" ? "number" : "text"}
+                      value={String(input[argument.name] ?? "")}
+                    />
+                  )}
+                  <span className="mt-1 block text-xs text-zinc-600">{argument.description}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3 text-sm text-zinc-500">
+              No parameters required.
+            </p>
+          )}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={
+                !realtimeConnected ||
+                !canRun(role, selected) ||
+                command.isPending ||
+                (selected.id.startsWith("rcon.") && server?.rconAvailable !== true)
+              }
+              onClick={submit}
+              type="button"
+            >
+              {command.isPending ? "Running…" : "Run now"}
+            </button>
+            {!canRun(role, selected) ? (
+              <span className="text-xs text-amber-200">Requires {selected.role}</span>
+            ) : null}
+            {command.data ? (
+              <span className="text-xs text-emerald-300">
+                Completed in {command.data.durationMs} ms
+              </span>
+            ) : null}
+          </div>
+          {validationError ? (
+            <p className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-amber-200">
+              {validationError}
+            </p>
+          ) : null}
+          {command.error instanceof Error ? (
+            <p className="mt-5 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-sm text-rose-200">
+              {command.error.message}
+            </p>
+          ) : null}
+          {output !== undefined ? (
+            <div className="mt-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                Host response
+              </p>
+              <pre
+                className="mt-2 max-h-80 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-4 font-mono text-xs leading-5 text-zinc-300"
+                role="log"
+              >
+                {output}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
