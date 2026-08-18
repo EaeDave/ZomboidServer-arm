@@ -1,4 +1,7 @@
 # 🧟 ZomboidServer-arm — Project Zomboid B42 server on ARM, the easy way
+> **Archived / discontinued (2026-08-18):** This project is no longer maintained or deployed. The
+> production server, control panel, and project database have been removed. Do not run the
+> installation instructions below; this repository is preserved as a read-only historical reference.
 
 Run a **modded Project Zomboid Build 42** dedicated server on a cheap (or **free**) **ARM64**
 box, like an **Oracle Cloud Ampere** VM, with **one command**. Then manage everything from a
