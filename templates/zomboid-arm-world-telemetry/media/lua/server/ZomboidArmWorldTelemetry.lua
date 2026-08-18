@@ -1,6 +1,8 @@
 local MOD_ID = "ZomboidArmWorldTelemetry"
 local TELEMETRY_FILENAME = "world-time.txt"
 local TELEMETRY_ALTERNATE_FILENAME = "world-time.txt.next"
+local HEARTBEAT_TICKS = 300
+
 
 local function integer(value)
     return math.floor(tonumber(value) or 0)
@@ -49,5 +51,17 @@ local function safePublish()
     end
 end
 
+local heartbeatTicks = 0
+
+local function safeHeartbeat()
+    heartbeatTicks = heartbeatTicks + 1
+    if heartbeatTicks < HEARTBEAT_TICKS then
+        return
+    end
+    heartbeatTicks = 0
+    safePublish()
+end
+
 Events.OnGameTimeLoaded.Add(safePublish)
 Events.EveryOneMinute.Add(safePublish)
+Events.OnTickEvenPaused.Add(safeHeartbeat)

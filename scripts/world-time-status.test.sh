@@ -25,8 +25,17 @@ export PZ_STEAM_SESSION_CHECK=disabled
 export PZ_STEAM_SESSION_STATUS="$TMP_DIR/steam.json"
 export PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS=300
 
-export SYSTEMD_ACTIVE_ENTER="$(date -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')"
+set_active_enter() {
+  local value
+  value="$(date "$@")" || return 1
+  [ -n "$value" ] || return 1
+  SYSTEMD_ACTIVE_ENTER="$value"
+  export SYSTEMD_ACTIVE_ENTER
+}
+
+set_active_enter -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC'
 export PZ_STATUS_RCON=0
+
 
 
 # shellcheck source=/dev/null
@@ -69,7 +78,8 @@ rm -f "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
 
 # Telemetry newer than this activation but older than the freshness limit is stale.
 touch -d '10 minutes ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
-export SYSTEMD_ACTIVE_ENTER="$(date -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')"
+set_active_enter -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC'
+
 status_json > "$TMP_DIR/aged-status.json"
 jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
   "$TMP_DIR/aged-status.json" >/dev/null
@@ -77,7 +87,8 @@ jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAg
 
 
 # A non-object telemetry document must be treated as unavailable.
-export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+set_active_enter -u '+%Y-%m-%d %H:%M:%S UTC'
+
 printf '%s\n' '[]' > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
 status_json > "$TMP_DIR/invalid-telemetry-status.json"
 jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
@@ -85,22 +96,58 @@ jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAg
 
 
 
-# A non-object world marker must fall back without breaking status serialization.
+# A non-object world marker must fall back to the deterministic directory birth time.
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
   > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
 printf '%s\n' '[]' > "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
+cat > "$TMP_DIR/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+if [ "${1:-}" = -c ] && [ "${2:-}" = %W ]; then
+  printf '1700000000\n'
+else
+  exec /usr/bin/stat "$@"
+fi
+STAT
+chmod +x "$TMP_DIR/bin/stat"
+old_path="$PATH"
+export PATH="$TMP_DIR/bin:$PATH"
+set_active_enter -u '+%Y-%m-%d %H:%M:%S UTC'
+expected_now="$(date +%s)" || exit 1
+case "$expected_now" in ''|*[!0-9]*) exit 1 ;; esac
+expected_age=$((expected_now - 1700000000))
+
 status_json > "$TMP_DIR/invalid-marker-status.json"
-jq -e '
+jq -e \
+  --argjson lower "$((expected_age - 5))" \
+  --argjson upper "$((expected_age + 5))" '
+
   .worldTime.year == 1993 and
-  (.worldCreatedAt | type == "string") and
-  (.worldAgeSeconds >= 0)
+  .worldCreatedAt == "2023-11-14T22:13:20Z" and
+  (.worldAgeSeconds >= $lower and .worldAgeSeconds <= $upper)
 ' "$TMP_DIR/invalid-marker-status.json" >/dev/null
+
+# A future marker is invalid and uses the same deterministic fallback.
+printf '%s\n' '{"createdAt":"2999-01-01T00:00:00Z"}' \
+  > "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
+expected_now="$(date +%s)" || exit 1
+case "$expected_now" in ''|*[!0-9]*) exit 1 ;; esac
+expected_age=$((expected_now - 1700000000))
+
+status_json > "$TMP_DIR/future-marker-status.json"
+jq -e \
+  --argjson lower "$((expected_age - 5))" \
+  --argjson upper "$((expected_age + 5))" '
+  .worldCreatedAt == "2023-11-14T22:13:20Z" and
+  (.worldAgeSeconds >= $lower and .worldAgeSeconds <= $upper)
+' "$TMP_DIR/future-marker-status.json" >/dev/null
+export PATH="$old_path"
 
 
 # A sidecar from a previous service activation must not be reused after restart.
 touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
 touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
-export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+set_active_enter -u '+%Y-%m-%d %H:%M:%S UTC'
+
 status_json > "$TMP_DIR/stale-status.json"
 jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
   "$TMP_DIR/stale-status.json" >/dev/null
@@ -120,7 +167,8 @@ STAT
 chmod +x "$TMP_DIR/bin/stat"
 old_path="$PATH"
 export PATH="$TMP_DIR/bin:$PATH"
-export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+set_active_enter -u '+%Y-%m-%d %H:%M:%S UTC'
+
 status_json > "$TMP_DIR/no-birth-status.json"
 export PATH="$old_path"
 jq -e '.worldCreatedAt == null and .worldAgeSeconds == null' \

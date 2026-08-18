@@ -221,7 +221,10 @@ created_epoch = None
 try:
     marker_data = json.loads(marker.read_text(encoding="utf-8"))
     if isinstance(marker_data, dict):
-        created_epoch = parse_epoch(marker_data.get("createdAt"))
+        candidate = parse_epoch(marker_data.get("createdAt"))
+        if candidate is not None and candidate <= now:
+            created_epoch = candidate
+
 except (OSError, ValueError, TypeError, json.JSONDecodeError):
     pass
 
@@ -229,6 +232,8 @@ if created_epoch is None:
     try:
         candidate = int(os.environ.get("WORLD_BIRTH_EPOCH", "0"))
     except ValueError:
+        candidate = 0
+    if candidate <= 0 or candidate > now:
         candidate = 0
     if candidate <= 0:
         emit_metadata(None, None)
