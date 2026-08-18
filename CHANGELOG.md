@@ -14,6 +14,9 @@ Versions are git tags; every release ships with these notes on the GitHub Releas
   caller-role checks, and host-side argument validation.
 - Added a capability-driven web console and matching `pzctl capabilities/direct` commands. Fast
   RCON, save, settings-read, and config-read actions no longer wait behind durable update jobs.
+- Added live world-time telemetry: the host installs a server-side mod that publishes the running
+  GameTime date, days survived and world age without depending on periodic save snapshots. The
+  panel now distinguishes server uptime, real-world world age and in-game time.
 
 ### Changed
 - Box64 is now an explicit fallback. Its package, `binfmt_misc` registration and

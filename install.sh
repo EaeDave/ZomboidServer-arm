@@ -89,6 +89,8 @@ BIN_BUILDUPDATE="/usr/local/sbin/pz-build-update${SFX}"
 BIN_FEXSTART="/usr/local/sbin/zomboid-fex-start${SFX}.sh"
 BIN_BOXSTART="/usr/local/sbin/zomboid-b42-start${SFX}.sh"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
+WORLD_TELEMETRY_MOD_ID="ZomboidArmWorldTelemetry"
+WORLD_TELEMETRY_MOD_DIR="$CACHEDIR/mods/zomboid-arm-world-telemetry"
 
 # FEX a08a6ce is the tested pre-FEX-2506 build. Keep the backend selectable so
 # box64 remains available as a fallback on hosts where FEX is not appropriate.
@@ -301,6 +303,11 @@ sed "s/__XMX__/${RAM_GB}g/" "$REPO_DIR/templates/ProjectZomboid64.json" > "$INST
 step "Preparing ciopfs (case-insensitive mods)"
 if [ -d "$WS" ] && [ ! -d "${WS}.ci" ]; then mv "$WS" "${WS}.ci"; fi
 mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods" "$BACKUPS"
+mkdir -p "$WORLD_TELEMETRY_MOD_DIR/media/lua/server"
+install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/mod.info" \
+  "$WORLD_TELEMETRY_MOD_DIR/mod.info"
+install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/media/lua/server/ZomboidArmWorldTelemetry.lua" \
+  "$WORLD_TELEMETRY_MOD_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
 chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR" "$CACHEDIR" 2>/dev/null || true
 chown "$TARGET_USER":"$TARGET_USER" "$BACKUPS" 2>/dev/null || true
 
@@ -511,6 +518,11 @@ if ! [[ "$SAVE_WORLD_MINUTES" =~ ^[0-9]+$ ]] || [ "$SAVE_WORLD_MINUTES" -gt 2147
   SAVE_WORLD_MINUTES=10
 fi
 if [ -f "$INI" ]; then
+  if ! PZ_INI="$INI" PZ_MODS="$CACHEDIR/mods" mods_has "$WORLD_TELEMETRY_MOD_ID"; then
+    PZ_USER="$TARGET_USER" PZ_INI="$INI" PZ_MODS="$CACHEDIR/mods" \
+      mods_append "$WORLD_TELEMETRY_MOD_ID"
+    CHANGED=1
+  fi
   if [ -n "$JOIN_PW" ]; then ini_set Password "$JOIN_PW" "$INI"; CHANGED=1; fi
   if [ -z "$(ini_get SaveWorldEveryMinutes "$INI")" ]; then
     ini_set SaveWorldEveryMinutes "$SAVE_WORLD_MINUTES" "$INI"

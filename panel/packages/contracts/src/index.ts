@@ -386,6 +386,19 @@ export const agentServerSettingsSchema = Type.Object({
   publicAddress: Type.Union([Type.String({ maxLength: 255 }), Type.Null()]),
 });
 
+export const agentWorldTimeSchema = Type.Object({
+  year: Type.Integer({ minimum: 0 }),
+  month: Type.Integer({ minimum: 1, maximum: 12 }),
+  day: Type.Integer({ minimum: 1, maximum: 31 }),
+  hour: Type.Integer({ minimum: 0, maximum: 23 }),
+  minute: Type.Integer({ minimum: 0, maximum: 59 }),
+  daysSurvived: Type.Integer({ minimum: 0 }),
+  worldAgeMinutes: Type.Integer({ minimum: 0 }),
+  updatedAt: Type.String({ minLength: 1 }),
+});
+
+export type AgentWorldTime = Static<typeof agentWorldTimeSchema>;
+
 export const agentStatusSchema = Type.Object({
   protocolVersion: Type.Literal(1),
   serverId: Type.String({ minLength: 1 }),
@@ -402,6 +415,9 @@ export const agentStatusSchema = Type.Object({
   ),
   rconAvailable: Type.Optional(Type.Boolean()),
   checkedAt: Type.String({ minLength: 1 }),
+  worldTime: Type.Optional(Type.Union([agentWorldTimeSchema, Type.Null()])),
+  worldCreatedAt: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
+  worldAgeSeconds: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
   steamSession: Type.Optional(steamSessionStatusSchema),
   mods: Type.Optional(agentModsStatusSchema),
   settings: Type.Optional(agentServerSettingsSchema),

@@ -61,10 +61,150 @@ pz_load_env() {
   fi
   case "$PZ_STEAM_SESSION_CHECK" in observe|required|disabled) ;; *) PZ_STEAM_SESSION_CHECK=observe ;; esac
   PZ_STEAM_SESSION_STATUS="${PZ_STEAM_SESSION_STATUS:-$PZ_CACHEDIR/pz-steam-session.json}"
+  PZ_WORLD_TELEMETRY="${PZ_WORLD_TELEMETRY:-$PZ_MODS/zomboid-arm-world-telemetry/world-time.txt}"
+  # The marker lives inside the save so backups and world resets preserve its lifecycle.
+  PZ_WORLD_CREATED_AT="${PZ_WORLD_CREATED_AT:-$PZ_CACHEDIR/Saves/Multiplayer/$PZ_SERVERNAME/.zomboid-arm-world-created-at}"
   # keys that identify THIS host/world; import must never take these from a foreign ini
   PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
   export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME PZ_STEAM_SESSION_CHECK \
-    PZ_STEAM_SESSION_STATUS
+    PZ_STEAM_SESSION_STATUS PZ_WORLD_TELEMETRY PZ_WORLD_CREATED_AT
+}
+
+
+world_time_json() {
+  local active_enter="${1:-}" file="${PZ_WORLD_TELEMETRY:-}"
+  local active_epoch=""
+  [ -n "$active_enter" ] || {
+    printf 'null\n'
+    return 0
+  }
+  [ -r "$file" ] || {
+    printf 'null\n'
+    return 0
+  }
+  active_epoch="$(date -d "$active_enter" +%s 2>/dev/null || true)"
+  WORLD_TIME_PATH="$file" WORLD_TIME_ACTIVE_EPOCH="${active_epoch:-0}" python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def emit(value):
+    print(json.dumps(value, separators=(",", ":")))
+
+
+path = Path(os.environ["WORLD_TIME_PATH"])
+try:
+    stat = path.stat()
+    active_epoch = int(os.environ.get("WORLD_TIME_ACTIVE_EPOCH", "0"))
+    if active_epoch and stat.st_mtime < active_epoch:
+        emit(None)
+        raise SystemExit
+    value = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    emit(None)
+    raise SystemExit
+
+
+def integer(name, minimum, maximum=None):
+    item = value.get(name)
+    if isinstance(item, bool) or not isinstance(item, int) or item < minimum:
+        raise ValueError(name)
+    if maximum is not None and item > maximum:
+        raise ValueError(name)
+    return item
+
+
+try:
+    if value.get("protocolVersion") != 1:
+        raise ValueError("protocolVersion")
+    world_time = {
+        "year": integer("year", 0),
+        "month": integer("month", 1, 12),
+        "day": integer("day", 1, 31),
+        "hour": integer("hour", 0, 23),
+        "minute": integer("minute", 0, 59),
+        "daysSurvived": integer("daysSurvived", 0),
+        "worldAgeMinutes": integer("worldAgeMinutes", 0),
+        "updatedAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+    }
+except (ValueError, OverflowError, OSError):
+    emit(None)
+else:
+    emit(world_time)
+PY
+}
+
+world_metadata_json() {
+  local world_dir="${PZ_CACHEDIR:-}/Saves/Multiplayer/${PZ_SERVERNAME:-}"
+  local marker="${PZ_WORLD_CREATED_AT:-$world_dir/.zomboid-arm-world-created-at}"
+  local birth_epoch
+  [ -d "$world_dir" ] || {
+    printf 'null\n'
+    return 0
+  }
+  birth_epoch="$(stat -c %W "$world_dir" 2>/dev/null || printf 0)"
+  WORLD_MARKER_PATH="$marker" WORLD_BIRTH_EPOCH="${birth_epoch:-0}" python3 - <<'PY'
+import json
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def parse_epoch(raw):
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    epoch = int(parsed.timestamp())
+    return epoch if epoch >= 0 else None
+
+
+def iso(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+now = int(time.time())
+marker = Path(os.environ["WORLD_MARKER_PATH"])
+created_epoch = None
+try:
+    marker_data = json.loads(marker.read_text(encoding="utf-8"))
+    created_epoch = parse_epoch(marker_data.get("createdAt"))
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    pass
+
+if created_epoch is None:
+    try:
+        candidate = int(os.environ.get("WORLD_BIRTH_EPOCH", "0"))
+    except ValueError:
+        candidate = 0
+    created_epoch = candidate if candidate > 0 else now
+    payload = json.dumps({"createdAt": iso(created_epoch)}, separators=(",", ":"))
+    temporary = marker.with_name(f".{marker.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(payload, encoding="utf-8")
+        os.replace(temporary, marker)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+print(
+    json.dumps(
+        {"createdAt": iso(created_epoch), "ageSeconds": max(0, now - created_epoch)},
+        separators=(",", ":"),
+    )
+)
+PY
 }
 
 # ------------------------------------------------------------ small utils
@@ -105,6 +245,7 @@ svc_active() { [ "$(read_systemctl is-active "$PZ_SERVICE" 2>/dev/null)" = activ
 # outer deadline and a 15-second cache, bounding both latency and query frequency.
 status_json() {
   local active sub state listening version active_enter uptime_seconds players runtime checked_at players_raw rcon_available
+  local world_time world_metadata
   active="$(read_systemctl show "$PZ_SERVICE" -p ActiveState --value 2>/dev/null || true)"
   sub="$(read_systemctl show "$PZ_SERVICE" -p SubState --value 2>/dev/null || true)"
   case "$active" in
@@ -128,6 +269,14 @@ status_json() {
     now="$(date +%s)"
     if [ -n "$entered" ] && [ "$entered" -le "$now" ] 2>/dev/null; then
       uptime_seconds=$((now - entered))
+    fi
+  fi
+  world_time="null"
+  world_metadata="null"
+  if [ "$active" = active ]; then
+    world_time="$(world_time_json "$active_enter")"
+    if [ "$world_time" != null ]; then
+      world_metadata="$(world_metadata_json)"
     fi
   fi
 
@@ -198,6 +347,8 @@ status_json() {
   STATUS_STEAM_CHECK="$PZ_STEAM_SESSION_CHECK" \
   STATUS_STEAM_FILE="$PZ_STEAM_SESSION_STATUS" \
   STATUS_ACTIVE_ENTER="$active_enter" \
+  STATUS_WORLD_TIME="$world_time" \
+  STATUS_WORLD_METADATA="$world_metadata" \
   python3 - <<'PY'
 import json
 import os
@@ -209,6 +360,8 @@ def nullable(value):
 
 
 uptime = nullable(os.environ["STATUS_UPTIME"])
+world_time = json.loads(os.environ["STATUS_WORLD_TIME"])
+world_metadata = json.loads(os.environ["STATUS_WORLD_METADATA"])
 
 
 def online_players():
@@ -282,6 +435,9 @@ print(
             "onlinePlayers": online_players(),
             "rconAvailable": os.environ["STATUS_RCON_AVAILABLE"] == "true",
             "checkedAt": os.environ["STATUS_CHECKED_AT"],
+            "worldTime": world_time,
+            "worldCreatedAt": world_metadata["createdAt"] if world_metadata else None,
+            "worldAgeSeconds": world_metadata["ageSeconds"] if world_metadata else None,
             "steamSession": steam_session(),
         },
         separators=(",", ":"),

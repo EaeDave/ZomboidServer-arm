@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Value } from "@sinclair/typebox/value";
 import {
   agentOperationRequestSchema,
+  agentStatusSchema,
   agentRealtimeInboundSchema,
   agentRealtimeExecuteSchema,
   directCommandRequestSchema,
@@ -83,6 +84,18 @@ describe("agent operation contracts", () => {
           runtime: "fex",
           gameVersion: "42.20.2",
           uptimeSeconds: 30,
+          worldCreatedAt: "2026-08-15T00:00:00Z",
+          worldAgeSeconds: 86_400,
+          worldTime: {
+            year: 1993,
+            month: 7,
+            day: 9,
+            hour: 14,
+            minute: 0,
+            daysSurvived: 0,
+            worldAgeMinutes: 300,
+            updatedAt: "2026-08-16T00:00:00Z",
+          },
           playerCount: 0,
           checkedAt: "2026-08-16T00:00:00Z",
         },
@@ -98,6 +111,39 @@ describe("agent operation contracts", () => {
         error: { code: "operation_disabled", message: "only status is enabled" },
       }),
     ).toBe(true);
+  });
+
+  it("bounds live world-time fields", () => {
+    const status = {
+      protocolVersion: 1,
+      serverId: "production",
+      serviceName: "zomboid-b42",
+      state: "active",
+      substate: "running",
+      listening: true,
+      runtime: "fex",
+      gameVersion: "42.20.2",
+      uptimeSeconds: 30,
+      playerCount: 0,
+      checkedAt: "2026-08-16T00:00:00Z",
+      worldTime: {
+        year: 1993,
+        month: 7,
+        day: 9,
+        hour: 14,
+        minute: 0,
+        daysSurvived: 0,
+        worldAgeMinutes: 300,
+        updatedAt: "2026-08-16T00:00:00Z",
+      },
+    };
+    expect(Value.Check(agentStatusSchema, status)).toBe(true);
+    expect(
+      Value.Check(agentStatusSchema, {
+        ...status,
+        worldTime: { ...status.worldTime, month: 13 },
+      }),
+    ).toBe(false);
   });
 
   it("rejects unknown agent request fields and invalid mod ids", () => {
