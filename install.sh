@@ -91,6 +91,7 @@ BIN_BOXSTART="/usr/local/sbin/zomboid-b42-start${SFX}.sh"
 WS="$INSTALL_DIR/steamapps/workshop/content/108600"
 WORLD_TELEMETRY_MOD_ID="ZomboidArmWorldTelemetry"
 WORLD_TELEMETRY_MOD_DIR="$CACHEDIR/mods/zomboid-arm-world-telemetry"
+WORLD_TELEMETRY_MOD_VERSION_DIR="$WORLD_TELEMETRY_MOD_DIR/42"
 
 # FEX a08a6ce is the tested pre-FEX-2506 build. Keep the backend selectable so
 # box64 remains available as a fallback on hosts where FEX is not appropriate.
@@ -303,11 +304,16 @@ sed "s/__XMX__/${RAM_GB}g/" "$REPO_DIR/templates/ProjectZomboid64.json" > "$INST
 step "Preparing ciopfs (case-insensitive mods)"
 if [ -d "$WS" ] && [ ! -d "${WS}.ci" ]; then mv "$WS" "${WS}.ci"; fi
 mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods" "$BACKUPS"
-mkdir -p "$WORLD_TELEMETRY_MOD_DIR/media/lua/server"
-install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/mod.info" \
-  "$WORLD_TELEMETRY_MOD_DIR/mod.info"
-install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/media/lua/server/ZomboidArmWorldTelemetry.lua" \
+mkdir -p "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua/server"
+install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/42/mod.info" \
+  "$WORLD_TELEMETRY_MOD_VERSION_DIR/mod.info"
+install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/42/media/lua/server/ZomboidArmWorldTelemetry.lua" \
+  "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
+# Remove the pre-B42 unversioned layout from earlier installs without touching telemetry data.
+rm -f "$WORLD_TELEMETRY_MOD_DIR/mod.info" \
   "$WORLD_TELEMETRY_MOD_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
+rmdir "$WORLD_TELEMETRY_MOD_DIR/media/lua/server" "$WORLD_TELEMETRY_MOD_DIR/media/lua" \
+  "$WORLD_TELEMETRY_MOD_DIR/media" 2>/dev/null || true
 chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR" "$CACHEDIR" 2>/dev/null || true
 chown "$TARGET_USER":"$TARGET_USER" "$BACKUPS" 2>/dev/null || true
 
@@ -418,6 +424,7 @@ PZ_ADMIN_MARKER=$CACHEDIR/.admin-bootstrap-complete
 PZ_CONSOLE=$CACHEDIR/server-console.txt
 PZ_INI=$CACHEDIR/Server/$SERVERNAME.ini
 PZ_MODS=$CACHEDIR/mods
+PZ_WORLD_TELEMETRY=$WORLD_TELEMETRY_MOD_DIR/common/world-time.txt
 PZ_DD=$(printf '%q' "$DD")
 PZ_PORT=$PORT
 PZ_RCONPORT=$RCONPORT

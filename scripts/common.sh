@@ -61,7 +61,7 @@ pz_load_env() {
   fi
   case "$PZ_STEAM_SESSION_CHECK" in observe|required|disabled) ;; *) PZ_STEAM_SESSION_CHECK=observe ;; esac
   PZ_STEAM_SESSION_STATUS="${PZ_STEAM_SESSION_STATUS:-$PZ_CACHEDIR/pz-steam-session.json}"
-  PZ_WORLD_TELEMETRY="${PZ_WORLD_TELEMETRY:-$PZ_MODS/zomboid-arm-world-telemetry/world-time.txt}"
+  PZ_WORLD_TELEMETRY="${PZ_WORLD_TELEMETRY:-$PZ_MODS/zomboid-arm-world-telemetry/common/world-time.txt}"
   # The marker lives inside the save so backups and world resets preserve its lifecycle.
   PZ_WORLD_CREATED_AT="${PZ_WORLD_CREATED_AT:-$PZ_CACHEDIR/Saves/Multiplayer/$PZ_SERVERNAME/.zomboid-arm-world-created-at}"
   PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS="${PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS:-300}"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MOD_SCRIPT="$ROOT_DIR/templates/zomboid-arm-world-telemetry/media/lua/server/ZomboidArmWorldTelemetry.lua"
+MOD_SCRIPT="$ROOT_DIR/templates/zomboid-arm-world-telemetry/42/media/lua/server/ZomboidArmWorldTelemetry.lua"
 
 lua - "$MOD_SCRIPT" <<'LUA'
 local script = arg[1]

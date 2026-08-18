@@ -5,14 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-mkdir -p "$TMP_DIR/bin" "$TMP_DIR/Server" "$TMP_DIR/mods/zomboid-arm-world-telemetry" \
+mkdir -p "$TMP_DIR/bin" "$TMP_DIR/Server" "$TMP_DIR/mods/zomboid-arm-world-telemetry/common" \
   "$TMP_DIR/Saves/Multiplayer/servertest"
 printf '%s\n' '{"createdAt":"2023-11-14T22:13:20Z"}' \
   > "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
 printf 'version=42.20.3\n' > "$TMP_DIR/console"
 printf 'ResetID=1\n' > "$TMP_DIR/Server/servertest.ini"
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
-  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
 
 export PZ_SERVICE=test-service
 export PZ_SERVER_ID=test-service
@@ -69,17 +69,17 @@ jq -e '
 
 # A valid alternate slot keeps the last complete snapshot visible if the primary slot is partial.
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
-  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt.next"
 printf '%s\n' '{"protocolVersion":1' \
-  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
 status_json > "$TMP_DIR/alternate-status.json"
 jq -e '.worldTime.year == 1993 and .worldTime.worldAgeMinutes == 18030' \
   "$TMP_DIR/alternate-status.json" >/dev/null
-rm -f "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+rm -f "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt.next"
 
 
 # Telemetry newer than this activation but older than the freshness limit is stale.
-touch -d '10 minutes ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+touch -d '10 minutes ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
 set_active_enter -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC'
 
 status_json > "$TMP_DIR/aged-status.json"
@@ -91,7 +91,7 @@ jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAg
 # A non-object telemetry document must be treated as unavailable.
 set_active_enter -u '+%Y-%m-%d %H:%M:%S UTC'
 
-printf '%s\n' '[]' > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+printf '%s\n' '[]' > "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
 status_json > "$TMP_DIR/invalid-telemetry-status.json"
 jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
   "$TMP_DIR/invalid-telemetry-status.json" >/dev/null
@@ -100,7 +100,7 @@ jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAg
 
 # A non-object world marker must fall back to the deterministic directory birth time.
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
-  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
 printf '%s\n' '[]' > "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
 cat > "$TMP_DIR/bin/stat" <<'STAT'
 #!/usr/bin/env bash
@@ -146,8 +146,8 @@ export PATH="$old_path"
 
 
 # A sidecar from a previous service activation must not be reused after restart.
-touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
-touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
+touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt.next"
 set_active_enter -u '+%Y-%m-%d %H:%M:%S UTC'
 
 status_json > "$TMP_DIR/stale-status.json"
@@ -155,9 +155,9 @@ jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAg
   "$TMP_DIR/stale-status.json" >/dev/null
 
 rm -f "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at" \
-  "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+  "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt.next"
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
-  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/common/world-time.txt"
 cat > "$TMP_DIR/bin/stat" <<'STAT'
 #!/usr/bin/env bash
 if [ "${1:-}" = -c ] && [ "${2:-}" = %W ]; then
