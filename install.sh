@@ -300,25 +300,31 @@ else
 fi
 sed "s/__XMX__/${RAM_GB}g/" "$REPO_DIR/templates/ProjectZomboid64.json" > "$INSTALL_DIR/ProjectZomboid64.json"
 
-# ----------------------------------------------------------------- 5. ciopfs dirs
+# ----------------------------------------------------------------- 5. ciopfs dirs and server scripts
 step "Preparing ciopfs (case-insensitive mods)"
 if [ -d "$WS" ] && [ ! -d "${WS}.ci" ]; then mv "$WS" "${WS}.ci"; fi
-mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods" "$BACKUPS"
-mkdir -p "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua/server"
+mkdir -p "${WS}.ci" "$WS" "$CACHEDIR/mods" "$BACKUPS" \
+  "$WORLD_TELEMETRY_MOD_DIR/common" "$WORLD_TELEMETRY_MOD_VERSION_DIR" \
+  "$INSTALL_DIR/media/lua/server"
+# Keep the B42 metadata directory as the stable data root used by getModFileWriter.
+# The Lua hook itself lives in the base server's server-script tree, so it is never
+# listed in Mods= and clients do not need to install anything.
 install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/42/mod.info" \
   "$WORLD_TELEMETRY_MOD_VERSION_DIR/mod.info"
 install -m644 "$REPO_DIR/templates/zomboid-arm-world-telemetry/42/media/lua/server/ZomboidArmWorldTelemetry.lua" \
-  "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
-# Remove the pre-B42 unversioned layout from earlier installs without touching telemetry data.
+  "$INSTALL_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
+# Remove the old packaged layouts without touching telemetry data.
 rm -f "$WORLD_TELEMETRY_MOD_DIR/mod.info" \
-  "$WORLD_TELEMETRY_MOD_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
+  "$WORLD_TELEMETRY_MOD_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua" \
+  "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua/server/ZomboidArmWorldTelemetry.lua"
 rmdir "$WORLD_TELEMETRY_MOD_DIR/media/lua/server" "$WORLD_TELEMETRY_MOD_DIR/media/lua" \
-  "$WORLD_TELEMETRY_MOD_DIR/media" 2>/dev/null || true
+  "$WORLD_TELEMETRY_MOD_DIR/media" "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua/server" \
+  "$WORLD_TELEMETRY_MOD_VERSION_DIR/media/lua" "$WORLD_TELEMETRY_MOD_VERSION_DIR/media" \
+  2>/dev/null || true
 chown -R "$TARGET_USER":"$TARGET_USER" "$INSTALL_DIR" "$CACHEDIR" 2>/dev/null || true
 chown "$TARGET_USER":"$TARGET_USER" "$BACKUPS" 2>/dev/null || true
-
 # ----------------------------------------------------------------- 6. systemd + scripts
-step "Installing systemd services, pzctl and the mod updater"
+step "Installing systemd services, pzctl, server scripts and the mod updater"
 # sed replacement-side escaping for values that may hold |, & or \
 esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 EXTRA_ARGS=""
@@ -525,9 +531,11 @@ if ! [[ "$SAVE_WORLD_MINUTES" =~ ^[0-9]+$ ]] || [ "$SAVE_WORLD_MINUTES" -gt 2147
   SAVE_WORLD_MINUTES=10
 fi
 if [ -f "$INI" ]; then
-  if ! PZ_INI="$INI" PZ_MODS="$CACHEDIR/mods" mods_has "$WORLD_TELEMETRY_MOD_ID"; then
+  # Telemetry is a native server script, not a client-facing mod. Migrate older
+  # installs by removing its former entry from the server's required Mods= list.
+  if PZ_INI="$INI" PZ_MODS="$CACHEDIR/mods" mods_has "$WORLD_TELEMETRY_MOD_ID"; then
     PZ_USER="$TARGET_USER" PZ_INI="$INI" PZ_MODS="$CACHEDIR/mods" \
-      mods_append "$WORLD_TELEMETRY_MOD_ID"
+      mods_remove "$WORLD_TELEMETRY_MOD_ID"
     CHANGED=1
   fi
   if [ -n "$JOIN_PW" ]; then ini_set Password "$JOIN_PW" "$INI"; CHANGED=1; fi
