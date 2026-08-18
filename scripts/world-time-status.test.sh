@@ -7,6 +7,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 mkdir -p "$TMP_DIR/bin" "$TMP_DIR/Server" "$TMP_DIR/mods/zomboid-arm-world-telemetry" \
   "$TMP_DIR/Saves/Multiplayer/servertest"
+printf '%s\n' '{"createdAt":"2023-11-14T22:13:20Z"}' \
+  > "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
 printf 'version=42.20.3\n' > "$TMP_DIR/console"
 printf 'ResetID=1\n' > "$TMP_DIR/Server/servertest.ini"
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
