@@ -519,6 +519,12 @@ mods_get() { ini_get Mods; }
 mods_set() { ini_set Mods "$1" || return; fix_owner "$PZ_INI"; }
 mods_has() { printf ';%s;' "$(mods_get)" | grep -qF ";$1;"; }
 mods_append() { local cur; cur="$(mods_get)"; mods_has "$1" || mods_set "${cur:+$cur;}$1"; }
+mods_remove() {
+  local id="$1" cur filtered
+  cur="$(mods_get)"
+  filtered="$(printf '%s' "$cur" | tr ';' '\n' | awk -v id="$id" 'NF && $0 != id' | paste -sd';' -)"
+  [ "$filtered" = "$cur" ] || mods_set "$filtered"
+}
 mod_disabled() { [ -f "$PZ_DISABLED" ] && grep -qxF "$1" "$PZ_DISABLED"; }
 # every mod id present on disk (one line each), regardless of active/disabled
 disk_mod_ids() {

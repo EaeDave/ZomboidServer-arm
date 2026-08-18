@@ -1,3 +1,5 @@
+-- Installed in the base server's media/lua/server tree. The metadata-only B42
+-- directory supplies a stable getModFileWriter data root; it is not in Mods=.
 local MOD_ID = "ZomboidArmWorldTelemetry"
 local TELEMETRY_FILENAME = "world-time.txt"
 local TELEMETRY_ALTERNATE_FILENAME = "world-time.txt.next"

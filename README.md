@@ -140,9 +140,11 @@ Secrets, world identity, network ports and mod load order are protected by dedic
 RCON remains bound locally on the host and is never exposed to the browser or public network.
 
 The host status includes three distinct clocks: server uptime since the current systemd activation,
-real-world world age persisted inside the save, and live in-game date/days survived from the
-server-side `ZomboidArmWorldTelemetry` mod. The save file is only used to preserve the world-age
-marker; the in-game clock is read from the running server and is not derived from periodic saves.
+real-world world age persisted inside the save, and live in-game date/days survived from a
+server-side Lua script installed directly in the base server's `media/lua/server` tree. The
+telemetry script is not listed in `Mods=`, so players do not install a client mod. The save file
+is only used to preserve the world-age marker; the in-game clock is read from the running server
+and is not derived from periodic saves.
 
 See [`panel/README.md`](panel/README.md),
 [`docs/config-panel-design.md`](docs/config-panel-design.md) and

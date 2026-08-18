@@ -43,6 +43,9 @@ export PZ_STATUS_RCON=0
 # shellcheck source=/dev/null
 . "$ROOT_DIR/scripts/common.sh"
 pz_load_env
+printf 'Mods=Alpha;ZomboidArmWorldTelemetry;ZomboidArmWorldTelemetry;Beta\n' > "$PZ_INI"
+mods_remove "ZomboidArmWorldTelemetry"
+[ "$(ini_get Mods "$PZ_INI")" = "Alpha;Beta" ]
 read_systemctl() {
   if [ "${1:-}" = show ]; then
     case "$*" in
