@@ -68,7 +68,7 @@ assert open(sys.argv[1], encoding="utf-8").read().splitlines() == [
 ]
 PY
 mkdir -p "$TMP_DIR/cache/Saves/Multiplayer/servertest"
-touch "$TMP_DIR/cache/world-time.txt" "$TMP_DIR/cache/world-created-at" \
+touch "$TMP_DIR/cache/world-time.txt" "$TMP_DIR/cache/world-time.txt.next" "$TMP_DIR/cache/world-created-at" \
   "$TMP_DIR/cache/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
 reset_output="$TMP_DIR/reset.json"
 printf '%s' '{"confirm":true,"createBackup":false}' |
@@ -76,15 +76,17 @@ printf '%s' '{"confirm":true,"createBackup":false}' |
 [ "$(cat "$reset_output")" = '{"reset":true,"backupPath":null}' ]
 [ ! -e "$TMP_DIR/cache/world-time.txt" ]
 [ ! -e "$TMP_DIR/cache/world-created-at" ]
+[ ! -e "$TMP_DIR/cache/world-time.txt.next" ]
 [ ! -e "$TMP_DIR/cache/Saves/Multiplayer/servertest" ]
 mkdir -p "$TMP_DIR/cache/Saves/Multiplayer/servertest"
-touch "$TMP_DIR/cache/world-time.txt" "$TMP_DIR/cache/world-created-at" \
+touch "$TMP_DIR/cache/world-time.txt" "$TMP_DIR/cache/world-time.txt.next" "$TMP_DIR/cache/world-created-at" \
   "$TMP_DIR/cache/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
 interactive_output="$TMP_DIR/interactive.txt"
 printf '10\nRESET\nn\nn\n\n0\n' |
   PZCTL_ENV="$TMP_DIR/missing.env" bash "$ROOT_DIR/pzctl" >"$interactive_output"
 [ ! -e "$TMP_DIR/cache/world-time.txt" ]
 [ ! -e "$TMP_DIR/cache/world-created-at" ]
+[ ! -e "$TMP_DIR/cache/world-time.txt.next" ]
 [ ! -e "$TMP_DIR/cache/Saves/Multiplayer/servertest" ]
 
 rcon_output="$TMP_DIR/rcon.json"

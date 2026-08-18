@@ -7,7 +7,8 @@ MOD_SCRIPT="$ROOT_DIR/templates/zomboid-arm-world-telemetry/media/lua/server/Zom
 lua - "$MOD_SCRIPT" <<'LUA'
 local script = arg[1]
 local callbacks = {}
-local payload
+local filename
+
 
 local function event()
     return {
@@ -22,6 +23,8 @@ Events = {
     EveryOneMinute = event(),
 }
 
+local worldAgeHours = 300.5
+
 local gameTime = {
     getYear = function() return 1993 end,
     getMonth = function() return 6 end,
@@ -29,16 +32,16 @@ local gameTime = {
     getHour = function() return 14 end,
     getMinutes = function() return 37 end,
     getDaysSurvived = function() return 12 end,
-    getWorldAgeHours = function() return 300.5 end,
+    getWorldAgeHours = function() return worldAgeHours end,
 }
 
 function getGameTime()
     return gameTime
 end
 
-function getModFileWriter(modId, filename, createIfNull, append)
+function getModFileWriter(modId, filenameValue, createIfNull, append)
     assert(modId == "ZomboidArmWorldTelemetry")
-    assert(filename == "world-time.txt")
+    filename = filenameValue
     assert(createIfNull == true)
     assert(append == false)
     return {
@@ -51,5 +54,9 @@ dofile(script)
 assert(#callbacks == 2, "expected initial and periodic callbacks")
 callbacks[1]()
 assert(payload == '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}', payload)
+worldAgeHours = 300.5166667
+callbacks[2]()
+assert(filename == "world-time.txt.next", filename)
+assert(payload == '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18031}', payload)
 print("zomboid-arm-world-telemetry-test=ok")
 LUA

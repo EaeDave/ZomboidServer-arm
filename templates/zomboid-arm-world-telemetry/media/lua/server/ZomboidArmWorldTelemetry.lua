@@ -1,5 +1,6 @@
 local MOD_ID = "ZomboidArmWorldTelemetry"
 local TELEMETRY_FILENAME = "world-time.txt"
+local TELEMETRY_ALTERNATE_FILENAME = "world-time.txt.next"
 
 local function integer(value)
     return math.floor(tonumber(value) or 0)
@@ -11,14 +12,16 @@ local function publish()
         return
     end
 
-    local writer = getModFileWriter(MOD_ID, TELEMETRY_FILENAME, true, false)
-    if not writer then
-        print("[ZomboidArmWorldTelemetry] could not open telemetry file")
-        return
-    end
-
     local worldAgeHours = tonumber(gameTime:getWorldAgeHours()) or 0
     local worldAgeMinutes = math.max(0, math.floor(worldAgeHours * 60 + 0.5))
+    local filename = TELEMETRY_FILENAME
+    if worldAgeMinutes % 2 == 1 then
+        filename = TELEMETRY_ALTERNATE_FILENAME
+    end
+
+    -- Alternate complete snapshots because the Lua file writer truncates its target before
+    -- writing. The status reader selects the newest valid file while the other slot remains
+    -- available during a concurrent publish.
     local payload = string.format(
         '{"protocolVersion":1,"year":%d,"month":%d,"day":%d,"hour":%d,"minute":%d,"daysSurvived":%d,"worldAgeMinutes":%d}',
         integer(gameTime:getYear()),
@@ -29,6 +32,11 @@ local function publish()
         integer(gameTime:getDaysSurvived()),
         worldAgeMinutes
     )
+    local writer = getModFileWriter(MOD_ID, filename, true, false)
+    if not writer then
+        print("[ZomboidArmWorldTelemetry] could not open telemetry file")
+        return
+    end
 
     writer:write(payload)
     writer:close()

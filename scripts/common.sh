@@ -76,19 +76,20 @@ pz_load_env() {
 
 
 world_time_json() {
-  local active_enter="${1:-}" file="${PZ_WORLD_TELEMETRY:-}"
+  local active_enter="${1:-}" file="${PZ_WORLD_TELEMETRY:-}" alternate="${PZ_WORLD_TELEMETRY:-}.next"
   local active_epoch=""
   [ -n "$active_enter" ] || {
     printf 'null\n'
     return 0
   }
-  [ -r "$file" ] || {
+  [ -r "$file" ] || [ -r "$alternate" ] || {
     printf 'null\n'
     return 0
   }
   active_epoch="$(date -d "$active_enter" +%s 2>/dev/null || true)"
   WORLD_TIME_MAX_AGE_SECONDS="${PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS:-300}" \
-    WORLD_TIME_PATH="$file" WORLD_TIME_ACTIVE_EPOCH="${active_epoch:-0}" python3 - <<'PY'
+    WORLD_TIME_PATH="$file" WORLD_TIME_ALT_PATH="$alternate" \
+    WORLD_TIME_ACTIVE_EPOCH="${active_epoch:-0}" python3 - <<'PY'
 import json
 import os
 import time
@@ -100,58 +101,69 @@ def emit(value):
     print(json.dumps(value, separators=(",", ":")))
 
 
-path = Path(os.environ["WORLD_TIME_PATH"])
-try:
-    stat = path.stat()
-    active_epoch = int(os.environ.get("WORLD_TIME_ACTIVE_EPOCH", "0"))
+def parse_candidate(path, active_epoch, max_age, now):
     try:
-        max_age = int(os.environ.get("WORLD_TIME_MAX_AGE_SECONDS", "300"))
-    except ValueError:
-        max_age = 300
-    if max_age < 0:
-        max_age = 300
-    if active_epoch and stat.st_mtime < active_epoch:
-        emit(None)
-        raise SystemExit
-    if stat.st_mtime < time.time() - max_age:
-        emit(None)
-        raise SystemExit
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError("telemetry must be a JSON object")
-except (OSError, ValueError, TypeError, json.JSONDecodeError):
-    emit(None)
-    raise SystemExit
+        stat = path.stat()
+        if active_epoch and stat.st_mtime < active_epoch:
+            return None
+        if stat.st_mtime < now - max_age:
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            return None
+        if value.get("protocolVersion") != 1:
+            return None
 
+        def integer(name, minimum, maximum=None):
+            item = value.get(name)
+            if isinstance(item, bool) or not isinstance(item, int) or item < minimum:
+                raise ValueError(name)
+            if maximum is not None and item > maximum:
+                raise ValueError(name)
+            return item
 
-def integer(name, minimum, maximum=None):
-    item = value.get(name)
-    if isinstance(item, bool) or not isinstance(item, int) or item < minimum:
-        raise ValueError(name)
-    if maximum is not None and item > maximum:
-        raise ValueError(name)
-    return item
+        world_time = {
+            "year": integer("year", 0),
+            "month": integer("month", 1, 12),
+            "day": integer("day", 1, 31),
+            "hour": integer("hour", 0, 23),
+            "minute": integer("minute", 0, 59),
+            "daysSurvived": integer("daysSurvived", 0),
+            "worldAgeMinutes": integer("worldAgeMinutes", 0),
+            "updatedAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, OverflowError):
+        return None
+    return stat.st_mtime, world_time
 
 
 try:
-    if value.get("protocolVersion") != 1:
-        raise ValueError("protocolVersion")
-    world_time = {
-        "year": integer("year", 0),
-        "month": integer("month", 1, 12),
-        "day": integer("day", 1, 31),
-        "hour": integer("hour", 0, 23),
-        "minute": integer("minute", 0, 59),
-        "daysSurvived": integer("daysSurvived", 0),
-        "worldAgeMinutes": integer("worldAgeMinutes", 0),
-        "updatedAt": datetime.fromtimestamp(stat.st_mtime, timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
-    }
-except (ValueError, OverflowError, OSError):
+    active_epoch = int(os.environ.get("WORLD_TIME_ACTIVE_EPOCH", "0"))
+except ValueError:
+    active_epoch = 0
+try:
+    max_age = int(os.environ.get("WORLD_TIME_MAX_AGE_SECONDS", "300"))
+except ValueError:
+    max_age = 300
+if max_age < 0:
+    max_age = 300
+
+now = time.time()
+paths = [Path(os.environ["WORLD_TIME_PATH"])]
+alternate = os.environ.get("WORLD_TIME_ALT_PATH", "")
+if alternate and alternate != os.environ["WORLD_TIME_PATH"]:
+    paths.append(Path(alternate))
+candidates = [
+    candidate
+    for path in paths
+    if (candidate := parse_candidate(path, active_epoch, max_age, now)) is not None
+]
+if not candidates:
     emit(None)
 else:
-    emit(world_time)
+    emit(max(candidates, key=lambda item: item[0])[1])
 PY
 }
 
@@ -191,6 +203,20 @@ def iso(epoch):
 
 now = int(time.time())
 marker = Path(os.environ["WORLD_MARKER_PATH"])
+
+
+def emit_metadata(created_epoch, age_seconds):
+    print(
+        json.dumps(
+            {
+                "createdAt": iso(created_epoch) if created_epoch is not None else None,
+                "ageSeconds": age_seconds,
+            },
+            separators=(",", ":"),
+        )
+    )
+
+
 created_epoch = None
 try:
     marker_data = json.loads(marker.read_text(encoding="utf-8"))
@@ -204,7 +230,11 @@ if created_epoch is None:
         candidate = int(os.environ.get("WORLD_BIRTH_EPOCH", "0"))
     except ValueError:
         candidate = 0
-    created_epoch = candidate if candidate > 0 else now
+    if candidate <= 0:
+        emit_metadata(None, None)
+        raise SystemExit
+
+    created_epoch = candidate
     payload = json.dumps({"createdAt": iso(created_epoch)}, separators=(",", ":"))
     temporary = marker.with_name(f".{marker.name}.{os.getpid()}.tmp")
     try:
@@ -215,13 +245,10 @@ if created_epoch is None:
             temporary.unlink()
         except OSError:
             pass
+        emit_metadata(created_epoch, None)
+        raise SystemExit
 
-print(
-    json.dumps(
-        {"createdAt": iso(created_epoch), "ageSeconds": max(0, now - created_epoch)},
-        separators=(",", ":"),
-    )
-)
+emit_metadata(created_epoch, max(0, now - created_epoch))
 PY
 }
 
@@ -289,13 +316,11 @@ status_json() {
       uptime_seconds=$((now - entered))
     fi
   fi
+
   world_time="null"
-  world_metadata="null"
+  world_metadata="$(world_metadata_json)"
   if [ "$active" = active ]; then
     world_time="$(world_time_json "$active_enter")"
-    if [ "$world_time" != null ]; then
-      world_metadata="$(world_metadata_json)"
-    fi
   fi
 
   players=-1

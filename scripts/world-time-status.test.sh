@@ -25,7 +25,7 @@ export PZ_STEAM_SESSION_CHECK=disabled
 export PZ_STEAM_SESSION_STATUS="$TMP_DIR/steam.json"
 export PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS=300
 
-export SYSTEMD_ACTIVE_ENTER="Sun 2026-08-16 16:30:00 UTC"
+export SYSTEMD_ACTIVE_ENTER="$(date -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')"
 export PZ_STATUS_RCON=0
 
 
@@ -56,19 +56,34 @@ jq -e '
   (.worldAgeSeconds >= 0)
 ' "$TMP_DIR/status.json" >/dev/null
 
+# A valid alternate slot keeps the last complete snapshot visible if the primary slot is partial.
+printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+printf '%s\n' '{"protocolVersion":1' \
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+status_json > "$TMP_DIR/alternate-status.json"
+jq -e '.worldTime.year == 1993 and .worldTime.worldAgeMinutes == 18030' \
+  "$TMP_DIR/alternate-status.json" >/dev/null
+rm -f "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+
+
 # Telemetry newer than this activation but older than the freshness limit is stale.
 touch -d '10 minutes ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
 export SYSTEMD_ACTIVE_ENTER="$(date -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')"
 status_json > "$TMP_DIR/aged-status.json"
-jq -e '.worldTime == null and .worldCreatedAt == null and .worldAgeSeconds == null' \
+jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
   "$TMP_DIR/aged-status.json" >/dev/null
+
+
 
 # A non-object telemetry document must be treated as unavailable.
 export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 printf '%s\n' '[]' > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
 status_json > "$TMP_DIR/invalid-telemetry-status.json"
-jq -e '.worldTime == null and .worldCreatedAt == null and .worldAgeSeconds == null' \
+jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
   "$TMP_DIR/invalid-telemetry-status.json" >/dev/null
+
+
 
 # A non-object world marker must fall back without breaking status serialization.
 printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
@@ -84,9 +99,32 @@ jq -e '
 
 # A sidecar from a previous service activation must not be reused after restart.
 touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
 export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 status_json > "$TMP_DIR/stale-status.json"
-jq -e '.worldTime == null and .worldCreatedAt == null and .worldAgeSeconds == null' \
+jq -e '.worldTime == null and (.worldCreatedAt | type == "string") and (.worldAgeSeconds >= 0)' \
   "$TMP_DIR/stale-status.json" >/dev/null
+
+rm -f "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at" \
+  "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt.next"
+printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+cat > "$TMP_DIR/bin/stat" <<'STAT'
+#!/usr/bin/env bash
+if [ "${1:-}" = -c ] && [ "${2:-}" = %W ]; then
+  printf '0\n'
+else
+  exec /usr/bin/stat "$@"
+fi
+STAT
+chmod +x "$TMP_DIR/bin/stat"
+old_path="$PATH"
+export PATH="$TMP_DIR/bin:$PATH"
+export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+status_json > "$TMP_DIR/no-birth-status.json"
+export PATH="$old_path"
+jq -e '.worldCreatedAt == null and .worldAgeSeconds == null' \
+  "$TMP_DIR/no-birth-status.json" >/dev/null
+[ ! -e "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at" ]
 
 echo "world-time-status-test=ok"
