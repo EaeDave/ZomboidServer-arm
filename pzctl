@@ -347,6 +347,11 @@ cli_config_update_json() {
   return "$rc"
 }
 
+clear_world_metadata() {
+  [ -z "${PZ_WORLD_TELEMETRY:-}" ] || rm -f "$PZ_WORLD_TELEMETRY" "${PZ_WORLD_TELEMETRY}.next" 2>/dev/null || true
+  [ -z "${PZ_WORLD_CREATED_AT:-}" ] || rm -f "$PZ_WORLD_CREATED_AT" 2>/dev/null || true
+}
+
 cli_world_reset_json() {
   local payload backup backup_path=""
   payload="$(cat)"
@@ -364,6 +369,7 @@ PY
   graceful_stop_service "The world is being reset. Please wait." || return 1
   if [ "$backup" = 1 ]; then backup_path="$(backup_world "$PZ_BACKUPS" prereset)" || return 1; fi
   rm -rf "$PZ_CACHEDIR/Saves/Multiplayer/${PZ_SERVERNAME}"* 2>/dev/null
+  clear_world_metadata
   rm -f "$PZ_CACHEDIR/db/${PZ_SERVERNAME}.db" "${PZ_ADMIN_MARKER:-$PZ_CACHEDIR/.admin-bootstrap-complete}" 2>/dev/null
   ini_set ResetID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
   [ -n "$(ini_get ServerPlayerID)" ] || ini_set ServerPlayerID "$(( (RANDOM * 32768 + RANDOM) + 1000000 ))"
@@ -1288,6 +1294,7 @@ do_world_reset() {
   echo "Stopping the server..."
   sudo systemctl stop "$PZ_SERVICE"
   rm -rf "$PZ_CACHEDIR/Saves/Multiplayer/${PZ_SERVERNAME}"* 2>/dev/null
+  clear_world_metadata
   rm -f  "$PZ_CACHEDIR/db/${PZ_SERVERNAME}.db" "${PZ_ADMIN_MARKER:-$PZ_CACHEDIR/.admin-bootstrap-complete}" 2>/dev/null
   # a fresh world needs a fresh ResetID (old characters must not carry over), and
   # ServerPlayerID must never be empty — clients stall on join without it

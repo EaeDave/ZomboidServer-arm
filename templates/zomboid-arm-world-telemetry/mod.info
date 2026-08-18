@@ -1,0 +1,3 @@
+name=Zomboid ARM World Telemetry
+id=ZomboidArmWorldTelemetry
+description=Publishes live Project Zomboid world-time telemetry for the Zomboid ARM control panel.

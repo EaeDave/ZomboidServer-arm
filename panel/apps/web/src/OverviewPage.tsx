@@ -41,6 +41,25 @@ function formatUptime(seconds: number | null | undefined) {
   return `${minutes}m`;
 }
 
+function formatWorldAge(seconds: number | null | undefined) {
+  if (seconds === null || seconds === undefined) return "—";
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function formatWorldTime(worldTime: AgentStatus["worldTime"]) {
+  if (!worldTime) return "—";
+  const day = String(worldTime.day).padStart(2, "0");
+  const month = String(worldTime.month).padStart(2, "0");
+  const hour = String(worldTime.hour).padStart(2, "0");
+  const minute = String(worldTime.minute).padStart(2, "0");
+  return `Day ${worldTime.daysSurvived} · ${day}/${month}/${worldTime.year} ${hour}:${minute}`;
+}
+
 function playerSummary(server?: AgentStatus) {
   if (!server || server.playerCount < 0) return "Unknown";
   return `${server.playerCount} ${server.playerCount === 1 ? "player" : "players"}`;
@@ -339,7 +358,7 @@ export function OverviewPage({
           </span>
         </div>
 
-        <dl className="mt-6 grid grid-cols-2 gap-4 border-y border-zinc-800 py-4 sm:grid-cols-4">
+        <dl className="mt-6 grid grid-cols-2 gap-4 border-y border-zinc-800 py-4 sm:grid-cols-6">
           <div>
             <dt className="text-xs text-zinc-500">Players</dt>
             <dd className="mt-1 text-lg font-semibold text-zinc-100">{playerSummary(server)}</dd>
@@ -354,6 +373,18 @@ export function OverviewPage({
             <dt className="text-xs text-zinc-500">Uptime</dt>
             <dd className="mt-1 text-lg font-semibold text-zinc-100">
               {formatUptime(server?.uptimeSeconds)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-zinc-500">World age</dt>
+            <dd className="mt-1 text-lg font-semibold text-zinc-100">
+              {formatWorldAge(server?.worldAgeSeconds)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-zinc-500">In-game date</dt>
+            <dd className="mt-1 text-lg font-semibold text-zinc-100">
+              {formatWorldTime(server?.worldTime)}
             </dd>
           </div>
           <div>
