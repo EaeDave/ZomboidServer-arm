@@ -27,6 +27,19 @@ ini_set() { :; }
 ini_get() { [ "$1" = ServerPlayerID ] && printf '1\n'; }
 fix_owner() { :; }
 graceful_stop_service() { printf 'graceful-stop:%s\n' "${1:-default}" >>"$TEST_EVENTS"; }
+bold() { printf '%s' "$*"; }
+grn() { printf '%s' "$*"; }
+red() { printf '%s' "$*"; }
+ylw() { printf '%s' "$*"; }
+is_listening() { return 1; }
+sudo() {
+  if [ "${1:-}" = systemctl ] && [ "${2:-}" = is-active ]; then
+    printf 'inactive\n'
+  elif [ "${1:-}" = systemctl ] && [ "${2:-}" = stop ]; then
+    printf 'systemctl-stop\n' >>"$TEST_EVENTS"
+  fi
+}
+
 status_json() { printf '%s\n' '{"state":"inactive","listening":false}'; }
 rcon_ready() { return 0; }
 rcon_cmd() { printf 'response:%s\n' "$1"; }
@@ -64,6 +77,16 @@ printf '%s' '{"confirm":true,"createBackup":false}' |
 [ ! -e "$TMP_DIR/cache/world-time.txt" ]
 [ ! -e "$TMP_DIR/cache/world-created-at" ]
 [ ! -e "$TMP_DIR/cache/Saves/Multiplayer/servertest" ]
+mkdir -p "$TMP_DIR/cache/Saves/Multiplayer/servertest"
+touch "$TMP_DIR/cache/world-time.txt" "$TMP_DIR/cache/world-created-at" \
+  "$TMP_DIR/cache/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
+interactive_output="$TMP_DIR/interactive.txt"
+printf '10\nRESET\nn\nn\n\n0\n' |
+  PZCTL_ENV="$TMP_DIR/missing.env" bash "$ROOT_DIR/pzctl" >"$interactive_output"
+[ ! -e "$TMP_DIR/cache/world-time.txt" ]
+[ ! -e "$TMP_DIR/cache/world-created-at" ]
+[ ! -e "$TMP_DIR/cache/Saves/Multiplayer/servertest" ]
+
 rcon_output="$TMP_DIR/rcon.json"
 printf '%s' '{"command":"servermsg","args":["hello players"]}' |
   PZCTL_ENV="$TMP_DIR/missing.env" bash "$ROOT_DIR/pzctl" rcon --json >"$rcon_output"

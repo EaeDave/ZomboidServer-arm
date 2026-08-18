@@ -988,7 +988,7 @@ describe("control-plane API", () => {
       runtime: "fex",
       gameVersion: "42.20.2",
       uptimeSeconds: 3600,
-      worldCreatedAt: "2026-08-15T00:00:00.000Z",
+      worldCreatedAt: "2026-08-14T22:00:00.000Z",
       worldAgeSeconds: 86_400,
       worldTime: {
         year: 1993,

@@ -8,6 +8,11 @@ export class FakeAgentAdapter implements AgentAdapter {
   constructor(private readonly now: () => Date = () => new Date()) {}
 
   async getStatus(serverId: string): Promise<AgentStatus> {
+    const checkedAt = this.now();
+    const checkedAtIso = checkedAt.toISOString();
+    const worldAgeSeconds = 86_400;
+    const worldCreatedAt = new Date(checkedAt.getTime() - worldAgeSeconds * 1000);
+
     return {
       protocolVersion: 1,
       serverId,
@@ -18,8 +23,8 @@ export class FakeAgentAdapter implements AgentAdapter {
       runtime: "fex",
       gameVersion: "42.20.2",
       uptimeSeconds: 3600,
-      worldCreatedAt: "2026-08-15T00:00:00.000Z",
-      worldAgeSeconds: 86_400,
+      worldCreatedAt: worldCreatedAt.toISOString(),
+      worldAgeSeconds,
       worldTime: {
         year: 1993,
         month: 7,
@@ -28,10 +33,10 @@ export class FakeAgentAdapter implements AgentAdapter {
         minute: 0,
         daysSurvived: 0,
         worldAgeMinutes: 300,
-        updatedAt: this.now().toISOString(),
+        updatedAt: checkedAtIso,
       },
       playerCount: 0,
-      checkedAt: this.now().toISOString(),
+      checkedAt: checkedAtIso,
     };
   }
 }

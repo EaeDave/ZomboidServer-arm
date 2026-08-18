@@ -23,6 +23,8 @@ export PZ_CONSOLE="$TMP_DIR/console"
 export PZ_PORT=16261
 export PZ_STEAM_SESSION_CHECK=disabled
 export PZ_STEAM_SESSION_STATUS="$TMP_DIR/steam.json"
+export PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS=300
+
 export SYSTEMD_ACTIVE_ENTER="Sun 2026-08-16 16:30:00 UTC"
 export PZ_STATUS_RCON=0
 
@@ -53,6 +55,32 @@ jq -e '
   (.worldCreatedAt | type == "string") and
   (.worldAgeSeconds >= 0)
 ' "$TMP_DIR/status.json" >/dev/null
+
+# Telemetry newer than this activation but older than the freshness limit is stale.
+touch -d '10 minutes ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+export SYSTEMD_ACTIVE_ENTER="$(date -u -d '20 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')"
+status_json > "$TMP_DIR/aged-status.json"
+jq -e '.worldTime == null and .worldCreatedAt == null and .worldAgeSeconds == null' \
+  "$TMP_DIR/aged-status.json" >/dev/null
+
+# A non-object telemetry document must be treated as unavailable.
+export SYSTEMD_ACTIVE_ENTER="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+printf '%s\n' '[]' > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+status_json > "$TMP_DIR/invalid-telemetry-status.json"
+jq -e '.worldTime == null and .worldCreatedAt == null and .worldAgeSeconds == null' \
+  "$TMP_DIR/invalid-telemetry-status.json" >/dev/null
+
+# A non-object world marker must fall back without breaking status serialization.
+printf '%s\n' '{"protocolVersion":1,"year":1993,"month":7,"day":9,"hour":14,"minute":37,"daysSurvived":12,"worldAgeMinutes":18030}' \
+  > "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"
+printf '%s\n' '[]' > "$TMP_DIR/Saves/Multiplayer/servertest/.zomboid-arm-world-created-at"
+status_json > "$TMP_DIR/invalid-marker-status.json"
+jq -e '
+  .worldTime.year == 1993 and
+  (.worldCreatedAt | type == "string") and
+  (.worldAgeSeconds >= 0)
+' "$TMP_DIR/invalid-marker-status.json" >/dev/null
+
 
 # A sidecar from a previous service activation must not be reused after restart.
 touch -d '2 days ago' "$TMP_DIR/mods/zomboid-arm-world-telemetry/world-time.txt"

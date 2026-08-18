@@ -64,10 +64,14 @@ pz_load_env() {
   PZ_WORLD_TELEMETRY="${PZ_WORLD_TELEMETRY:-$PZ_MODS/zomboid-arm-world-telemetry/world-time.txt}"
   # The marker lives inside the save so backups and world resets preserve its lifecycle.
   PZ_WORLD_CREATED_AT="${PZ_WORLD_CREATED_AT:-$PZ_CACHEDIR/Saves/Multiplayer/$PZ_SERVERNAME/.zomboid-arm-world-created-at}"
+  PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS="${PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS:-300}"
+
   # keys that identify THIS host/world; import must never take these from a foreign ini
   PZ_INI_PRESERVE=" DefaultPort UDPPort RCONPort RCONPassword Password PublicName SteamPort1 SteamPort2 WorkshopItems Mods Map ServerPlayerID ResetID Seed SteamVAC server_browser_announced_ip "
   export PZ_SERVICE PZ_SERVER_ID PZ_CONSOLE PZ_PORT PZ_RUNTIME PZ_STEAM_SESSION_CHECK \
-    PZ_STEAM_SESSION_STATUS PZ_WORLD_TELEMETRY PZ_WORLD_CREATED_AT
+    PZ_STEAM_SESSION_STATUS PZ_WORLD_TELEMETRY PZ_WORLD_CREATED_AT \
+    PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS
+
 }
 
 
@@ -83,9 +87,11 @@ world_time_json() {
     return 0
   }
   active_epoch="$(date -d "$active_enter" +%s 2>/dev/null || true)"
-  WORLD_TIME_PATH="$file" WORLD_TIME_ACTIVE_EPOCH="${active_epoch:-0}" python3 - <<'PY'
+  WORLD_TIME_MAX_AGE_SECONDS="${PZ_WORLD_TELEMETRY_MAX_AGE_SECONDS:-300}" \
+    WORLD_TIME_PATH="$file" WORLD_TIME_ACTIVE_EPOCH="${active_epoch:-0}" python3 - <<'PY'
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,10 +104,21 @@ path = Path(os.environ["WORLD_TIME_PATH"])
 try:
     stat = path.stat()
     active_epoch = int(os.environ.get("WORLD_TIME_ACTIVE_EPOCH", "0"))
+    try:
+        max_age = int(os.environ.get("WORLD_TIME_MAX_AGE_SECONDS", "300"))
+    except ValueError:
+        max_age = 300
+    if max_age < 0:
+        max_age = 300
     if active_epoch and stat.st_mtime < active_epoch:
         emit(None)
         raise SystemExit
+    if stat.st_mtime < time.time() - max_age:
+        emit(None)
+        raise SystemExit
     value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("telemetry must be a JSON object")
 except (OSError, ValueError, TypeError, json.JSONDecodeError):
     emit(None)
     raise SystemExit
@@ -177,7 +194,8 @@ marker = Path(os.environ["WORLD_MARKER_PATH"])
 created_epoch = None
 try:
     marker_data = json.loads(marker.read_text(encoding="utf-8"))
-    created_epoch = parse_epoch(marker_data.get("createdAt"))
+    if isinstance(marker_data, dict):
+        created_epoch = parse_epoch(marker_data.get("createdAt"))
 except (OSError, ValueError, TypeError, json.JSONDecodeError):
     pass
 
